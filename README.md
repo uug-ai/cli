@@ -6,7 +6,9 @@ This repository contains CLI tools for performing specific automations.
 
 ## Run
 
-To be written
+You can run the migration as a Kubernetes job in your cluster. The benefit is that you do not need to expose anything, and use the internal Kubernetes dns.
+
+kubectl apply -f kubernetes-job.yaml
 
 ## Installation and contributing
 
@@ -48,12 +50,14 @@ This tool migrates data from a Vault database to a Hub database.
 - `-mongodb-username`: The MongoDB username (optional).
 - `-mongodb-password`: The MongoDB password (optional).
 - `-username`: The username to filter data (required).
+- `-queue`: The integration used to transfer events to the hub pipeline.
 - `-start-timestamp`: The start timestamp for filtering data (required).
 - `-end-timestamp`: The end timestamp for filtering data (required).
 - `-timezone`: The timezone for converting timestamps (optional, default is `UTC`).
 - `-pipeline`: The pipeline to execute (optional, default is `monitor,sequence`).
 - `-batch-size`: The size of each batch (optional, default is `10`).
 - `-batch-delay`: The delay between batches in milliseconds (optional, default is `1000`).
+- `-mode`: You can choose to run a `dry-run` or `live`.
 
 #### Example
 
@@ -64,10 +68,15 @@ go run main.go -action vault-to-hub-migration \
                -mongodb-uri "mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>" \
                -mongodb-source-database=<sourceDatabase> \
                -mongodb-destination-database=<destinationDatabase> \
+               -queue <rabbitmq-integration> \
                -username <username> \
                -start-timestamp <startTimestamp> \
                -end-timestamp <endTimestamp> \
-               -timezone <timezone>
+               -timezone <timezone> \
+               -pipeline 'monitor,sequence,analysis' \
+               -mode 'dry-run' \
+               -batch-size 100 \
+               -batch-delay 1000
 ```
 
 #### Output

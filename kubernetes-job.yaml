@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: uugai-cli-vault-to-hub-migration
+spec:
+  template:
+    spec:
+      containers:
+      - name: init-container
+        image: uugai/cli:latest
+        command: ['/main', '-action', 'vault-to-hub-migration',
+          '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
+          #'-mongodb-host', '<host>',
+          #'-mongodb-port', '27017',
+          #'-mongodb-username', '<username>',
+          #'-mongodb-password', '<password>',
+          '-mongodb-source-database', 'KerberosStorage',
+          '-mongodb-destination-database', 'Kerberos',
+          '-mongodb-database-credentials', 'admin',
+          '-username', '<username>',
+          '-queue', '<rabbitmq-integration>',
+          '-start-timestamp', '1733425260',
+          '-end-timestamp', '1753952373',
+          '-timezone', 'UTC',
+          '-pipeline', 'monitor,sequence,analysis',
+          '-mode', 'dry-run', # or live to execute for real.
+          '-batch-size', '100',
+          '-batch-delay', '1000',
+        ]
+            
+      restartPolicy: Never
+      volumes:
+      - name: hub-import
+        emptyDir: {}
