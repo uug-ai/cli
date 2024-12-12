@@ -15,9 +15,11 @@ type DB struct {
 	Client *mongo.Client
 }
 
-var TIMEOUT = 10 * time.Second
+var TIMEOUT = 120 * time.Second
 var _init_ctx sync.Once
 var _instance *DB
+
+// struct MongoDB {
 
 func NewMongoDBURI(uri string) *DB {
 	return NewMongoDB(uri, "", "", "", "", "")

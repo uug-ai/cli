@@ -61,7 +61,7 @@ type Queue struct {
 
 	Type string `json:"type" bson:"type"` // "queue", "forward", "webhook", etc...
 }
-type Media struct {
+type VaultMedia struct {
 	Timestamp         int64         `json:"timestamp" bson:"timestamp"`
 	FileName          string        `json:"filename" bson:"filename"`
 	FileSize          int64         `json:"filesize" bson:"filesize"`
