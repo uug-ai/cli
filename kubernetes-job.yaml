@@ -16,7 +16,7 @@ spec:
           #'-mongodb-password', '<password>',
           '-mongodb-source-database', 'KerberosStorage',
           '-mongodb-destination-database', 'Kerberos',
-          '-mongodb-destination-database', 'admin',
+          '-mongodb-database-credentials', 'admin',
           '-username', '<username>',
           '-queue', '<rabbitmq-integration>',
           '-start-timestamp', '1733425260',
