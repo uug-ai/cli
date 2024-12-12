@@ -18,7 +18,7 @@ spec:
           '-mongodb-destination-database', 'Kerberos',
           '-mongodb-destination-database', 'admin',
           '-username', '<username>',
-          '-queue', '<rabbitmq-integration',
+          '-queue', '<rabbitmq-integration>',
           '-start-timestamp', '1733425260',
           '-end-timestamp', '1753952373',
           '-timezone', 'UTC',
