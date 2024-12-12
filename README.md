@@ -8,7 +8,9 @@ This repository contains CLI tools for performing specific automations.
 
 You can run the migration as a Kubernetes job in your cluster. The benefit is that you do not need to expose anything, and use the internal Kubernetes dns.
 
+```sh
 kubectl apply -f kubernetes-job.yaml
+```
 
 ## Installation and contributing
 
