@@ -1,4 +1,4 @@
-# UUG AI CLI
+# uug-ai/cli
 
 This repository contains CLI tools for performing specific automations.
 
