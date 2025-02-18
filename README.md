@@ -51,7 +51,7 @@ This tool migrates data from a Vault database to a Hub database.
 - `-mongodb-database-credentials`: The database credentials (optional).
 - `-mongodb-username`: The MongoDB username (optional).
 - `-mongodb-password`: The MongoDB password (optional).
-- `-username`: The username to filter data (required)(optional for labels).
+- `-username`: The username to filter data (required).
 - `-queue`: The integration used to transfer events to the hub pipeline.
 - `-start-timestamp`: The start timestamp for filtering data (required).
 - `-end-timestamp`: The end timestamp for filtering data (required).
@@ -60,7 +60,6 @@ This tool migrates data from a Vault database to a Hub database.
 - `-batch-size`: The size of each batch (optional, default is `10`).
 - `-batch-delay`: The delay between batches in milliseconds (optional, default is `1000`).
 - `-mode`: You can choose to run a `dry-run` or `live`.
-- `-labelNames`: Names of the labels to generate separated by comma.
 
 #### Example
 
@@ -140,3 +139,32 @@ go run main.go -action vault-to-hub-migration \
       2024/12/12 09:38:26   | xxxxxxxx/1733989397_6-967003_gb-frontdoor_200-200-400-400_166_769.mp4                 | 3846902         | 1733989430      | lQtymLrehWpHkTavfcNTFgwfDMoSfg      |
       2024/12/12 09:38:26   | xxxxxxxx/1733989379_6-967003_gb-frontdoor_200-200-400-400_162_769.mp4                 | 2107887         | 1733989400      | lQtymLrehWpHkTavfcNTFgwfDMoSfg      |
       2024/12/12 09:38:26   +---------------------------------------------------------------------------------------+-----------------+-----------------+-------------------------------------+
+
+
+### Generate default labels
+
+This tool adds starting labels to existing users in the database.
+
+#### Command Line Arguments
+
+- `-action`: The action to take (required). For migration, use `vault-to-hub-migration`.
+- `-mongodb-uri`: The MongoDB URI (optional if host and port are provided).
+- `-mongodb-source-database`: The source database name (required).
+- `label-names`: The names of the labels to add. Comma separated. Will add predefined default values if not provided.
+- `-username`: A specific user to add labels to (optional).
+- `-mode`: You can choose to run a `dry-run` or `live`.
+
+#### Example
+
+To run the default label generation, use the following command:
+
+```sh
+go run main.go -action generate-default-labels \
+               -mode 'dry-run' \
+               -mongodb-uri "mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>" \
+               -mongodb-source-database=<sourceDatabase> \
+               -label-names=<labelNames> \
+
+```
+
+Add -username to add labels to just one specific user
