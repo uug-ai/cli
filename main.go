@@ -81,6 +81,7 @@ func main() {
 		fmt.Println("Please provide a valid action.")
 		fmt.Println("Available actions:")
 		fmt.Println("  -action vault-to-hub-migration")
+		fmt.Println("  -action generate-default-labels")
 	}
 
 }
