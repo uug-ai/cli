@@ -3,13 +3,19 @@
 This repository contains CLI tools for performing specific automations.
 
 - `vault-to-hub-migration`: Migrating data from a Vault database to a Hub database.
+- `generate-default-labels`: Adding labels to existing users.
+
 
 ## Run
 
-You can run the migration as a Kubernetes job in your cluster. The benefit is that you do not need to expose anything, and use the internal Kubernetes dns.
+You can run these jobs in your cluster. The benefit is that you do not need to expose anything, and use the internal Kubernetes dns.
 
 ```sh
-kubectl apply -f kubernetes-job.yaml
+kubectl apply -f jobs/vault-to-hub-migration-job.yaml
+```
+
+```sh
+kubectl apply -f jobs/generate-default-labels-job.yaml
 ```
 
 ## Installation and contributing
