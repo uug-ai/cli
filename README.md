@@ -82,7 +82,7 @@ go run main.go -action vault-to-hub-migration \
                -end-timestamp <endTimestamp> \
                -timezone <timezone> \
                -pipeline 'monitor,sequence,analysis' \
-               -mode 'dry-run' \
+               -mode dry-run \
                -batch-size 100 \
                -batch-delay 1000
 ```
@@ -171,7 +171,7 @@ To run the default label generation, use the following command:
 
 ```sh
 go run main.go -action generate-default-labels \
-               -mode 'dry-run' \
+               -mode dry-run \
                -mongodb-uri "mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>" \
                -mongodb-source-database=<sourceDatabase> \
                -label-names=<labelNames> \

@@ -48,8 +48,7 @@ func NewMongoDB(uri string, host string, port string, databaseCredentials string
 		// We can also apply the complete URI
 		// e.g. "mongodb+srv://<username>:<password>@kerberos-hub.shhng.mongodb.net/?retryWrites=true&w=majority&appName=kerberos-hub"
 		if uri != "" {
-			serverAPI := options.ServerAPI(options.ServerAPIVersion1)
-			opts := options.Client().ApplyURI(uri).SetServerAPIOptions(serverAPI)
+			opts := options.Client().ApplyURI(uri)
 
 			// Create a new client and connect to the server
 			client, err := mongo.Connect(ctx, opts)
