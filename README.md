@@ -147,10 +147,15 @@ This tool adds starting labels to existing users in the database.
 
 #### Command Line Arguments
 
-- `-action`: The action to take (required). For migration, use `vault-to-hub-migration`.
+- `-action`: The action to take (required). For labels, use `generate-default-labels`.
 - `-mongodb-uri`: The MongoDB URI (optional if host and port are provided).
+- `-mongodb-host`: The MongoDB host (optional if URI is provided).
+- `-mongodb-port`: The MongoDB port (optional if URI is provided).
 - `-mongodb-source-database`: The source database name (required).
-- `label-names`: The names of the labels to add. Comma separated. Will add predefined default values if not provided.
+- `-mongodb-database-credentials`: The database credentials (optional).
+- `-mongodb-username`: The MongoDB username (optional).
+- `-mongodb-password`: The MongoDB password (optional).
+- `-label-names`: The names of the labels to add. Comma separated. Will add predefined default values if not provided.
 - `-username`: A specific user to add labels to (optional).
 - `-mode`: You can choose to run a `dry-run` or `live`.
 
