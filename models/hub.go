@@ -170,3 +170,16 @@ type SequencesWithMedia struct {
 	Star      bool               `json:"star" bson:"star"`
 	Devices   []string           `json:"devices" bson:"devices"`
 }
+
+// Case labels
+type Label struct {
+	Id          primitive.ObjectID `json:"id" bson:"_id,omitempty,omitempty"`
+	Name        string             `json:"name" bson:"name,omitempty"`
+	Description string             `json:"description" bson:"description,omitempty"`
+	Color       string             `json:"color" bson:"color,omitempty"`
+	UserId      string             `json:"user_id" bson:"user_id,omitempty"`       // Log which user created the label
+	OwnerId     string             `json:"owner_id" bson:"owner_id,omitempty"`     // Log which master account the user belongs to, used to group labels
+	CreatedAt   int64              `json:"created_at" bson:"created_at,omitempty"` // For sorting purposes
+	IsPrivate   bool               `json:"is_private" bson:"is_private"`           // Could be available on only private tasks in future
+	Types       []string           `json:"type" bson:"type,omitempty"`             // Could be used to group labels by tasks, media, alerts,...
+}

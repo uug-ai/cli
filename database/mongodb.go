@@ -15,6 +15,10 @@ type DB struct {
 	Client *mongo.Client
 }
 
+func (d *DB) Collection(s string) any {
+	panic("unimplemented")
+}
+
 var TIMEOUT = 120 * time.Second
 var _init_ctx sync.Once
 var _instance *DB
