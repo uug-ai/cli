@@ -30,7 +30,7 @@ func main() {
 	mongodbUsername := flag.String("mongodb-username", "", "MongoDB Username")
 	mongodbPassword := flag.String("mongodb-password", "", "MongoDB Password")
 	queueName := flag.String("queue", "", "The queue used to transfer the data")
-	username := flag.String("username", "", "Username")
+	username := flag.String("username", "", "Specific username to target")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
 	timezone := flag.String("timezone", "", "Timezone")
@@ -38,6 +38,7 @@ func main() {
 	pipeline := flag.String("pipeline", "monitor,sequence", "Provide the pipeline to execute")
 	batchSize := flag.Int("batch-size", 10, "Batch Size")
 	batchDelay := flag.Int("batch-delay", 1000, "Batch Delay in milliseconds")
+	labelNames := flag.String("label-names", "", "Names of the labels to generate separated by comma")
 
 	flag.Parse()
 
@@ -62,6 +63,19 @@ func main() {
 			*pipeline,
 			*batchSize,
 			*batchDelay,
+		)
+	case "generate-default-labels":
+		fmt.Println("Generating default labels...")
+		actions.GenerateDefaultLabels(*mode,
+			*mongodbURI,
+			*mongodbHost,
+			*mongodbPort,
+			*mongodbSourceDatabase,
+			*mongodbDatabaseCredentials,
+			*mongodbUsername,
+			*mongodbPassword,
+			*labelNames,
+			*username,
 		)
 	default:
 		fmt.Println("Please provide a valid action.")

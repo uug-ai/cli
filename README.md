@@ -51,7 +51,7 @@ This tool migrates data from a Vault database to a Hub database.
 - `-mongodb-database-credentials`: The database credentials (optional).
 - `-mongodb-username`: The MongoDB username (optional).
 - `-mongodb-password`: The MongoDB password (optional).
-- `-username`: The username to filter data (required).
+- `-username`: The username to filter data (required)(optional for labels).
 - `-queue`: The integration used to transfer events to the hub pipeline.
 - `-start-timestamp`: The start timestamp for filtering data (required).
 - `-end-timestamp`: The end timestamp for filtering data (required).
@@ -60,6 +60,7 @@ This tool migrates data from a Vault database to a Hub database.
 - `-batch-size`: The size of each batch (optional, default is `10`).
 - `-batch-delay`: The delay between batches in milliseconds (optional, default is `1000`).
 - `-mode`: You can choose to run a `dry-run` or `live`.
+- `-labelNames`: Names of the labels to generate separated by comma.
 
 #### Example
 
