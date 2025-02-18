@@ -15,10 +15,10 @@ spec:
           #'-mongodb-username', '<username>',
           #'-mongodb-password', '<password>',
           #'-mongodb-database-credentials', 'admin', 
-          '-mongodb-source-database', 'KerberosStorage',
-          '-label-names', 'label1,label2,label3',
-          '-username', '<username>', # For adding to a specific user
+          '-mongodb-source-database', 'Kerberos',
+          '-label-names', 'incident,suspicious,unauthorized', # Comma separated list of labels to generate
           '-mode', 'dry-run', # or live to execute for real.
+          #'-username', '<username>', # For adding to a specific user, empty will target all users
         ]
             
       restartPolicy: Never
