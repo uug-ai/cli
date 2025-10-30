@@ -10,14 +10,14 @@ import (
 func main() {
 
 	fmt.Println(`
-	_    _ _    _  _____     _____ _ _ 
-	| |  | | |  | |/ ____|   / ____(_) |
-	| |  | | |  | | |  __   | |     _| |
-	| |  | | |  | | | |_ |  | |    | | |
-	| |__| | |__| | |__| |  | |____| | |
-	\____/ \____/ \_____|   \_____|_|_|
-										
-	`)
+    _    _ _    _  _____     _____ _ _ 
+    | |  | | |  | |/ ____|   / ____(_) |
+    | |  | | |  | | |  __   | |     _| |
+    | |  | | |  | | | |_ |  | |    | | |
+    | |__| | |__| | |__| |  | |____| | |
+    \____/ \____/ \_____|   \_____|_|_|
+                                        
+    `)
 
 	// Define command-line arguments
 	action := flag.String("action", "", "Action to take")
@@ -77,11 +77,15 @@ func main() {
 			*labelNames,
 			*username,
 		)
+	case "seed-media":
+		fmt.Println("Seeding synthetic media...")
+		actions.SeedMedia()
 	default:
 		fmt.Println("Please provide a valid action.")
 		fmt.Println("Available actions:")
 		fmt.Println("  -action vault-to-hub-migration")
 		fmt.Println("  -action generate-default-labels")
+		fmt.Println("  -action seed-media")
 	}
 
 }
