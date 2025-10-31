@@ -44,6 +44,7 @@ var (
 )
 
 var stopFlag int32
+var DAYS = 30
 
 func HandleSignals() {
 	c := make(chan os.Signal, 1)
@@ -53,6 +54,151 @@ func HandleSignals() {
 		fmt.Println("\n[signal] Received interrupt, stopping after current batches...")
 		atomic.StoreInt32(&stopFlag, 1)
 	}()
+}
+
+func InsertSettings(settingsColl *mongo.Collection) error {
+	settingsDoc := bson.M{
+		"key": "plan",
+		"map": bson.M{
+			"basic": bson.M{
+				"level":         1,
+				"uploadLimit":   100,
+				"videoLimit":    100,
+				"usage":         500,
+				"analysisLimit": 0,
+				"dayLimit":      3,
+			},
+			"premium": bson.M{
+				"level":         2,
+				"uploadLimit":   500,
+				"videoLimit":    500,
+				"usage":         1000,
+				"analysisLimit": 0,
+				"dayLimit":      7,
+			},
+			"gold": bson.M{
+				"level":         3,
+				"uploadLimit":   1000,
+				"videoLimit":    1000,
+				"usage":         3000,
+				"analysisLimit": 1000,
+				"dayLimit":      30,
+			},
+			"business": bson.M{
+				"level":         4,
+				"uploadLimit":   99999999,
+				"videoLimit":    99999999,
+				"usage":         10000,
+				"analysisLimit": 1000,
+				"dayLimit":      30,
+			},
+			"enterprise": bson.M{
+				"level":         5,
+				"uploadLimit":   99999999,
+				"videoLimit":    99999999,
+				"usage":         99999999,
+				"analysisLimit": 5000,
+				"dayLimit":      30,
+			},
+		},
+	}
+
+	fmt.Println("[info] Inserting settings document...")
+	_, err := settingsColl.InsertOne(context.Background(), settingsDoc)
+	if err != nil {
+		return fmt.Errorf("inserting settings document: %w", err)
+	}
+	fmt.Println("[info] Settings document inserted successfully.")
+	return nil
+}
+
+func InsertUser(userColl *mongo.Collection, userName, userEmail, userPassword string, amazonSecretAccessKey, amazonAccessKeyID string, days int) (primitive.ObjectID, error) {
+	hashedPassword, err := Hash(userPassword)
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("hashing password: %w", err)
+	}
+	now := time.Now()
+	userObjectID := primitive.NewObjectID()
+
+	var dates []string
+	if days > 0 {
+		dates = make([]string, days)
+		for i := 0; i < days; i++ {
+			date := time.Now().AddDate(0, 0, -i).Format("02-01-2006")
+			dates[i] = date
+		}
+	}
+
+	userDoc := bson.M{
+		"_id":                      userObjectID,
+		"username":                 userName,
+		"email":                    userEmail,
+		"password":                 hashedPassword,
+		"role":                     "owner",
+		"google2fa_enabled":        false,
+		"timezone":                 "Europe/Brussels",
+		"isActive":                 int64(1),
+		"registerToken":            "",
+		"updated_at":               now,
+		"created_at":               now,
+		"amazon_secret_access_key": amazonSecretAccessKey,
+		"amazon_access_key_id":     amazonAccessKeyID,
+		"card_brand":               "Visa",
+		"card_last_four":           "0000",
+		"card_status":              "ok",
+		"card_status_message":      nil,
+		"days":                     dates,
+	}
+	_, err = userColl.InsertOne(context.Background(), userDoc)
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("creating user: %w", err)
+	}
+	fmt.Printf("[info] Created user %s\n", userObjectID.Hex())
+	return userObjectID, nil
+}
+
+func InsertSubscription(subColl *mongo.Collection, userObjectID string) (string, error) {
+
+	subDoc := bson.M{
+		"_id":           primitive.NewObjectID(),
+		"name":          "default",
+		"stripe_id":     "sub_9ECyjjMz3R7etK",
+		"stripe_plan":   "enterprise",
+		"quantity":      1,
+		"trial_ends_at": nil,
+		"ends_at":       nil,
+		"user_id":       userObjectID,
+		"updated_at":    time.Now(),
+		"created_at":    time.Now(),
+		"stripe_status": "active",
+	}
+	_, err := subColl.InsertOne(context.Background(), subDoc)
+	if err != nil {
+		return "", fmt.Errorf("creating subscription: %w", err)
+	}
+	fmt.Printf("[info] Created subscription for user %s\n", userObjectID)
+	return userObjectID, nil
+}
+
+func CreateUser(
+	ctx context.Context,
+	userColl *mongo.Collection,
+	subColl *mongo.Collection,
+	userName, userEmail, userPassword string,
+	amazonSecretAccessKey, amazonAccessKeyID string,
+) (primitive.ObjectID, error) {
+
+	userObjectID, err := InsertUser(userColl, userName, userEmail, userPassword, amazonSecretAccessKey, amazonAccessKeyID, DAYS)
+	if err != nil {
+		return primitive.NilObjectID, err
+	}
+
+	_, err = InsertSubscription(subColl, userObjectID.Hex())
+	if err != nil {
+		return primitive.NilObjectID, err
+	}
+
+	return userObjectID, nil
 }
 
 func SampleUnique(pool []string, n int) []string {
@@ -78,12 +224,50 @@ func BuildDeviceDocs(deviceCount int, userObjectID primitive.ObjectID, amazonSec
 		deviceDoc := bson.M{
 			"_id":     deviceID,
 			"key":     amazonSecretAccessKey,
-			"user_id": userObjectID,
+			"user_id": userObjectID.Hex(),
 			"status":  "inactive",
 			"featurePermissions": bson.M{
 				"ptz":           0,
 				"liveview":      0,
 				"remote_config": 0,
+			},
+			"isActive": false,
+			"analytics": []bson.M{
+				{
+					"cloudpublickey":  amazonSecretAccessKey,
+					"encrypted":       false,
+					"encrypteddata":   []byte{}, // or primitive.Binary{Subtype: 0, Data: []byte{}}
+					"key":             fmt.Sprintf("camera%d", i+1),
+					"hub_encryption":  "true",
+					"e2e_encryption":  "false",
+					"enterprise":      false,
+					"hash":            "",
+					"version":         "3.5.0",
+					"release":         "1f9772d",
+					"mac_list":        []string{},
+					"ip_list":         []string{"192.168.1.100", "10.0.0.100"},
+					"cameraname":      fmt.Sprintf("camera%d", 100+i),
+					"cameratype":      "IPCamera",
+					"architecture":    "x86_64",
+					"hostname":        fmt.Sprintf("host-%d", i+1),
+					"freeMemory":      "481275904",
+					"totalMemory":     "16515977216",
+					"usedMemory":      "16034701312",
+					"processMemory":   "65097728",
+					"kubernetes":      false,
+					"docker":          true,
+					"kios":            false,
+					"raspberrypi":     false,
+					"uptime":          "1 day ",
+					"boot_time":       "1 day ",
+					"timestamp":       time.Now().Unix(),
+					"onvif":           "false",
+					"onvif_zoom":      "false",
+					"onvif_pantilt":   "false",
+					"onvif_presets":   "false",
+					"cameraConnected": "false",
+					"hasBackChannel":  "false",
+				},
 			},
 		}
 		devices = append(devices, deviceDoc)
@@ -92,10 +276,16 @@ func BuildDeviceDocs(deviceCount int, userObjectID primitive.ObjectID, amazonSec
 	return devices, deviceIDs
 }
 
-func BuildBatchDocs(n int, now int64, userObjectID primitive.ObjectID, deviceIDs []primitive.ObjectID) []interface{} {
+func BuildBatchDocs(n int, days int, userObjectID primitive.ObjectID, deviceIDs []primitive.ObjectID) []interface{} {
+	if days < 1 {
+		days = 1
+	}
 	docs := make([]interface{}, 0, n)
+	secondsInDays := int64(days) * 86400
+	now := time.Now().Unix()
 	for i := 0; i < n; i++ {
-		st := now - int64(rand.Intn(3600))
+		offset := rand.Int63n(secondsInDays)
+		st := now - offset
 		en := st + int64(rand.Intn(21)+5)
 		deviceID := deviceIDs[rand.Intn(len(deviceIDs))]
 		doc := bson.M{
@@ -118,12 +308,13 @@ func BuildBatchDocs(n int, now int64, userObjectID primitive.ObjectID, deviceIDs
 				"tags":            SampleUnique(TAG_POOL, rand.Intn(3)+1),
 				"classifications": []string{"normal_activity"},
 			},
-			"userId": userObjectID,
+			"userId": userObjectID.Hex(),
 		}
 		docs = append(docs, doc)
 	}
 	return docs
 }
+
 func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{}) int {
 	if len(docs) == 0 {
 		return 0
@@ -255,6 +446,7 @@ func SeedMedia() {
 		userCollName         = flag.String("user-collection", "", "User collection name")
 		deviceCollName       = flag.String("device-collection", "", "Device collection name")
 		subscriptionCollName = flag.String("subscription-collection", "", "Subscription collection name")
+		settingsCollName     = flag.String("settings-collection", "settings", "Settings collection name")
 		noIndex              = flag.Bool("no-index", false, "Skip index creation")
 		reportEvery          = flag.Int("report-every", 10, "Report progress every N batches")
 		userId               = flag.String("user-id", "", "User ID to linki media to")
@@ -317,7 +509,7 @@ func SeedMedia() {
 	if !WasFlagPassed("uri") {
 		*uri = PromptString("Enter MongoDB URI (--uri): ")
 		if *uri == "" {
-			*uri = "mongodb://localhost:27017"
+			*uri = "mongodb+srv://cedric:UrYMmxnovlcdkm06@hub-dev.lfxmajh.mongodb.net/"
 			fmt.Printf("[info] Using default MongoDB URI: %s\n", *uri)
 		}
 	}
@@ -358,6 +550,13 @@ func SeedMedia() {
 			if *userEmail == "" {
 				*userEmail = "example-media-user@email.com"
 				fmt.Printf("[info] Using default user email: %s\n", *userEmail)
+			}
+		}
+		if !WasFlagPassed("settings-collection") {
+			*settingsCollName = PromptString("Enter target settings collection name (--settings-collection): ")
+			if *settingsCollName == "" {
+				*settingsCollName = "settings"
+				fmt.Printf("[info] Using default settings collection name: %s\n", *settingsCollName)
 			}
 		}
 		if *subscriptionCollName == "" {
@@ -407,6 +606,20 @@ func SeedMedia() {
 	userColl := client.Database(*dbName).Collection(*userCollName)
 	subColl := client.Database(*dbName).Collection(*subscriptionCollName)
 	mediaColl := client.Database(*dbName).Collection(*mediaCollName)
+	settingsColl := client.Database(*dbName).Collection(*settingsCollName)
+
+	// Ensure settings document exists
+	var settingsDoc bson.M
+	err = settingsColl.FindOne(ctx, bson.M{"key": "plan", "map.enterprise": bson.M{"$exists": true}}).Decode(&settingsDoc)
+	if err == mongo.ErrNoDocuments {
+		if err := InsertSettings(settingsColl); err != nil {
+			fmt.Printf("[error] Inserting settings: %v\n", err)
+			os.Exit(1)
+		}
+	} else if err != nil {
+		fmt.Printf("[error] Checking settings: %v\n", err)
+		os.Exit(1)
+	}
 
 	var userObjectID primitive.ObjectID
 	var amazonSecretAccessKey, amazonAccessKeyID string
@@ -441,65 +654,33 @@ func SeedMedia() {
 			fmt.Printf("[error] Generating amazon_access_key_id: %v\n", err)
 			os.Exit(1)
 		}
-		hashedPassword, err := Hash(*userPassword)
-		if err != nil {
-			fmt.Printf("[error] Hashing password: %v\n", err)
-			os.Exit(1)
-		}
-		now := time.Now()
-		userObjectID = primitive.NewObjectID()
 
-		userDoc := bson.M{
-			"_id":                      userObjectID,
-			"username":                 *userName,
-			"email":                    *userEmail,
-			"password":                 hashedPassword,
-			"role":                     "owner",
-			"google2fa_enabled":        false,
-			"timezone":                 "Europe/Brussels",
-			"isActive":                 int64(1),
-			"registerToken":            "",
-			"updated_at":               now,
-			"created_at":               now,
-			"amazon_secret_access_key": amazonSecretAccessKey,
-			"amazon_access_key_id":     amazonAccessKeyID,
-			"card_brand":               "Visa",
-			"card_last_four":           "0000",
-			"card_status":              "ok",
-			"card_status_message":      nil,
-		}
-		_, err = userColl.InsertOne(ctx, userDoc)
+		// Create new user with subscription
+		userObjectID, err = InsertUser(
+			userColl,
+			*userName,
+			*userEmail,
+			*userPassword,
+			amazonSecretAccessKey,
+			amazonAccessKeyID,
+			DAYS,
+		)
 		if err != nil {
-			fmt.Printf("[error] Creating user: %v\n", err)
+			fmt.Printf("[error] %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("[info] Created user %s\n", userObjectID.Hex())
-		subDoc := bson.M{
-			"_id":           primitive.NewObjectID(),
-			"name":          "default",
-			"stripe_id":     "sub_9ECyjjMz3R7etK",
-			"stripe_plan":   "enterprise",
-			"quantity":      1,
-			"trial_ends_at": nil,
-			"ends_at":       nil,
-			"user_id":       userObjectID,
-			"updated_at":    now,
-			"created_at":    now,
-			"stripe_status": "active",
-		}
-		_, err = subColl.InsertOne(ctx, subDoc)
+
+		_, err = InsertSubscription(subColl, userObjectID.Hex())
 		if err != nil {
-			fmt.Printf("[error] Creating subscription: %v\n", err)
+			fmt.Printf("[error] %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("[info] Created subscription for user %s\n", userObjectID.Hex())
+
+		fmt.Printf("[info] Created new user with enterprise subscription.\n")
 	}
 
 	deviceColl := client.Database(*dbName).Collection(*deviceCollName)
-	if *userId == "" {
-		// If you want to use the value from the created user, you can extract it from userDoc if needed
-		// amazonSecretAccessKey = *extract from userDoc if dynamic*
-	}
+
 	deviceDocs, deviceIDs := BuildDeviceDocs(*deviceCount, userObjectID, amazonSecretAccessKey)
 	if len(deviceDocs) > 0 {
 		_, err := deviceColl.InsertMany(ctx, deviceDocs)
@@ -550,8 +731,7 @@ mainLoop:
 		if remaining < int64(*batchSize) {
 			current = int(remaining)
 		}
-		now := time.Now().Unix()
-		docs := BuildBatchDocs(current, now, userObjectID, deviceIDs)
+		docs := BuildBatchDocs(current, DAYS, userObjectID, deviceIDs)
 		batchCh <- docs
 		atomic.AddInt64(&batchCounter, 1)
 		atomic.AddInt64(&totalQueued, int64(current))
