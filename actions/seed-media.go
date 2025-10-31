@@ -509,7 +509,7 @@ func SeedMedia() {
 	if !WasFlagPassed("uri") {
 		*uri = PromptString("Enter MongoDB URI (--uri): ")
 		if *uri == "" {
-			*uri = "mongodb+srv://cedric:UrYMmxnovlcdkm06@hub-dev.lfxmajh.mongodb.net/"
+			*uri = "mongodb://localhost:27017"
 			fmt.Printf("[info] Using default MongoDB URI: %s\n", *uri)
 		}
 	}
