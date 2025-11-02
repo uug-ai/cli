@@ -1,0 +1,19 @@
+{
+    "name": "go:1.24-bookworm",
+    "runArgs": [
+        "--name=uugai-cli-dev",
+        "--network=host"
+    ],
+    "dockerFile": "Dockerfile",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "golang.Go",
+                "GitHub.copilot",
+                "ms-azuretools.vscode-docker",
+                "mongodb.mongodb-vscode"
+            ]
+        }
+    },
+    "postCreateCommand": "go mod tidy"
+}
