@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 	"fmt"
+	"log"
+	"math/rand"
 	"time"
 
 	"github.com/uug-ai/cli/models"
@@ -13,53 +15,72 @@ import (
 
 // --- Queries (read-only) ---
 
-func GetUsersFromMongodb(client *mongo.Client, dbName string) ([]models.User, error) {
+func GetUsersFromMongodb(client *mongo.Client, DatabaseName string) []models.User {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
-	coll := client.Database(dbName).Collection("users")
+	db := client.Database(DatabaseName)
+	accountsCollection := db.Collection("users")
+
 	var users []models.User
-	cur, err := coll.Find(ctx, bson.M{})
+
+	match := bson.M{}
+	cursor, err := accountsCollection.Find(ctx, match)
 	if err != nil {
-		return nil, err
+		log.Println(err)
 	}
-	defer cur.Close(ctx)
-	if err = cur.All(ctx, &users); err != nil {
-		return nil, err
+	defer cursor.Close(ctx)
+	err = cursor.All(ctx, &users)
+	if err != nil {
+		log.Println(err)
 	}
-	return users, nil
+
+	return users
 }
 
-func GetUserFromMongodb(client *mongo.Client, dbName string, username string) (models.User, error) {
+func GetUserFromMongodb(client *mongo.Client, DatabaseName string, username string) models.User {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
-	coll := client.Database(dbName).Collection("users")
+	db := client.Database(DatabaseName)
+	accountsCollection := db.Collection("users")
+
 	var user models.User
-	err := coll.FindOne(ctx, bson.M{"username": username}).Decode(&user)
-	if err == mongo.ErrNoDocuments {
-		return models.User{}, nil
+
+	match := bson.M{"username": username}
+	err := accountsCollection.FindOne(ctx, match).Decode(&user)
+	if err != nil {
+		log.Println(err)
 	}
-	return user, err
+
+	return user
 }
 
-func GetSequencesFromMongodb(client *mongo.Client, dbName string, userId string, startTimestamp, endTimestamp int64) ([]models.Sequences, error) {
+func GetSequencesFromMongodb(client *mongo.Client, DatabaseName string, userId string, startTimestamp int64, endTimestamp int64) []models.Sequences {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
-	coll := client.Database(dbName).Collection("sequences")
+	db := client.Database(DatabaseName)
+	sequenceCollection := db.Collection("sequences")
+
 	var sequences []models.Sequences
-	filter := bson.M{
+	match := bson.M{
 		"user_id": userId,
-		"start":   bson.M{"$lte": endTimestamp},
-		"end":     bson.M{"$gte": startTimestamp},
+		"start": bson.M{
+			"$lte": endTimestamp,
+		},
+		"end": bson.M{
+			"$gte": startTimestamp,
+		},
 	}
-	cur, err := coll.Find(ctx, filter)
+	cursor, err := sequenceCollection.Find(ctx, match)
 	if err != nil {
-		return nil, err
+		log.Println(err)
 	}
-	defer cur.Close(ctx)
-	if err = cur.All(ctx, &sequences); err != nil {
-		return nil, err
+	defer cursor.Close(ctx)
+	err = cursor.All(ctx, &sequences)
+	if err != nil {
+		log.Println(err)
 	}
-	return sequences, nil
+
+	return sequences
 }
 
 // --- Document builders ---
@@ -156,6 +177,116 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interf
 		ids = append(ids, id)
 	}
 	return docs, ids
+}
+
+func BuildBatchDocs(
+	n int,
+	days int,
+	userObjectID primitive.ObjectID,
+	deviceIDs []primitive.ObjectID,
+) []interface{} {
+
+	// Pools (static)
+	var (
+		DETECTION_POOL = []string{
+			"animal", "pedestrian", "cyclist", "motorbike", "lorry", "car", "handbag", "suitcase", "cell phone",
+		}
+		TAG_POOL = []string{
+			"outdoor", "indoor", "evening", "sunny", "crowd", "single-subject", "normal", "rainy", "night", "vehicle",
+			"urban", "rural", "busy", "quiet", "sports", "event", "construction", "park", "school", "shopping", "office",
+			"residential", "traffic", "festival", "emergency", "public-transport", "parking-lot", "playground", "market",
+			"bridge", "tunnel",
+		}
+		COLOR_POOL = []string{"red", "blue", "green", "gray", "black", "white", "yellow"}
+		VIDEO_POOL = []string{
+			"demo/1751987393_3-641_falcon_420-234-408-321_397_29896.mp4",
+			"demo/1751987410_3-505_dublin_1596-648-78-118_1105_26520.mp4",
+			"demo/1751987440_3-425_dublin_1594-708-57-29_1252_29880.mp4",
+			"demo/1751987476_3-482_nashville_1134-654-205-45_691_30440.mp4",
+			"demo/1751987663_3-913_falcon_622-257-301-322_7130_29897.mp4",
+			"demo/1751987924_3-818_nashville_651-649-688-332_9458_30394.mp4",
+		}
+	)
+
+	if days < 1 {
+		days = 1
+	}
+	if len(deviceIDs) == 0 {
+		return nil
+	}
+	docs := make([]interface{}, 0, n)
+	secondsInDays := int64(days) * 86400
+	now := time.Now().Unix()
+
+	for i := 0; i < n; i++ {
+		offset := rand.Int63n(secondsInDays)
+		st := now - offset
+		en := st + int64(rand.Intn(21)+5)
+
+		deviceID := deviceIDs[rand.Intn(len(deviceIDs))].Hex()
+
+		doc := bson.M{
+			"_id":             primitive.NewObjectID(),
+			"startTimestamp":  st,
+			"endTimestamp":    en,
+			"duration":        en - st,
+			"deviceId":        deviceID,
+			"organisationId":  fmt.Sprintf("ORG-%03d", rand.Intn(100)+1),
+			"storageSolution": "kstorage",
+			"videoProvider":   "azure-production",
+			"videoFile":       pickOne(VIDEO_POOL),
+			"analysisId":      fmt.Sprintf("AN-%06d", rand.Intn(5001)),
+			"description":     "synthetic media sample for load test",
+			"detections":      sampleUnique(DETECTION_POOL, rand.Intn(4)+1),
+			"dominantColors":  sampleUnique(COLOR_POOL, rand.Intn(3)+1),
+			"count":           rand.Intn(11) - 5,
+			"tags":            sampleUnique(TAG_POOL, rand.Intn(4)+1),
+			"metadata": bson.M{
+				"tags":            sampleUnique(TAG_POOL, rand.Intn(3)+1),
+				"classifications": []string{"normal_activity"},
+			},
+			"userId": userObjectID.Hex(),
+		}
+		docs = append(docs, doc)
+	}
+	return docs
+}
+
+func pickOne(pool []string) string {
+	if len(pool) == 0 {
+		return ""
+	}
+	return pool[rand.Intn(len(pool))]
+}
+
+func sampleUnique(pool []string, n int) []string {
+	if n <= 0 || len(pool) == 0 {
+		return []string{}
+	}
+	if n > len(pool) {
+		n = len(pool)
+	}
+	perm := rand.Perm(len(pool))
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = pool[perm[i]]
+	}
+	return out
+}
+
+func CreateIndexes(ctx context.Context, col *mongo.Collection) {
+	indexes := []mongo.IndexModel{
+		{Keys: bson.D{{Key: "startTimestamp", Value: 1}}},
+		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
+		{Keys: bson.D{{Key: "organisationId", Value: 1}}},
+		{Keys: bson.D{{Key: "tags", Value: 1}}},
+		{Keys: bson.D{{Key: "detections", Value: 1}}},
+		{Keys: bson.D{{Key: "duration", Value: 1}}},
+	}
+	_, err := col.Indexes().CreateMany(ctx, indexes)
+	if err != nil {
+		fmt.Printf("[info] index creation skipped: %v\n", err)
+	}
 }
 
 // --- Inserts ---

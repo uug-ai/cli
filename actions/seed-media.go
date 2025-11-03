@@ -24,28 +24,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Pools (static)
-var (
-	DETECTION_POOL = []string{
-		"animal", "pedestrian", "cyclist", "motorbike", "lorry", "car", "handbag", "suitcase", "cell phone",
-	}
-	TAG_POOL = []string{
-		"outdoor", "indoor", "evening", "sunny", "crowd", "single-subject", "normal", "rainy", "night", "vehicle",
-		"urban", "rural", "busy", "quiet", "sports", "event", "construction", "park", "school", "shopping", "office",
-		"residential", "traffic", "festival", "emergency", "public-transport", "parking-lot", "playground", "market",
-		"bridge", "tunnel",
-	}
-	COLOR_POOL = []string{"red", "blue", "green", "gray", "black", "white", "yellow"}
-	VIDEO_POOL = []string{
-		"demo/1751987393_3-641_falcon_420-234-408-321_397_29896.mp4",
-		"demo/1751987410_3-505_dublin_1596-648-78-118_1105_26520.mp4",
-		"demo/1751987440_3-425_dublin_1594-708-57-29_1252_29880.mp4",
-		"demo/1751987476_3-482_nashville_1134-654-205-45_691_30440.mp4",
-		"demo/1751987663_3-913_falcon_622-257-301-322_7130_29897.mp4",
-		"demo/1751987924_3-818_nashville_651-649-688-332_9458_30394.mp4",
-	}
-)
-
 var stopFlag int32
 
 const DAYS = 30
@@ -137,45 +115,6 @@ func BuildDeviceDocs(deviceCount int, userObjectID primitive.ObjectID, amazonSec
 	return devices, deviceIDs
 }
 
-func BuildBatchDocs(n int, days int, userObjectID primitive.ObjectID, deviceIDs []primitive.ObjectID) []interface{} {
-	if days < 1 {
-		days = 1
-	}
-	docs := make([]interface{}, 0, n)
-	secondsInDays := int64(days) * 86400
-	now := time.Now().Unix()
-	for i := 0; i < n; i++ {
-		offset := rand.Int63n(secondsInDays)
-		st := now - offset
-		en := st + int64(rand.Intn(21)+5)
-		deviceID := deviceIDs[rand.Intn(len(deviceIDs))].Hex()
-		doc := bson.M{
-			"_id":             primitive.NewObjectID(),
-			"startTimestamp":  st,
-			"endTimestamp":    en,
-			"duration":        en - st,
-			"deviceId":        deviceID,
-			"organisationId":  fmt.Sprintf("ORG-%03d", rand.Intn(100)+1),
-			"storageSolution": "kstorage",
-			"videoProvider":   "azure-production",
-			"videoFile":       VIDEO_POOL[rand.Intn(len(VIDEO_POOL))],
-			"analysisId":      fmt.Sprintf("AN-%06d", rand.Intn(5001)),
-			"description":     "synthetic media sample for load test",
-			"detections":      SampleUnique(DETECTION_POOL, rand.Intn(4)+1),
-			"dominantColors":  SampleUnique(COLOR_POOL, rand.Intn(3)+1),
-			"count":           rand.Intn(11) - 5,
-			"tags":            SampleUnique(TAG_POOL, rand.Intn(4)+1),
-			"metadata": bson.M{
-				"tags":            SampleUnique(TAG_POOL, rand.Intn(3)+1),
-				"classifications": []string{"normal_activity"},
-			},
-			"userId": userObjectID.Hex(),
-		}
-		docs = append(docs, doc)
-	}
-	return docs
-}
-
 func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{}) int {
 	if len(docs) == 0 {
 		return 0
@@ -186,21 +125,6 @@ func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{})
 		return 0
 	}
 	return len(docs)
-}
-
-func CreateIndexes(ctx context.Context, col *mongo.Collection) {
-	indexes := []mongo.IndexModel{
-		{Keys: bson.D{{Key: "startTimestamp", Value: 1}}},
-		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
-		{Keys: bson.D{{Key: "organisationId", Value: 1}}},
-		{Keys: bson.D{{Key: "tags", Value: 1}}},
-		{Keys: bson.D{{Key: "detections", Value: 1}}},
-		{Keys: bson.D{{Key: "duration", Value: 1}}},
-	}
-	_, err := col.Indexes().CreateMany(ctx, indexes)
-	if err != nil {
-		fmt.Printf("[info] index creation skipped: %v\n", err)
-	}
 }
 
 func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName string) (string, error) {
@@ -244,6 +168,33 @@ func IsDuplicateKeyInMongodb(keyType, keyValue string, client *mongo.Client, dbN
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// RunBatchWorkers consumes batches from batchCh with given parallelism.
+// Updates totalInserted atomically. Returns when channel closes.
+func RunBatchWorkers(
+	ctx context.Context,
+	parallel int,
+	coll *mongo.Collection,
+	batchCh <-chan []interface{},
+	stopFlag *int32,
+	totalInserted *int64,
+) {
+	var wg sync.WaitGroup
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for docs := range batchCh {
+				if atomic.LoadInt32(stopFlag) != 0 {
+					return
+				}
+				inserted := InsertBatch(ctx, coll, docs)
+				atomic.AddInt64(totalInserted, int64(inserted))
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func PromptInt(prompt string) int {
@@ -465,20 +416,9 @@ func SeedMedia(
 		os.Exit(1)
 	}
 
-	userColl := client.Database(dbName).Collection(userCollName)
-	mediaColl := client.Database(dbName).Collection(mediaCollName)
-	settingsColl := client.Database(dbName).Collection(settingsCollName)
-
-	// Ensure settings document exists
-	var settingsDoc bson.M
-	err = settingsColl.FindOne(ctx, bson.M{"key": "plan", "map.enterprise": bson.M{"$exists": true}}).Decode(&settingsDoc)
-	if err == mongo.ErrNoDocuments {
-		if err := database.InsertSettings(client, dbName, settingsCollName); err != nil {
-			fmt.Printf("[error] Inserting settings: %v\n", err)
-			os.Exit(1)
-		}
-	} else if err != nil {
-		fmt.Printf("[error] Checking settings: %v\n", err)
+	// Ensure settings
+	if err := database.EnsureSettings(ctx, client, dbName, settingsCollName); err != nil {
+		fmt.Printf("[error] ensure settings: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -486,39 +426,40 @@ func SeedMedia(
 	var amazonSecretAccessKey, amazonAccessKeyID string
 
 	if userId != "" {
-		// Fetch the user and use their keys
+		// Existing user path
 		userObjectID, err = primitive.ObjectIDFromHex(userId)
 		if err != nil {
-			fmt.Printf("[error] Invalid userId: %v\n", err)
+			fmt.Printf("[error] invalid userId: %v\n", err)
 			os.Exit(1)
 		}
 		var userDoc bson.M
-		err = userColl.FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
+		err = client.Database(dbName).Collection(userCollName).FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
 		if err != nil {
-			fmt.Printf("[error] Could not find user with id %s: %v\n", userId, err)
+			fmt.Printf("[error] fetch user: %v\n", err)
 			os.Exit(1)
 		}
 		amazonSecretAccessKey, _ = userDoc["amazon_secret_access_key"].(string)
 		amazonAccessKeyID, _ = userDoc["amazon_access_key_id"].(string)
 		if amazonSecretAccessKey == "" || amazonAccessKeyID == "" {
-			fmt.Printf("[error] User is missing AWS keys.\n")
+			fmt.Printf("[error] user missing keys\n")
 			os.Exit(1)
 		}
 	} else {
+		// New user path
 		amazonSecretAccessKey, err = GenerateKey("private", client, dbName, userCollName)
 		if err != nil {
-			fmt.Printf("[error] Generating amazon_secret_access_key: %v\n", err)
+			fmt.Printf("[error] generate private key: %v\n", err)
 			os.Exit(1)
 		}
 		amazonAccessKeyID, err = GenerateKey("public", client, dbName, userCollName)
 		if err != nil {
-			fmt.Printf("[error] Generating amazon_access_key_id: %v\n", err)
+			fmt.Printf("[error] generate public key: %v\n", err)
 			os.Exit(1)
 		}
 
 		hashedPassword, err := Hash(userPassword)
 		if err != nil {
-			fmt.Printf("hashing password: %w", err)
+			fmt.Printf("[error] hash password: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -531,42 +472,35 @@ func SeedMedia(
 			Days:                  DAYS,
 		}
 
-		// Create new user with subscription
-		userObjectID, err = database.InsertUser(
-			client,
-			dbName,
-			userCollName,
-			userInfo,
-		)
-		if err != nil {
-			fmt.Printf("[error] %v\n", err)
+		// Build & insert user document
+		userObjectID, userDoc := database.BuildUserDoc(userInfo)
+		if err := database.InsertOne(ctx, client, dbName, userCollName, userDoc); err != nil {
+			fmt.Printf("[error] insert user: %v\n", err)
 			os.Exit(1)
 		}
 
-		err = database.InsertSubscription(client, dbName, subscriptionCollName, userObjectID)
-		if err != nil {
-			fmt.Printf("[error] %v\n", err)
+		// Build & insert subscription document
+		subDoc := database.BuildSubscriptionDoc(userObjectID)
+		if err := database.InsertOne(ctx, client, dbName, subscriptionCollName, subDoc); err != nil {
+			fmt.Printf("[error] insert subscription: %v\n", err)
 			os.Exit(1)
 		}
-
 		fmt.Printf("[info] Created new user with enterprise subscription.\n")
 	}
 
-	deviceColl := client.Database(dbName).Collection(deviceCollName)
-
-	deviceDocs, deviceIDs := BuildDeviceDocs(deviceCount, userObjectID, amazonSecretAccessKey)
+	// Devices
+	deviceDocs, deviceIDs := database.BuildDeviceDocs(deviceCount, userObjectID, amazonSecretAccessKey)
 	if len(deviceDocs) > 0 {
-		_, err := deviceColl.InsertMany(ctx, deviceDocs)
-		if err != nil {
-			fmt.Printf("[error] Creating devices: %v\n", err)
+		if err := database.InsertMany(ctx, client, dbName, deviceCollName, deviceDocs); err != nil {
+			fmt.Printf("[error] insert devices: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Printf("[info] Created %d devices for user %s\n", len(deviceDocs), userObjectID.Hex())
 	}
 
-	col := mediaColl
+	mediaColl := client.Database(dbName).Collection(mediaCollName)
 	if !noIndex {
-		CreateIndexes(ctx, col)
+		database.CreateIndexes(ctx, mediaColl)
 	}
 
 	var (
@@ -589,22 +523,20 @@ func SeedMedia(
 				if atomic.LoadInt32(&stopFlag) != 0 {
 					return
 				}
-				inserted := InsertBatch(ctx, col, docs)
+				inserted := InsertBatch(ctx, mediaColl, docs)
 				atomic.AddInt64(&totalInserted, int64(inserted))
 			}
 		}()
 	}
 
 	var totalQueued int64
-
-mainLoop:
 	for atomic.LoadInt64(&totalQueued) < int64(target) && atomic.LoadInt32(&stopFlag) == 0 {
 		remaining := int64(target) - atomic.LoadInt64(&totalQueued)
 		current := batchSize
 		if remaining < int64(batchSize) {
 			current = int(remaining)
 		}
-		docs := BuildBatchDocs(current, DAYS, userObjectID, deviceIDs)
+		docs := database.BuildBatchDocs(current, DAYS, userObjectID, deviceIDs)
 		batchCh <- docs
 		atomic.AddInt64(&batchCounter, 1)
 		atomic.AddInt64(&totalQueued, int64(current))
@@ -616,19 +548,20 @@ mainLoop:
 			fmt.Printf("[progress] batches=%d inserted=%d (%.2f%%) rate=%.0f/s\n",
 				atomic.LoadInt64(&batchCounter), atomic.LoadInt64(&totalInserted), pct, rate)
 		}
-		if atomic.LoadInt32(&stopFlag) != 0 {
-			break mainLoop
-		}
 	}
+
 	close(batchCh)
 	wg.Wait()
+
 	if err := client.Disconnect(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "[warn] error disconnecting MongoDB: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[warn] disconnect MongoDB: %v\n", err)
 	}
+
 	elapsed := time.Since(startTime).Seconds()
 	rate := float64(atomic.LoadInt64(&totalInserted)) / elapsed
 	fmt.Printf("[done] inserted=%d elapsed=%.2fs rate=%.0f/s stop_flag=%v\n",
 		atomic.LoadInt64(&totalInserted), elapsed, rate, atomic.LoadInt32(&stopFlag) != 0)
+
 	if atomic.LoadInt32(&stopFlag) != 0 {
 		os.Exit(130)
 	} else {
