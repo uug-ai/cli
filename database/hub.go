@@ -365,7 +365,7 @@ func RunBatchWorkers(
 	batchCh <-chan []interface{},
 	stopFlag *int32,
 	totalInserted *int64,
-	progressCh chan<- int,
+	progressCh chan<- int, // cumulative total after each batch
 ) {
 	var wg sync.WaitGroup
 	for i := 0; i < parallel; i++ {
@@ -378,13 +378,10 @@ func RunBatchWorkers(
 				}
 				inserted := InsertBatch(ctx, coll, docs)
 				if inserted > 0 {
-					atomic.AddInt64(totalInserted, int64(inserted))
+					total := atomic.AddInt64(totalInserted, int64(inserted))
 					if progressCh != nil {
-						select {
-						case progressCh <- inserted:
-						default:
-							// Do nothing
-						}
+						// blocking send; batches are coarse so acceptable
+						progressCh <- int(total)
 					}
 				}
 			}

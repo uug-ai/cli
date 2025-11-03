@@ -398,13 +398,11 @@ func SeedMedia(
 	}()
 
 	go func() {
-		for range progressCh {
-			// Set bar to current total (avoids per-doc loops)
-			cur := int(atomic.LoadInt64(&totalInserted))
-			if cur > target {
-				cur = target
+		for total := range progressCh {
+			if total > target {
+				total = target
 			}
-			bar.Set(cur)
+			bar.Set(total)
 		}
 	}()
 
@@ -425,6 +423,11 @@ func SeedMedia(
 	// Finish
 	close(batchCh)
 	<-doneWorkers
+	finalTotal := int(atomic.LoadInt64(&totalInserted))
+	if finalTotal > target {
+		finalTotal = target
+	}
+	bar.Set(finalTotal)
 	uiprogress.Stop()
 
 	// -------- Summary --------
