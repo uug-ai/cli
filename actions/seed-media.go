@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -28,8 +27,6 @@ var stopFlag int32
 
 const DAYS = 30
 
-const operationTimeout = 10 * time.Second
-
 func HandleSignals() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
@@ -38,18 +35,6 @@ func HandleSignals() {
 		fmt.Println("\n[signal] Received interrupt, stopping after current batches...")
 		atomic.StoreInt32(&stopFlag, 1)
 	}()
-}
-
-func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{}) int {
-	if len(docs) == 0 {
-		return 0
-	}
-	_, err := col.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
-	if err != nil {
-		fmt.Printf("[warn] batch error: %v\n", err)
-		return 0
-	}
-	return len(docs)
 }
 
 func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName string) (string, error) {
@@ -71,33 +56,6 @@ func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName stri
 		}
 	}
 	return "", fmt.Errorf("failed to generate unique key after max retries")
-}
-
-// RunBatchWorkers consumes batches from batchCh with given parallelism.
-// Updates totalInserted atomically. Returns when channel closes.
-func RunBatchWorkers(
-	ctx context.Context,
-	parallel int,
-	coll *mongo.Collection,
-	batchCh <-chan []interface{},
-	stopFlag *int32,
-	totalInserted *int64,
-) {
-	var wg sync.WaitGroup
-	for i := 0; i < parallel; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for docs := range batchCh {
-				if atomic.LoadInt32(stopFlag) != 0 {
-					return
-				}
-				inserted := InsertBatch(ctx, coll, docs)
-				atomic.AddInt64(totalInserted, int64(inserted))
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 func PromptInt(prompt string) int {
@@ -172,20 +130,18 @@ func SeedMedia(
 	rand.Seed(time.Now().UnixNano())
 	HandleSignals()
 
-	flag.Parse()
-
 	fmt.Printf("[info] Skip any prompt to use default values.")
 
+	// -------- Prompts / defaults --------
 	if !WasFlagPassed("target") {
-		target = PromptInt("Enter total documents to insert (--target): ")
+		target = PromptInt("Enter total amount of documents to insert (--target): ")
 		if target == 0 {
-			target = 100000 // default target
+			target = 100000
 			fmt.Printf("[info] Using default target: %d\n", target)
 		}
 	}
-
-	if !WasFlagPassed("batch") {
-		batchSize = PromptInt("Enter documents per batch (--batch) (1-100,000): ")
+	if !WasFlagPassed("batch-size") {
+		batchSize = PromptInt("Enter documents per batch (--batch-size) (1-100,000): ")
 		if batchSize == 0 {
 			switch {
 			case target <= 10000:
@@ -197,12 +153,15 @@ func SeedMedia(
 			}
 			fmt.Printf("[info] Using recommended batch size: %d\n", batchSize)
 		}
-	} else if batchSize < 0 {
+	} else if batchSize < 1 {
 		batchSize = 1
 	} else if batchSize > 100000 {
 		batchSize = 100000
 	}
-
+	if batchSize > target {
+		batchSize = target
+		fmt.Printf("[info] Batch size limited to target: %d\n", batchSize)
+	}
 	if !WasFlagPassed("parallel") {
 		parallel = PromptInt("Enter concurrent batch workers (--parallel) (1-16): ")
 		if parallel == 0 {
@@ -221,7 +180,6 @@ func SeedMedia(
 	} else if parallel > 16 {
 		parallel = 16
 	}
-
 	if !WasFlagPassed("uri") {
 		uri = PromptString("Enter MongoDB URI (--uri): ")
 		if uri == "" {
@@ -276,7 +234,7 @@ func SeedMedia(
 			}
 		}
 		if subscriptionCollName == "" {
-			subscriptionCollName = PromptString("Enter target subscription collection name, needed to log in (--subscription-collection): ")
+			subscriptionCollName = PromptString("Enter target subscription collection name (--subscription-collection): ")
 			if subscriptionCollName == "" {
 				subscriptionCollName = "subscriptions"
 				fmt.Printf("[info] Using default subscription collection name: %s\n", subscriptionCollName)
@@ -301,17 +259,14 @@ func SeedMedia(
 	}
 	if !WasFlagPassed("device-count") {
 		deviceCount = PromptInt("Enter number of devices to simulate (--device-count) (1-50): ")
-		if deviceCount < 1 {
-			deviceCount = 1
-		} else if deviceCount > 50 {
-			deviceCount = 50
-		}
-		if deviceCount == 0 {
-			deviceCount = 2
-			fmt.Printf("[info] Using default device count: %d\n", deviceCount)
-		}
+	}
+	if deviceCount < 1 {
+		deviceCount = 1
+	} else if deviceCount > 50 {
+		deviceCount = 50
 	}
 
+	// -------- Connect --------
 	ctx := context.Background()
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri).SetServerSelectionTimeout(10*time.Second))
 	if err != nil {
@@ -319,17 +274,17 @@ func SeedMedia(
 		os.Exit(1)
 	}
 
-	// Ensure settings
+	// -------- Settings --------
 	if err := database.EnsureSettings(ctx, client, dbName, settingsCollName); err != nil {
 		fmt.Printf("[error] ensure settings: %v\n", err)
 		os.Exit(1)
 	}
 
+	// -------- User & subscription --------
 	var userObjectID primitive.ObjectID
 	var amazonSecretAccessKey, amazonAccessKeyID string
 
 	if userId != "" {
-		// Existing user path
 		userObjectID, err = primitive.ObjectIDFromHex(userId)
 		if err != nil {
 			fmt.Printf("[error] invalid userId: %v\n", err)
@@ -348,7 +303,13 @@ func SeedMedia(
 			os.Exit(1)
 		}
 	} else {
-		// New user path
+		// check if user with same name exists
+		existingUser := database.GetUserFromMongodb(client, dbName, userName, userCollName)
+		if existingUser.Username != "" {
+			fmt.Printf("[error] user with name %s already exists (ID: %s)\n", userName, existingUser.Id.Hex())
+			os.Exit(1)
+		}
+
 		amazonSecretAccessKey, err = GenerateKey("private", client, dbName, userCollName)
 		if err != nil {
 			fmt.Printf("[error] generate private key: %v\n", err)
@@ -359,13 +320,11 @@ func SeedMedia(
 			fmt.Printf("[error] generate public key: %v\n", err)
 			os.Exit(1)
 		}
-
 		hashedPassword, err := Hash(userPassword)
 		if err != nil {
 			fmt.Printf("[error] hash password: %v\n", err)
 			os.Exit(1)
 		}
-
 		userInfo := models.InsertUserInfo{
 			UserName:              userName,
 			UserEmail:             userEmail,
@@ -374,15 +333,11 @@ func SeedMedia(
 			AmazonAccessKeyID:     amazonAccessKeyID,
 			Days:                  DAYS,
 		}
-
-		// Build & insert user document
 		userObjectID, userDoc := database.BuildUserDoc(userInfo)
 		if err := database.InsertOne(ctx, client, dbName, userCollName, userDoc); err != nil {
 			fmt.Printf("[error] insert user: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Build & insert subscription document
 		subDoc := database.BuildSubscriptionDoc(userObjectID)
 		if err := database.InsertOne(ctx, client, dbName, subscriptionCollName, subDoc); err != nil {
 			fmt.Printf("[error] insert subscription: %v\n", err)
@@ -391,47 +346,43 @@ func SeedMedia(
 		fmt.Printf("[info] Created new user with enterprise subscription.\n")
 	}
 
-	// Devices
+	// -------- Devices --------
 	deviceDocs, deviceIDs := database.BuildDeviceDocs(deviceCount, userObjectID, amazonSecretAccessKey)
-	if len(deviceDocs) > 0 {
-		if err := database.InsertMany(ctx, client, dbName, deviceCollName, deviceDocs); err != nil {
-			fmt.Printf("[error] insert devices: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("[info] Created %d devices for user %s\n", len(deviceDocs), userObjectID.Hex())
+	if len(deviceDocs) == 0 {
+		fmt.Printf("[error] no devices generated\n")
+		os.Exit(1)
 	}
+	if err := database.InsertMany(ctx, client, dbName, deviceCollName, deviceDocs); err != nil {
+		fmt.Printf("[error] insert devices: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("[info] Created %d devices for user %s\n", len(deviceDocs), userObjectID.Hex())
 
+	// -------- Media collection & indexes --------
 	mediaColl := client.Database(dbName).Collection(mediaCollName)
 	if !noIndex {
 		database.CreateIndexes(ctx, mediaColl)
 	}
 
+	// -------- Batch channel & workers --------
 	var (
 		totalInserted int64
 		batchCounter  int64
 		startTime     = time.Now()
-		wg            sync.WaitGroup
 		batchCh       = make(chan []interface{}, parallel*2)
 	)
 
 	fmt.Printf("[start] target=%d batch=%d parallel=%d uri=%s db=%s.%s\n",
 		target, batchSize, parallel, uri, dbName, mediaCollName)
 
-	// Workers
-	for i := 0; i < parallel; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for docs := range batchCh {
-				if atomic.LoadInt32(&stopFlag) != 0 {
-					return
-				}
-				inserted := InsertBatch(ctx, mediaColl, docs)
-				atomic.AddInt64(&totalInserted, int64(inserted))
-			}
-		}()
-	}
+	// Use RunBatchWorkers
+	doneWorkers := make(chan struct{})
+	go func() {
+		database.RunBatchWorkers(ctx, parallel, mediaColl, batchCh, &stopFlag, &totalInserted)
+		close(doneWorkers)
+	}()
 
+	// -------- Produce batches --------
 	var totalQueued int64
 	for atomic.LoadInt64(&totalQueued) < int64(target) && atomic.LoadInt32(&stopFlag) == 0 {
 		remaining := int64(target) - atomic.LoadInt64(&totalQueued)
@@ -453,13 +404,14 @@ func SeedMedia(
 		}
 	}
 
+	// Finish
 	close(batchCh)
-	wg.Wait()
+	<-doneWorkers
 
+	// -------- Summary --------
 	if err := client.Disconnect(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "[warn] disconnect MongoDB: %v\n", err)
 	}
-
 	elapsed := time.Since(startTime).Seconds()
 	rate := float64(atomic.LoadInt64(&totalInserted)) / elapsed
 	fmt.Printf("[done] inserted=%d elapsed=%.2fs rate=%.0f/s stop_flag=%v\n",

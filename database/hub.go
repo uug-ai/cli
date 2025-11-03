@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uug-ai/cli/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // --- Queries (read-only) ---
@@ -37,11 +40,15 @@ func GetUsersFromMongodb(client *mongo.Client, DatabaseName string) []models.Use
 	return users
 }
 
-func GetUserFromMongodb(client *mongo.Client, DatabaseName string, username string) models.User {
+func GetUserFromMongodb(client *mongo.Client, DatabaseName string, username string, userCollName ...string) models.User {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
+	collName := "users"
+	if len(userCollName) > 0 && userCollName[0] != "" {
+		collName = userCollName[0]
+	}
 	db := client.Database(DatabaseName)
-	accountsCollection := db.Collection("users")
+	accountsCollection := db.Collection(collName)
 
 	var user models.User
 
@@ -337,4 +344,43 @@ func EnsureSettings(ctx context.Context, client *mongo.Client, dbName, collName 
 	}
 	_, err = coll.InsertOne(ctx, BuildSettingsDoc())
 	return err
+}
+
+func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{}) int {
+	if len(docs) == 0 {
+		return 0
+	}
+	_, err := col.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
+	if err != nil {
+		fmt.Printf("[warn] batch error: %v\n", err)
+		return 0
+	}
+	return len(docs)
+}
+
+// RunBatchWorkers consumes batches from batchCh with given parallelism.
+// Updates totalInserted atomically. Returns when channel closes.
+func RunBatchWorkers(
+	ctx context.Context,
+	parallel int,
+	coll *mongo.Collection,
+	batchCh <-chan []interface{},
+	stopFlag *int32,
+	totalInserted *int64,
+) {
+	var wg sync.WaitGroup
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for docs := range batchCh {
+				if atomic.LoadInt32(stopFlag) != 0 {
+					return
+				}
+				inserted := InsertBatch(ctx, coll, docs)
+				atomic.AddInt64(totalInserted, int64(inserted))
+			}
+		}()
+	}
+	wg.Wait()
 }
