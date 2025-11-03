@@ -83,6 +83,28 @@ func GetSequencesFromMongodb(client *mongo.Client, DatabaseName string, userId s
 	return sequences
 }
 
+func IsDuplicateKeyInMongodb(keyType, keyValue string, client *mongo.Client, dbName, userCollName string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+
+	userColl := client.Database(dbName).Collection(userCollName)
+
+	var filter bson.M
+	switch keyType {
+	case "public":
+		filter = bson.M{"amazon_access_key_id": keyValue}
+	case "private":
+		filter = bson.M{"amazon_secret_access_key": keyValue}
+	default:
+		return false, fmt.Errorf("invalid key type: %s", keyType)
+	}
+	count, err := userColl.CountDocuments(ctx, filter)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // --- Document builders ---
 
 func BuildUserDoc(info models.InsertUserInfo) (primitive.ObjectID, bson.M) {

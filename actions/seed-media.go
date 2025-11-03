@@ -40,81 +40,6 @@ func HandleSignals() {
 	}()
 }
 
-func SampleUnique(pool []string, n int) []string {
-	if n <= 0 {
-		return []string{}
-	}
-	if n > len(pool) {
-		n = len(pool)
-	}
-	perm := rand.Perm(len(pool))
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		out[i] = pool[perm[i]]
-	}
-	return out
-}
-
-func BuildDeviceDocs(deviceCount int, userObjectID primitive.ObjectID, amazonSecretAccessKey string) ([]interface{}, []primitive.ObjectID) {
-	devices := make([]interface{}, 0, deviceCount)
-	deviceIDs := make([]primitive.ObjectID, 0, deviceCount)
-	for i := 0; i < deviceCount; i++ {
-		deviceID := primitive.NewObjectID()
-		deviceDoc := bson.M{
-			"_id":     deviceID,
-			"key":     amazonSecretAccessKey,
-			"user_id": userObjectID.Hex(),
-			"status":  "inactive",
-			"featurePermissions": bson.M{
-				"ptz":           0,
-				"liveview":      0,
-				"remote_config": 0,
-			},
-			"isActive": false,
-			"analytics": []bson.M{
-				{
-					"cloudpublickey":  amazonSecretAccessKey,
-					"encrypted":       false,
-					"encrypteddata":   []byte{},
-					"key":             fmt.Sprintf("camera%d", i+1),
-					"hub_encryption":  "true",
-					"e2e_encryption":  "false",
-					"enterprise":      false,
-					"hash":            "",
-					"version":         "3.5.0",
-					"release":         "1f9772d",
-					"mac_list":        []string{},
-					"ip_list":         []string{"192.168.1.100", "10.0.0.100"},
-					"cameraname":      fmt.Sprintf("camera%d", 100+i),
-					"cameratype":      "IPCamera",
-					"architecture":    "x86_64",
-					"hostname":        fmt.Sprintf("host-%d", i+1),
-					"freeMemory":      "481275904",
-					"totalMemory":     "16515977216",
-					"usedMemory":      "16034701312",
-					"processMemory":   "65097728",
-					"kubernetes":      false,
-					"docker":          true,
-					"kios":            false,
-					"raspberrypi":     false,
-					"uptime":          "1 day ",
-					"boot_time":       "1 day ",
-					"timestamp":       time.Now().Unix(),
-					"onvif":           "false",
-					"onvif_zoom":      "false",
-					"onvif_pantilt":   "false",
-					"onvif_presets":   "false",
-					"cameraConnected": "false",
-					"hasBackChannel":  "false",
-				},
-			},
-		}
-		devices = append(devices, deviceDoc)
-		deviceIDs = append(deviceIDs, deviceID)
-	}
-	return devices, deviceIDs
-}
-
 func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{}) int {
 	if len(docs) == 0 {
 		return 0
@@ -137,7 +62,7 @@ func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName stri
 			return "", err
 		}
 		key := strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
-		isDup, err := IsDuplicateKeyInMongodb(keyType, key, client, dbName, userCollName)
+		isDup, err := IsDuplicateKey(keyType, key, client, dbName, userCollName)
 		if err != nil {
 			return "", err
 		}
@@ -146,28 +71,6 @@ func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName stri
 		}
 	}
 	return "", fmt.Errorf("failed to generate unique key after max retries")
-}
-
-func IsDuplicateKeyInMongodb(keyType, keyValue string, client *mongo.Client, dbName, userCollName string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
-	defer cancel()
-
-	userColl := client.Database(dbName).Collection(userCollName)
-
-	var filter bson.M
-	switch keyType {
-	case "public":
-		filter = bson.M{"amazon_access_key_id": keyValue}
-	case "private":
-		filter = bson.M{"amazon_secret_access_key": keyValue}
-	default:
-		return false, fmt.Errorf("invalid key type: %s", keyType)
-	}
-	count, err := userColl.CountDocuments(ctx, filter)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }
 
 // RunBatchWorkers consumes batches from batchCh with given parallelism.
