@@ -83,7 +83,7 @@ func GetSequencesFromMongodb(client *mongo.Client, DatabaseName string, userId s
 	return sequences
 }
 
-func IsDuplicateKeyInMongodb(keyType, keyValue string, client *mongo.Client, dbName, userCollName string) (bool, error) {
+func IsDuplicateKey(keyType, keyValue string, client *mongo.Client, dbName, userCollName string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
 

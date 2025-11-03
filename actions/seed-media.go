@@ -62,7 +62,7 @@ func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName stri
 			return "", err
 		}
 		key := strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
-		isDup, err := IsDuplicateKey(keyType, key, client, dbName, userCollName)
+		isDup, err := database.IsDuplicateKey(keyType, key, client, dbName, userCollName)
 		if err != nil {
 			return "", err
 		}
