@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gosuri/uiprogress"
 	"github.com/uug-ai/cli/database"
 	"github.com/uug-ai/cli/models"
 
@@ -130,7 +131,7 @@ func SeedMedia(
 	rand.Seed(time.Now().UnixNano())
 	HandleSignals()
 
-	fmt.Printf("[info] Skip any prompt to use default values.")
+	fmt.Printf("[info] Skip any prompt to use default values. \n")
 
 	// -------- Prompts / defaults --------
 	if !WasFlagPassed("target") {
@@ -372,14 +373,39 @@ func SeedMedia(
 		batchCh       = make(chan []interface{}, parallel*2)
 	)
 
-	fmt.Printf("[start] target=%d batch=%d parallel=%d uri=%s db=%s.%s\n",
-		target, batchSize, parallel, uri, dbName, mediaCollName)
+	// fmt.Printf("[start] target=%d batch=%d parallel=%d uri=%s db=%s.%s\n",
+	// 	target, batchSize, parallel, uri, dbName, mediaCollName)
 
-	// Use RunBatchWorkers
+	uiprogress.Start()
+	bar := uiprogress.AddBar(target).AppendCompleted().PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		inserted := atomic.LoadInt64(&totalInserted)
+		pct := 100 * float64(inserted) / float64(target)
+		elapsed := time.Since(startTime).Seconds()
+		rate := float64(inserted)
+		if elapsed > 0 {
+			rate = float64(inserted) / elapsed
+		}
+		return fmt.Sprintf("Inserted %d/%d (%.1f%%) %.0f/s", inserted, target, pct, rate)
+	})
+
+	progressCh := make(chan int, parallel*2)
+
 	doneWorkers := make(chan struct{})
 	go func() {
-		database.RunBatchWorkers(ctx, parallel, mediaColl, batchCh, &stopFlag, &totalInserted)
+		database.RunBatchWorkers(ctx, parallel, mediaColl, batchCh, &stopFlag, &totalInserted, progressCh)
 		close(doneWorkers)
+	}()
+
+	go func() {
+		for range progressCh {
+			// Set bar to current total (avoids per-doc loops)
+			cur := int(atomic.LoadInt64(&totalInserted))
+			if cur > target {
+				cur = target
+			}
+			bar.Set(cur)
+		}
 	}()
 
 	// -------- Produce batches --------
@@ -394,19 +420,12 @@ func SeedMedia(
 		batchCh <- docs
 		atomic.AddInt64(&batchCounter, 1)
 		atomic.AddInt64(&totalQueued, int64(current))
-
-		if atomic.LoadInt64(&batchCounter)%int64(reportEvery) == 0 {
-			elapsed := time.Since(startTime).Seconds()
-			rate := float64(atomic.LoadInt64(&totalInserted)) / elapsed
-			pct := 100 * float64(atomic.LoadInt64(&totalInserted)) / float64(target)
-			fmt.Printf("[progress] batches=%d inserted=%d (%.2f%%) rate=%.0f/s\n",
-				atomic.LoadInt64(&batchCounter), atomic.LoadInt64(&totalInserted), pct, rate)
-		}
 	}
 
 	// Finish
 	close(batchCh)
 	<-doneWorkers
+	uiprogress.Stop()
 
 	// -------- Summary --------
 	if err := client.Disconnect(ctx); err != nil {

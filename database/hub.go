@@ -358,8 +358,6 @@ func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{})
 	return len(docs)
 }
 
-// RunBatchWorkers consumes batches from batchCh with given parallelism.
-// Updates totalInserted atomically. Returns when channel closes.
 func RunBatchWorkers(
 	ctx context.Context,
 	parallel int,
@@ -367,6 +365,7 @@ func RunBatchWorkers(
 	batchCh <-chan []interface{},
 	stopFlag *int32,
 	totalInserted *int64,
+	progressCh chan<- int,
 ) {
 	var wg sync.WaitGroup
 	for i := 0; i < parallel; i++ {
@@ -378,9 +377,21 @@ func RunBatchWorkers(
 					return
 				}
 				inserted := InsertBatch(ctx, coll, docs)
-				atomic.AddInt64(totalInserted, int64(inserted))
+				if inserted > 0 {
+					atomic.AddInt64(totalInserted, int64(inserted))
+					if progressCh != nil {
+						select {
+						case progressCh <- inserted:
+						default:
+							// Do nothing
+						}
+					}
+				}
 			}
 		}()
 	}
 	wg.Wait()
+	if progressCh != nil {
+		close(progressCh)
+	}
 }
