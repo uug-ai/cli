@@ -27,8 +27,6 @@ import (
 
 var stopFlag int32
 
-const DAYS = 7
-
 func HandleSignals() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
@@ -150,6 +148,7 @@ func SeedMedia(
 	userPassword string,
 	userEmail string,
 	deviceCount int,
+	days int,
 ) {
 	HandleSignals()
 
@@ -283,6 +282,27 @@ func SeedMedia(
 			}
 			parallel = val
 			fmt.Printf("[info] using input -parallel = %d\n", parallel)
+		}
+	}
+
+	if WasFlagPassed("days") {
+		if days < 1 {
+			days = 1
+		} else if days > 30 {
+			days = 30
+		}
+		fmt.Printf("[info] using flag -days = %d\n", days)
+	} else {
+		val := PromptInt("Number of past days to spread the media over (-days, default 7, max 30): ")
+		if val <= 0 {
+			days = 7
+			fmt.Printf("[info] using default -days = %d\n", days)
+		} else {
+			if val > 30 {
+				val = 30
+			}
+			days = val
+			fmt.Printf("[info] using input -days = %d\n", days)
 		}
 	}
 
@@ -463,7 +483,7 @@ func SeedMedia(
 			UserPassword:          hashedPassword,
 			AmazonSecretAccessKey: amazonSecretAccessKey,
 			AmazonAccessKeyID:     amazonAccessKeyID,
-			Days:                  DAYS,
+			Days:                  days,
 		}
 		userObjectID, userDoc = database.BuildUserDoc(userInfo)
 		if err := database.InsertOne(ctx, client, dbName, userCollName, userDoc); err != nil {
@@ -552,7 +572,7 @@ func SeedMedia(
 		if remaining < int64(batchSize) {
 			current = int(remaining)
 		}
-		docs := database.BuildBatchDocs(current, DAYS, userObjectID, deviceIDs)
+		docs := database.BuildBatchDocs(current, days, userObjectID, deviceIDs)
 		batchCh <- docs
 		atomic.AddInt64(&batchCounter, 1)
 		atomic.AddInt64(&totalQueued, int64(current))

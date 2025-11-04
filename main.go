@@ -76,6 +76,7 @@ func main() {
 	userPassword := flag.String("user-password", "", "User password for the media user")
 	userEmail := flag.String("user-email", "", "User email for the media user")
 	deviceCount := flag.Int("device-count", 0, "Number of devices to simulate")
+	days := flag.Int("days", 7, "Number of past days to spread the media over")
 
 	flag.Parse()
 
@@ -137,6 +138,7 @@ func main() {
 			*userPassword,
 			*userEmail,
 			*deviceCount,
+			*days,
 		)
 	default:
 		fmt.Println("Invalid action.")
