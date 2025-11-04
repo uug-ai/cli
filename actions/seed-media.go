@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	crand "crypto/rand"
 	"encoding/base32"
 	"flag"
 	"fmt"
@@ -27,7 +28,7 @@ import (
 
 var stopFlag int32
 
-const DAYS = 30
+const DAYS = 7
 
 func HandleSignals() {
 	c := make(chan os.Signal, 1)
@@ -44,7 +45,7 @@ func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName stri
 	maxRetries := 10
 	for attempts := 0; attempts < maxRetries; attempts++ {
 		b := make([]byte, keyLen)
-		_, err := rand.Read(b)
+		_, err := crand.Read(b)
 		if err != nil {
 			return "", err
 		}

@@ -178,19 +178,21 @@ func BuildSettingsDoc() bson.M {
 	}
 }
 
-func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interface{}, []primitive.ObjectID) {
+func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interface{}, []string) {
 	if count < 1 {
 		count = 1
 	} else if count > 50 {
 		count = 50
 	}
 	docs := make([]interface{}, 0, count)
-	ids := make([]primitive.ObjectID, 0, count)
+	keys := make([]string, 0, count)
 	for i := 0; i < count; i++ {
 		id := primitive.NewObjectID()
+		key := fmt.Sprintf("camera%d", i+1)
 		doc := bson.M{
 			"_id":      id,
 			"key":      key,
+			"name":     fmt.Sprintf("Camera %d", i+1),
 			"user_id":  userID.Hex(),
 			"status":   "inactive",
 			"isActive": false,
@@ -198,24 +200,52 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interf
 				"ptz": 0, "liveview": 0, "remote_config": 0,
 			},
 			"analytics": []bson.M{{
-				"cloudpublickey": key,
-				"key":            fmt.Sprintf("camera%d", i+1),
-				"timestamp":      time.Now().Unix(),
-				"version":        "3.5.0",
-				"release":        "1f9772d",
+				"cloudpublickey":  key,
+				"key":             fmt.Sprintf("camera%d", i+1),
+				"timestamp":       time.Now().Unix(),
+				"version":         "3.5.0",
+				"release":         "1f9772d",
+				"encrypted":       false,
+				"encrypteddata":   primitive.Binary{Subtype: 0x00, Data: []byte{}},
+				"hub_encryption":  "true",
+				"e2e_encryption":  "false",
+				"enterprise":      false,
+				"hash":            "",
+				"mac_list":        []string{"02:42:ac:12:00:0c"},
+				"ip_list":         []string{"127.0.0.1/8", "172.18.0.12/16"},
+				"cameraname":      fmt.Sprintf("office-camera10%d", i+1),
+				"cameratype":      "IPCamera",
+				"architecture":    "x86_64",
+				"hostname":        fmt.Sprintf("%x", rand.Uint64()),
+				"freeMemory":      fmt.Sprintf("%d", 650000000+rand.Intn(100000000)),
+				"totalMemory":     "16515977216",
+				"usedMemory":      fmt.Sprintf("%d", 15800000000+rand.Intn(100000000)),
+				"processMemory":   fmt.Sprintf("%d", 28000000+rand.Intn(100000000)),
+				"kubernetes":      false,
+				"docker":          true,
+				"kios":            false,
+				"raspberrypi":     false,
+				"uptime":          "5 days ",
+				"boot_time":       "5 days ",
+				"onvif":           "false",
+				"onvif_zoom":      "false",
+				"onvif_pantilt":   "false",
+				"onvif_presets":   "false",
+				"cameraConnected": []string{"true", "false"}[rand.Intn(2)],
+				"hasBackChannel":  "false",
 			}},
 		}
 		docs = append(docs, doc)
-		ids = append(ids, id)
+		keys = append(keys, key)
 	}
-	return docs, ids
+	return docs, keys
 }
 
 func BuildBatchDocs(
 	n int,
 	days int,
 	userObjectID primitive.ObjectID,
-	deviceIDs []primitive.ObjectID,
+	deviceIDs []string,
 ) []interface{} {
 
 	// Pools (static)
@@ -255,7 +285,7 @@ func BuildBatchDocs(
 		st := now - offset
 		en := st + int64(rand.Intn(21)+5)
 
-		deviceID := deviceIDs[rand.Intn(len(deviceIDs))].Hex()
+		deviceID := deviceIDs[rand.Intn(len(deviceIDs))]
 
 		doc := bson.M{
 			"_id":             primitive.NewObjectID(),
@@ -263,7 +293,7 @@ func BuildBatchDocs(
 			"endTimestamp":    en,
 			"duration":        en - st,
 			"deviceId":        deviceID,
-			"organisationId":  fmt.Sprintf("ORG-%03d", rand.Intn(100)+1),
+			"organisationId":  userObjectID.Hex(),
 			"storageSolution": "kstorage",
 			"videoProvider":   "azure-production",
 			"videoFile":       utils.PickOne(VIDEO_POOL),
