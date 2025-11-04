@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/uug-ai/cli/actions"
@@ -19,24 +18,14 @@ func promptAction() string {
 	for i, c := range choices {
 		fmt.Printf("  %d) %s\n", i+1, c)
 	}
+	var sel int
 	for {
-		fmt.Print("Enter number (1-3): ")
-		var input string
-		_, err := fmt.Scanln(&input)
-		if err != nil {
-			continue
+		fmt.Print("Enter number: ")
+		_, err := fmt.Scanln(&sel)
+		if err == nil && sel >= 1 && sel <= len(choices) {
+			return choices[sel-1]
 		}
-		input = strings.TrimSpace(input)
-		switch input {
-		case "1", "2", "3":
-			idx := int(input[0] - '1')
-			return choices[idx]
-		case "", "q", "Q":
-			fmt.Println("No action selected, exiting.")
-			os.Exit(0)
-		default:
-			fmt.Println("Invalid choice.")
-		}
+		fmt.Println("Invalid choice.")
 	}
 }
 
@@ -53,6 +42,7 @@ func main() {
     `)
 
 	action := flag.String("action", "", "Action to take")
+
 	mongodbURI := flag.String("mongodb-uri", "", "MongoDB URI")
 	mongodbHost := flag.String("mongodb-host", "", "MongoDB Host")
 	mongodbPort := flag.String("mongodb-port", "", "MongoDB Port")
@@ -73,11 +63,11 @@ func main() {
 	labelNames := flag.String("label-names", "", "Names of the labels to generate separated by comma")
 	target := flag.Int("target", 0, "Total documents to insert (required)")
 	parallel := flag.Int("parallel", 0, "Concurrent batch workers (required)")
-	dbName := flag.String("db", "", "Database name (required)")
-	mediaCollName := flag.String("media-collection", "", "Media collection name (required)")
-	userCollName := flag.String("user-collection", "", "User collection name")
-	deviceCollName := flag.String("device-collection", "", "Device collection name")
-	subscriptionCollName := flag.String("subscription-collection", "", "Subscription collection name")
+	dbName := flag.String("db", "Kerberos", "Database name (required)")
+	mediaCollName := flag.String("media-collection", "media", "Media collection name (required)")
+	userCollName := flag.String("user-collection", "users", "User collection name")
+	deviceCollName := flag.String("device-collection", "devices", "Device collection name")
+	subscriptionCollName := flag.String("subscription-collection", "subscriptions", "Subscription collection name")
 	settingsCollName := flag.String("settings-collection", "settings", "Settings collection name")
 	noIndex := flag.Bool("no-index", false, "Skip index creation")
 	reportEvery := flag.Int("report-every", 10, "Report progress every N batches")
@@ -89,7 +79,7 @@ func main() {
 
 	flag.Parse()
 
-	if *action == "" {
+	if strings.TrimSpace(*action) == "" {
 		*action = promptAction()
 	}
 

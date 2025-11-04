@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/uug-ai/cli/models"
+	"github.com/uug-ai/cli/utils"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -263,15 +264,15 @@ func BuildBatchDocs(
 			"organisationId":  fmt.Sprintf("ORG-%03d", rand.Intn(100)+1),
 			"storageSolution": "kstorage",
 			"videoProvider":   "azure-production",
-			"videoFile":       pickOne(VIDEO_POOL),
+			"videoFile":       utils.PickOne(VIDEO_POOL),
 			"analysisId":      fmt.Sprintf("AN-%06d", rand.Intn(5001)),
 			"description":     "synthetic media sample for load test",
-			"detections":      sampleUnique(DETECTION_POOL, rand.Intn(4)+1),
-			"dominantColors":  sampleUnique(COLOR_POOL, rand.Intn(3)+1),
+			"detections":      utils.SampleUnique(DETECTION_POOL, rand.Intn(4)+1),
+			"dominantColors":  utils.SampleUnique(COLOR_POOL, rand.Intn(3)+1),
 			"count":           rand.Intn(11) - 5,
-			"tags":            sampleUnique(TAG_POOL, rand.Intn(4)+1),
+			"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(4)+1),
 			"metadata": bson.M{
-				"tags":            sampleUnique(TAG_POOL, rand.Intn(3)+1),
+				"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(3)+1),
 				"classifications": []string{"normal_activity"},
 			},
 			"userId": userObjectID.Hex(),
@@ -279,28 +280,6 @@ func BuildBatchDocs(
 		docs = append(docs, doc)
 	}
 	return docs
-}
-
-func pickOne(pool []string) string {
-	if len(pool) == 0 {
-		return ""
-	}
-	return pool[rand.Intn(len(pool))]
-}
-
-func sampleUnique(pool []string, n int) []string {
-	if n <= 0 || len(pool) == 0 {
-		return []string{}
-	}
-	if n > len(pool) {
-		n = len(pool)
-	}
-	perm := rand.Perm(len(pool))
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		out[i] = pool[perm[i]]
-	}
-	return out
 }
 
 func CreateIndexes(ctx context.Context, col *mongo.Collection) {
@@ -380,7 +359,6 @@ func RunBatchWorkers(
 				if inserted > 0 {
 					total := atomic.AddInt64(totalInserted, int64(inserted))
 					if progressCh != nil {
-						// blocking send; batches are coarse so acceptable
 						progressCh <- int(total)
 					}
 				}

@@ -16,6 +16,7 @@ import (
 	"github.com/gosuri/uiprogress"
 	"github.com/uug-ai/cli/database"
 	"github.com/uug-ai/cli/models"
+	"github.com/uug-ai/cli/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -76,10 +77,10 @@ func PromptInt(prompt string) int {
 		}
 		var val int
 		_, err = fmt.Sscanf(input, "%d", &val)
-		if err == nil && val > 0 {
+		if err == nil && val >= 0 {
 			return val
 		}
-		fmt.Println("Please enter a positive integer or press Enter for default.")
+		fmt.Println("Enter a non-negative integer or press Enter for default.")
 	}
 }
 
@@ -91,7 +92,29 @@ func PromptString(prompt string) string {
 	fmt.Print(prompt)
 	var val string
 	_, _ = fmt.Scanln(&val)
-	return val
+	return strings.TrimSpace(val)
+}
+
+func PromptBool(prompt string, def bool) bool {
+	if atomic.LoadInt32(&stopFlag) != 0 {
+		fmt.Println("\n[info] Interrupt received, exiting prompt.")
+		os.Exit(130)
+	}
+	fmt.Print(prompt)
+	var val string
+	_, _ = fmt.Scanln(&val)
+	val = strings.ToLower(strings.TrimSpace(val))
+	if val == "" {
+		return def
+	}
+	if val == "y" || val == "yes" || val == "1" || val == "true" {
+		return true
+	}
+	if val == "n" || val == "no" || val == "0" || val == "false" {
+		return false
+	}
+	fmt.Println("[warn] Invalid boolean input, using default.")
+	return def
 }
 
 func Hash(str string) (string, error) {
@@ -131,19 +154,81 @@ func SeedMedia(
 	rand.Seed(time.Now().UnixNano())
 	HandleSignals()
 
-	fmt.Printf("[info] Skip any prompt to use default values. \n")
+	fmt.Println("[info] Configuration phase starting...")
 
-	// -------- Prompts / defaults --------
-	if !WasFlagPassed("target") {
-		target = PromptInt("Enter total amount of documents to insert (--target): ")
-		if target == 0 {
+	// --- db ---
+	if WasFlagPassed("db") {
+		fmt.Printf("[info] using flag --db=%s\n", dbName)
+	} else {
+		fmt.Printf("[info] using default --db=%s (no flag)\n", dbName)
+	}
+
+	// --- media-collection ---
+	if WasFlagPassed("media-collection") {
+		fmt.Printf("[info] using flag --media-collection=%s\n", mediaCollName)
+	} else {
+		fmt.Printf("[info] using default --media-collection=%s\n", mediaCollName)
+	}
+
+	// --- user-collection ---
+	if WasFlagPassed("user-collection") {
+		fmt.Printf("[info] using flag --user-collection=%s\n", userCollName)
+	} else {
+		fmt.Printf("[info] using default --user-collection=%s\n", userCollName)
+	}
+
+	// --- device-collection ---
+	if WasFlagPassed("device-collection") {
+		fmt.Printf("[info] using flag --device-collection=%s\n", deviceCollName)
+	} else {
+		fmt.Printf("[info] using default --device-collection=%s\n", deviceCollName)
+	}
+
+	// --- subscription-collection ---
+	if WasFlagPassed("subscription-collection") {
+		fmt.Printf("[info] using flag --subscription-collection=%s\n", subscriptionCollName)
+	} else {
+		fmt.Printf("[info] using default --subscription-collection=%s\n", subscriptionCollName)
+	}
+
+	// --- settings-collection ---
+	if WasFlagPassed("settings-collection") {
+		fmt.Printf("[info] using flag --settings-collection=%s\n", settingsCollName)
+	} else {
+		fmt.Printf("[info] using default --settings-collection=%s\n", settingsCollName)
+	}
+
+	// --- target ---
+	if WasFlagPassed("target") {
+		if target <= 0 {
 			target = 100000
-			fmt.Printf("[info] Using default target: %d\n", target)
+		}
+		fmt.Printf("[info] using flag --target=%d\n", target)
+	} else {
+		val := PromptInt("Total documents (--target, default 100000): ")
+		if val <= 0 {
+			target = 100000
+			fmt.Printf("[info] using default --target=%d\n", target)
+		} else {
+			target = val
+			fmt.Printf("[info] using input --target=%d\n", target)
 		}
 	}
-	if !WasFlagPassed("batch-size") {
-		batchSize = PromptInt("Enter documents per batch (--batch-size) (1-100,000): ")
-		if batchSize == 0 {
+
+	// --- batch-size ---
+	if WasFlagPassed("batch-size") {
+		if batchSize < 1 {
+			batchSize = 1
+		} else if batchSize > 100000 {
+			batchSize = 100000
+		}
+		if batchSize > target {
+			batchSize = target
+		}
+		fmt.Printf("[info] using flag --batch-size=%d\n", batchSize)
+	} else {
+		val := PromptInt("Documents per batch (--batch-size, auto if empty): ")
+		if val <= 0 {
 			switch {
 			case target <= 10000:
 				batchSize = 500
@@ -152,20 +237,33 @@ func SeedMedia(
 			default:
 				batchSize = 5000
 			}
-			fmt.Printf("[info] Using recommended batch size: %d\n", batchSize)
+			if batchSize > target {
+				batchSize = target
+			}
+			fmt.Printf("[info] using default/auto --batch-size=%d\n", batchSize)
+		} else {
+			if val > 100000 {
+				val = 100000
+			}
+			if val > target {
+				val = target
+			}
+			batchSize = val
+			fmt.Printf("[info] using input --batch-size=%d\n", batchSize)
 		}
-	} else if batchSize < 1 {
-		batchSize = 1
-	} else if batchSize > 100000 {
-		batchSize = 100000
 	}
-	if batchSize > target {
-		batchSize = target
-		fmt.Printf("[info] Batch size limited to target: %d\n", batchSize)
-	}
-	if !WasFlagPassed("parallel") {
-		parallel = PromptInt("Enter concurrent batch workers (--parallel) (1-16): ")
-		if parallel == 0 {
+
+	// --- parallel ---
+	if WasFlagPassed("parallel") {
+		if parallel < 1 {
+			parallel = 1
+		} else if parallel > 16 {
+			parallel = 16
+		}
+		fmt.Printf("[info] using flag --parallel=%d\n", parallel)
+	} else {
+		val := PromptInt("Concurrent workers (--parallel, auto if empty): ")
+		if val <= 0 {
 			switch {
 			case target <= 10000:
 				parallel = 2
@@ -174,97 +272,134 @@ func SeedMedia(
 			default:
 				parallel = 8
 			}
-			fmt.Printf("[info] Using recommended parallel value: %d\n", parallel)
+			fmt.Printf("[info] using default/auto --parallel=%d\n", parallel)
+		} else {
+			if val < 1 {
+				val = 1
+			} else if val > 16 {
+				val = 16
+			}
+			parallel = val
+			fmt.Printf("[info] using input --parallel=%d\n", parallel)
 		}
-	} else if parallel < 1 {
-		parallel = 1
-	} else if parallel > 16 {
-		parallel = 16
 	}
-	if !WasFlagPassed("uri") {
-		uri = PromptString("Enter MongoDB URI (--uri): ")
+
+	// --- uri ---
+	if WasFlagPassed("mongodb-uri") {
 		if uri == "" {
 			uri = "mongodb://localhost:27017"
-			fmt.Printf("[info] Using default MongoDB URI: %s\n", uri)
+		}
+		fmt.Printf("[info] using flag --mongodb-uri=%s\n", uri)
+	} else {
+		val := PromptString("MongoDB URI (--mongodb-uri, default mongodb://localhost:27017): ")
+		if val == "" {
+			uri = "mongodb://localhost:27017"
+			fmt.Printf("[info] using default --mongodb-uri=%s\n", uri)
+		} else {
+			uri = val
+			fmt.Printf("[info] using input --mongodb-uri=%s\n", uri)
 		}
 	}
-	if !WasFlagPassed("db") {
-		dbName = PromptString("Enter database name (--db): ")
-		if dbName == "" {
-			dbName = "Kerberos"
-			fmt.Printf("[info] Using default database name: %s\n", dbName)
+
+	// --- no-index (boolean) ---
+	if WasFlagPassed("no-index") {
+		fmt.Printf("[info] using flag --no-index=%v\n", noIndex)
+	} else {
+		val := PromptBool("Skip index creation? (--no-index y/N, default N): ", false)
+		noIndex = val
+		fmt.Printf("[info] using input --no-index=%v\n", noIndex)
+	}
+
+	// --- user-id (decides user creation flow) ---
+	if WasFlagPassed("user-id") {
+		fmt.Printf("[info] using flag --user-id=%s\n", userId)
+	} else {
+		val := PromptString("Existing user ID (--user-id, empty to create new): ")
+		userId = val
+		if userId == "" {
+			fmt.Printf("[info] no --user-id provided, will create new user\n")
+		} else {
+			fmt.Printf("[info] using input --user-id=%s\n", userId)
 		}
 	}
-	if !WasFlagPassed("media-collection") {
-		mediaCollName = PromptString("Enter target media collection name (--media-collection): ")
-		if mediaCollName == "" {
-			mediaCollName = "media"
-			fmt.Printf("[info] Using default media collection name: %s\n", mediaCollName)
-		}
-	}
-	if !WasFlagPassed("user-id") {
-		userId = PromptString("Enter user ID (--user-id), keep empty to create new user: ")
-	}
-	if !WasFlagPassed("user-id") && userId == "" {
-		if userName == "" {
-			userName = PromptString("Enter user name (--user-name): ")
+
+	// --- user details if creating new user ---
+	if userId == "" {
+		// user-name
+		if WasFlagPassed("user-name") {
 			if userName == "" {
 				userName = "media-user"
-				fmt.Printf("[info] Using default user name: %s\n", userName)
+			}
+			fmt.Printf("[info] using flag --user-name=%s\n", userName)
+		} else {
+			if userName == "" {
+				userName = utils.GenerateRandomUsername("media-")
+				fmt.Printf("[info] generated random --user-name=%s\n", userName)
+			} else {
+				fmt.Printf("[info] using input --user-name=%s\n", userName)
 			}
 		}
-		if userPassword == "" {
-			userPassword = PromptString("Enter user password (--user-password): ")
+
+		// user-password
+		if WasFlagPassed("user-password") {
 			if userPassword == "" {
 				userPassword = "media-password"
-				fmt.Printf("[info] Using default user password: %s\n", userPassword)
+			}
+			fmt.Printf("[info] using flag --user-password=[hidden]\n")
+		} else {
+			val := PromptString("User password (--user-password, default media-password): ")
+			if val == "" {
+				userPassword = "media-password"
+				fmt.Printf("[info] using default --user-password=[hidden]\n")
+			} else {
+				userPassword = val
+				fmt.Printf("[info] using input --user-password=[hidden]\n")
 			}
 		}
-		if userEmail == "" {
-			userEmail = PromptString("Enter user email (--user-email): ")
+
+		// user-email
+		if WasFlagPassed("user-email") {
 			if userEmail == "" {
 				userEmail = "example-media-user@email.com"
-				fmt.Printf("[info] Using default user email: %s\n", userEmail)
+			}
+			fmt.Printf("[info] using flag --user-email=%s\n", userEmail)
+		} else {
+			val := PromptString("User email (--user-email, default example-media-user@email.com): ")
+			if val == "" {
+				userEmail = "example-media-user@email.com"
+				fmt.Printf("[info] using default --user-email=%s\n", userEmail)
+			} else {
+				userEmail = val
+				fmt.Printf("[info] using input --user-email=%s\n", userEmail)
 			}
 		}
-		if !WasFlagPassed("settings-collection") {
-			settingsCollName = PromptString("Enter target settings collection name (--settings-collection): ")
-			if settingsCollName == "" {
-				settingsCollName = "settings"
-				fmt.Printf("[info] Using default settings collection name: %s\n", settingsCollName)
-			}
+	}
+
+	// --- device-count ---
+	if WasFlagPassed("device-count") {
+		if deviceCount < 1 {
+			deviceCount = 1
+		} else if deviceCount > 50 {
+			deviceCount = 50
 		}
-		if subscriptionCollName == "" {
-			subscriptionCollName = PromptString("Enter target subscription collection name (--subscription-collection): ")
-			if subscriptionCollName == "" {
-				subscriptionCollName = "subscriptions"
-				fmt.Printf("[info] Using default subscription collection name: %s\n", subscriptionCollName)
-			}
-		}
+		fmt.Printf("[info] using flag --device-count=%d\n", deviceCount)
 	} else {
-		fmt.Printf("[info] Using existing user ID: %s\n", userId)
-	}
-	if !WasFlagPassed("user-collection") {
-		userCollName = PromptString("Enter target user collection name (--user-collection): ")
-		if userCollName == "" {
-			userCollName = "users"
-			fmt.Printf("[info] Using default user collection name: %s\n", userCollName)
+		val := PromptInt("Number of devices (--device-count, default 1, max 50): ")
+		if val <= 0 {
+			deviceCount = 1
+			fmt.Printf("[info] using default --device-count=%d\n", deviceCount)
+		} else {
+			if val > 50 {
+				val = 50
+			}
+			deviceCount = val
+			fmt.Printf("[info] using input --device-count=%d\n", deviceCount)
 		}
 	}
-	if !WasFlagPassed("device-collection") {
-		deviceCollName = PromptString("Enter target device collection name (--device-collection): ")
-		if deviceCollName == "" {
-			deviceCollName = "devices"
-			fmt.Printf("[info] Using default device collection name: %s\n", deviceCollName)
-		}
-	}
-	if !WasFlagPassed("device-count") {
-		deviceCount = PromptInt("Enter number of devices to simulate (--device-count) (1-50): ")
-	}
-	if deviceCount < 1 {
-		deviceCount = 1
-	} else if deviceCount > 50 {
-		deviceCount = 50
+
+	// reportEvery (legacy, optional)
+	if WasFlagPassed("report-every") {
+		fmt.Printf("[info] using flag --report-every=%d\n", reportEvery)
 	}
 
 	// -------- Connect --------
@@ -304,7 +439,6 @@ func SeedMedia(
 			os.Exit(1)
 		}
 	} else {
-		// check if user with same name exists
 		existingUser := database.GetUserFromMongodb(client, dbName, userName, userCollName)
 		if existingUser.Username != "" {
 			fmt.Printf("[error] user with name %s already exists (ID: %s)\n", userName, existingUser.Id.Hex())
@@ -344,7 +478,7 @@ func SeedMedia(
 			fmt.Printf("[error] insert subscription: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("[info] Created new user with enterprise subscription.\n")
+		fmt.Printf("[info] created new user & enterprise subscription\n")
 	}
 
 	// -------- Devices --------
@@ -357,12 +491,15 @@ func SeedMedia(
 		fmt.Printf("[error] insert devices: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("[info] Created %d devices for user %s\n", len(deviceDocs), userObjectID.Hex())
+	fmt.Printf("[info] inserted %d devices\n", len(deviceDocs))
 
 	// -------- Media collection & indexes --------
 	mediaColl := client.Database(dbName).Collection(mediaCollName)
 	if !noIndex {
 		database.CreateIndexes(ctx, mediaColl)
+		fmt.Printf("[info] indexes ensured\n")
+	} else {
+		fmt.Printf("[info] skipping index creation (--no-index)\n")
 	}
 
 	// -------- Batch channel & workers --------
@@ -372,9 +509,6 @@ func SeedMedia(
 		startTime     = time.Now()
 		batchCh       = make(chan []interface{}, parallel*2)
 	)
-
-	// fmt.Printf("[start] target=%d batch=%d parallel=%d uri=%s db=%s.%s\n",
-	// 	target, batchSize, parallel, uri, dbName, mediaCollName)
 
 	uiprogress.Start()
 	bar := uiprogress.AddBar(target).AppendCompleted().PrependElapsed()
@@ -436,8 +570,8 @@ func SeedMedia(
 	}
 	elapsed := time.Since(startTime).Seconds()
 	rate := float64(atomic.LoadInt64(&totalInserted)) / elapsed
-	fmt.Printf("[done] inserted=%d elapsed=%.2fs rate=%.0f/s stop_flag=%v\n",
-		atomic.LoadInt64(&totalInserted), elapsed, rate, atomic.LoadInt32(&stopFlag) != 0)
+	fmt.Printf("[done] inserted=%d elapsed=%.2fs rate=%.0f/s stop_flag=%v batches=%d\n",
+		atomic.LoadInt64(&totalInserted), elapsed, rate, atomic.LoadInt32(&stopFlag) != 0, batchCounter)
 
 	if atomic.LoadInt32(&stopFlag) != 0 {
 		os.Exit(130)
