@@ -6,7 +6,6 @@ import (
 	"encoding/base32"
 	"flag"
 	"fmt"
-	"math/rand"
 	"os"
 	"os/signal"
 	"strings"
@@ -152,7 +151,6 @@ func SeedMedia(
 	userEmail string,
 	deviceCount int,
 ) {
-	rand.Seed(time.Now().UnixNano())
 	HandleSignals()
 
 	fmt.Println("[info] Configuration phase starting...")
@@ -418,6 +416,7 @@ func SeedMedia(
 	// -------- User & subscription --------
 	var userObjectID primitive.ObjectID
 	var amazonSecretAccessKey, amazonAccessKeyID string
+	var userDoc bson.M
 
 	if userId != "" {
 		userObjectID, err = primitive.ObjectIDFromHex(userId)
@@ -425,7 +424,6 @@ func SeedMedia(
 			fmt.Printf("[error] invalid userId: %v\n", err)
 			os.Exit(1)
 		}
-		var userDoc bson.M
 		err = client.Database(dbName).Collection(userCollName).FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
 		if err != nil {
 			fmt.Printf("[error] fetch user: %v\n", err)
@@ -467,7 +465,7 @@ func SeedMedia(
 			AmazonAccessKeyID:     amazonAccessKeyID,
 			Days:                  DAYS,
 		}
-		userObjectID, userDoc := database.BuildUserDoc(userInfo)
+		userObjectID, userDoc = database.BuildUserDoc(userInfo)
 		if err := database.InsertOne(ctx, client, dbName, userCollName, userDoc); err != nil {
 			fmt.Printf("[error] insert user: %v\n", err)
 			os.Exit(1)
@@ -475,6 +473,13 @@ func SeedMedia(
 		subDoc := database.BuildSubscriptionDoc(userObjectID)
 		if err := database.InsertOne(ctx, client, dbName, subscriptionCollName, subDoc); err != nil {
 			fmt.Printf("[error] insert subscription: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("[info] created new user _id=%s\n", userObjectID.Hex())
+
+		// Guard: ensure we did not end up with a nil ObjectID
+		if userObjectID == primitive.NilObjectID {
+			fmt.Println("[error] userObjectID is nil after creation (unexpected)")
 			os.Exit(1)
 		}
 		fmt.Printf("[info] created new user & enterprise subscription\n")

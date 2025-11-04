@@ -178,7 +178,7 @@ func BuildSettingsDoc() bson.M {
 	}
 }
 
-func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interface{}, []string) {
+func BuildDeviceDocs(count int, userID primitive.ObjectID, cloudKey string) ([]interface{}, []string) {
 	if count < 1 {
 		count = 1
 	} else if count > 50 {
@@ -188,7 +188,10 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interf
 	keys := make([]string, 0, count)
 	for i := 0; i < count; i++ {
 		id := primitive.NewObjectID()
-		key := fmt.Sprintf("camera%d", i+1)
+		suffix := rand.Intn(100000000)
+
+		key := fmt.Sprintf("camera-key-%d", suffix)
+
 		doc := bson.M{
 			"_id":      id,
 			"key":      key,
@@ -200,8 +203,8 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interf
 				"ptz": 0, "liveview": 0, "remote_config": 0,
 			},
 			"analytics": []bson.M{{
-				"cloudpublickey":  key,
-				"key":             fmt.Sprintf("camera%d", i+1),
+				"cloudpublickey":  cloudKey,
+				"key":             key,
 				"timestamp":       time.Now().Unix(),
 				"version":         "3.5.0",
 				"release":         "1f9772d",
@@ -213,7 +216,7 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interf
 				"hash":            "",
 				"mac_list":        []string{"02:42:ac:12:00:0c"},
 				"ip_list":         []string{"127.0.0.1/8", "172.18.0.12/16"},
-				"cameraname":      fmt.Sprintf("office-camera10%d", i+1),
+				"cameraname":      fmt.Sprintf("camera-%d", suffix),
 				"cameratype":      "IPCamera",
 				"architecture":    "x86_64",
 				"hostname":        fmt.Sprintf("%x", rand.Uint64()),
