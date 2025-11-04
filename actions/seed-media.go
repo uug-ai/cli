@@ -4,13 +4,10 @@ import (
 	"context"
 	crand "crypto/rand"
 	"encoding/base32"
-	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/gosuri/uiprogress"
@@ -22,20 +19,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"golang.org/x/crypto/bcrypt"
 )
-
-var stopFlag int32
-
-func HandleSignals() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-c
-		fmt.Println("\n[signal] Received interrupt, stopping after current batches...")
-		atomic.StoreInt32(&stopFlag, 1)
-	}()
-}
 
 func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName string) (string, error) {
 	const keyLen = 20
@@ -56,78 +40,6 @@ func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName stri
 		}
 	}
 	return "", fmt.Errorf("failed to generate unique key after max retries")
-}
-
-func PromptInt(prompt string) int {
-	for {
-		if atomic.LoadInt32(&stopFlag) != 0 {
-			fmt.Println("\n[info] Interrupt received, exiting prompt.")
-			os.Exit(130)
-		}
-		fmt.Print(prompt)
-		var input string
-		_, err := fmt.Scanln(&input)
-		if err != nil {
-			return 0
-		}
-		if input == "" {
-			return 0
-		}
-		var val int
-		_, err = fmt.Sscanf(input, "%d", &val)
-		if err == nil && val >= 0 {
-			return val
-		}
-		fmt.Println("Enter a non-negative integer or press Enter for default.")
-	}
-}
-
-func PromptString(prompt string) string {
-	if atomic.LoadInt32(&stopFlag) != 0 {
-		fmt.Println("\n[info] Interrupt received, exiting prompt.")
-		os.Exit(130)
-	}
-	fmt.Print(prompt)
-	var val string
-	_, _ = fmt.Scanln(&val)
-	return strings.TrimSpace(val)
-}
-
-func PromptBool(prompt string, def bool) bool {
-	if atomic.LoadInt32(&stopFlag) != 0 {
-		fmt.Println("\n[info] Interrupt received, exiting prompt.")
-		os.Exit(130)
-	}
-	fmt.Print(prompt)
-	var val string
-	_, _ = fmt.Scanln(&val)
-	val = strings.ToLower(strings.TrimSpace(val))
-	if val == "" {
-		return def
-	}
-	if val == "y" || val == "yes" || val == "1" || val == "true" {
-		return true
-	}
-	if val == "n" || val == "no" || val == "0" || val == "false" {
-		return false
-	}
-	fmt.Println("[warn] Invalid boolean input, using default.")
-	return def
-}
-
-func Hash(str string) (string, error) {
-	hashed, err := bcrypt.GenerateFromPassword([]byte(str), bcrypt.DefaultCost)
-	return string(hashed), err
-}
-
-func WasFlagPassed(name string) bool {
-	found := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
-		}
-	})
-	return found
 }
 
 func SeedMedia(
@@ -472,7 +384,7 @@ func SeedMedia(
 			fmt.Printf("[error] generate public key: %v\n", err)
 			os.Exit(1)
 		}
-		hashedPassword, err := Hash(userPassword)
+		hashedPassword, err := utils.Hash(userPassword)
 		if err != nil {
 			fmt.Printf("[error] hash password: %v\n", err)
 			os.Exit(1)

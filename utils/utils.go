@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"regexp"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 var nonAlphanumericRegex = regexp.MustCompile("[^a-z0-9]")
@@ -46,4 +48,9 @@ func SampleUnique(pool []string, n int) []string {
 		out[i] = pool[perm[i]]
 	}
 	return out
+}
+
+func Hash(str string) (string, error) {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(str), bcrypt.DefaultCost)
+	return string(hashed), err
 }

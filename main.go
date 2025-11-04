@@ -13,6 +13,7 @@ func promptAction() string {
 		"vault-to-hub-migration",
 		"generate-default-labels",
 		"seed-media",
+		"seed-users",
 	}
 	fmt.Println("Select an action:")
 	for i, c := range choices {
@@ -78,6 +79,9 @@ func main() {
 	deviceCount := flag.Int("device-count", 0, "Number of devices to simulate")
 	days := flag.Int("days", 7, "Number of past days to spread the media over")
 
+	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
+	userCount := flag.Int("user-count", 100, "Number of random users to create")
+
 	flag.Parse()
 
 	if strings.TrimSpace(*action) == "" {
@@ -139,6 +143,17 @@ func main() {
 			*userEmail,
 			*deviceCount,
 			*days,
+		)
+	case "seed-users":
+		fmt.Println("Seeding synthetic users...")
+		actions.SeedUsers(
+			*userPrefix,
+			*userCount,
+			*mongodbURI,
+			*dbName,
+			*userCollName,
+			*subscriptionCollName,
+			*settingsCollName,
 		)
 	default:
 		fmt.Println("Invalid action.")
