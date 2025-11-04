@@ -71,7 +71,7 @@ func main() {
 	settingsCollName := flag.String("settings-collection", "settings", "Settings collection name")
 	noIndex := flag.Bool("no-index", false, "Skip index creation")
 	reportEvery := flag.Int("report-every", 10, "Report progress every N batches")
-	userId := flag.String("user-id", "", "User ID to linki media to")
+	userId := flag.String("user-id", "", "User ID to link media to")
 	userName := flag.String("user-name", "", "User name for the media user")
 	userPassword := flag.String("user-password", "", "User password for the media user")
 	userEmail := flag.String("user-email", "", "User email for the media user")

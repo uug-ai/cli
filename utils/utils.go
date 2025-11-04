@@ -1,20 +1,22 @@
 package utils
 
 import (
+	crand "crypto/rand"
 	"encoding/base32"
 	"math/rand"
-
 	"regexp"
 	"strings"
 )
 
+var nonAlphanumericRegex = regexp.MustCompile("[^a-z0-9]")
+
 func GenerateRandomUsername(prefix string) string {
 	b := make([]byte, 6)
-	_, _ = rand.Read(b)
+	_, _ = crand.Read(b)
 	token := strings.ToLower(base32.StdEncoding.EncodeToString(b))
 	token = strings.TrimRight(token, "=")
 	// keep alphanumeric only
-	token = regexp.MustCompile("[^a-z0-9]").ReplaceAllString(token, "")
+	token = nonAlphanumericRegex.ReplaceAllString(token, "")
 	if len(token) > 10 {
 		token = token[:10]
 	}

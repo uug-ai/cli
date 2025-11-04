@@ -181,6 +181,8 @@ func BuildSettingsDoc() bson.M {
 func BuildDeviceDocs(count int, userID primitive.ObjectID, key string) ([]interface{}, []primitive.ObjectID) {
 	if count < 1 {
 		count = 1
+	} else if count > 50 {
+		count = 50
 	}
 	docs := make([]interface{}, 0, count)
 	ids := make([]primitive.ObjectID, 0, count)

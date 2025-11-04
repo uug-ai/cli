@@ -209,6 +209,9 @@ func SeedMedia(
 		if val <= 0 {
 			target = 100000
 			fmt.Printf("[info] using default -target = %d\n", target)
+		} else if val > 10000000 {
+			target = 10000000
+			fmt.Printf("[info] using max limit -target = %d\n", target)
 		} else {
 			target = val
 			fmt.Printf("[info] using input -target = %d\n", target)
