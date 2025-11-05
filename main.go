@@ -33,7 +33,7 @@ func promptAction() string {
 func main() {
 
 	fmt.Println(`
-    _    _ _    _  _____     _____ _ _ 
+     _    _ _    _  _____     _____ _ _ 
     | |  | | |  | |/ ____|   / ____(_) |
     | |  | | |  | | |  __   | |     _| |
     | |  | | |  | | | |_ |  | |    | | |
@@ -80,7 +80,6 @@ func main() {
 	days := flag.Int("days", 7, "Number of past days to spread the media over")
 
 	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
-	userCount := flag.Int("user-count", 100, "Number of random users to create")
 
 	flag.Parse()
 
@@ -148,7 +147,7 @@ func main() {
 		fmt.Println("Seeding synthetic users...")
 		actions.SeedUsers(
 			*userPrefix,
-			*userCount,
+			*target,
 			*mongodbURI,
 			*dbName,
 			*userCollName,

@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: uugai-cli-seed-users
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: seed-users
+        image: uugai/cli:latest
+        command: ['/main', '-action', 'seed-users',
+            '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
+            '-db', 'Kerberos',
+            '-user-prefix', 'testuser',
+            '-target', '500',
+            '-user-collection', 'users',
+            '-subscription-collection', 'subscriptions',
+            '-settings-collection', 'settings',
+          ]
+
+      restartPolicy: Never
+      volumes:
+      - name: hub-import
+        emptyDir: {}

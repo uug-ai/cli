@@ -178,7 +178,7 @@ func BuildSubscriptionDoc(userID primitive.ObjectID) bson.M {
 		"_id":           primitive.NewObjectID(),
 		"name":          "default",
 		"stripe_id":     "sub_9ECyjjMz3R7etK",
-		"stripe_plan":   "enterprise",
+		"stripe_plan":   "enterprise", // Always enterprise for now
 		"quantity":      1,
 		"trial_ends_at": nil,
 		"ends_at":       nil,
