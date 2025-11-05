@@ -14,6 +14,7 @@ func promptAction() string {
 		"generate-default-labels",
 		"seed-media",
 		"seed-users",
+		"seed-devices",
 	}
 	fmt.Println("Select an action:")
 	for i, c := range choices {
@@ -153,6 +154,23 @@ func main() {
 			*userCollName,
 			*subscriptionCollName,
 			*settingsCollName,
+		)
+	case "seed-devices":
+		fmt.Println("Seeding synthetic devices...")
+		actions.SeedDevices(
+			*target,
+			*mongodbURI,
+			*dbName,
+			*userCollName,
+			*deviceCollName,
+			*subscriptionCollName,
+			*settingsCollName,
+			*userId,
+			*userName,
+			*userPassword,
+			*userEmail,
+			*days,
+			*noIndex,
 		)
 	default:
 		fmt.Println("Invalid action.")
