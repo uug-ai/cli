@@ -105,8 +105,12 @@ func RunSeedDevices(cfg SeedDevicesConfig) error {
 		return fmt.Errorf("ensure settings: %w", err)
 	}
 
-	var userObjectID primitive.ObjectID
-	var amazonSecretAccessKey, amazonAccessKeyID string
+	var (
+		userObjectID          primitive.ObjectID
+		amazonSecretAccessKey string
+		amazonAccessKeyID     string
+		finalUserIDHex        string
+	)
 
 	if cfg.ExistingUserIDHex != "" {
 		userObjectID, err = primitive.ObjectIDFromHex(cfg.ExistingUserIDHex)
@@ -124,6 +128,7 @@ func RunSeedDevices(cfg SeedDevicesConfig) error {
 		if amazonSecretAccessKey == "" || amazonAccessKeyID == "" {
 			return fmt.Errorf("existing user missing keys")
 		}
+		finalUserIDHex = userObjectID.Hex()
 	} else {
 		existing := database.GetUserFromMongodb(client, cfg.DBName, cfg.NewUserName, cfg.UserColl)
 		if existing.Username != "" {
@@ -150,6 +155,9 @@ func RunSeedDevices(cfg SeedDevicesConfig) error {
 			Days:                  cfg.UserDays,
 		}
 		userObjectID, userDoc := database.BuildUserDoc(info)
+		if userObjectID == primitive.NilObjectID {
+			return fmt.Errorf("internal: BuildUserDoc returned nil objectID")
+		}
 		if err := database.InsertOne(ctx, client, cfg.DBName, cfg.UserColl, userDoc); err != nil {
 			return fmt.Errorf("insert user: %w", err)
 		}
@@ -157,7 +165,12 @@ func RunSeedDevices(cfg SeedDevicesConfig) error {
 		if err := database.InsertOne(ctx, client, cfg.DBName, cfg.SubscriptionColl, subDoc); err != nil {
 			return fmt.Errorf("insert subscription: %w", err)
 		}
-		fmt.Printf("[info] created new user _id=%s username=%s\n", userObjectID.Hex(), cfg.NewUserName)
+		finalUserIDHex = userObjectID.Hex()
+		fmt.Printf("[info] created new user _id=%s username=%s\n", finalUserIDHex, cfg.NewUserName)
+	}
+
+	if finalUserIDHex == "" || userObjectID == primitive.NilObjectID {
+		return fmt.Errorf("internal: userObjectID became nil before device creation (finalUserIDHex=%q)", finalUserIDHex)
 	}
 
 	deviceDocs, _ := database.BuildDeviceDocs(cfg.Count, userObjectID, amazonSecretAccessKey)
@@ -176,12 +189,13 @@ func RunSeedDevices(cfg SeedDevicesConfig) error {
 		pct := 100 * float64(cur) / float64(cfg.Count)
 		return fmt.Sprintf("Devices %d/%d (%.1f%%)", cur, cfg.Count, pct)
 	})
-
-	// Trivial progress update (already inserted all in one batch)
 	atomic.StoreInt64(&inserted, int64(cfg.Count))
 	bar.Set(cfg.Count)
 	uiprogress.Stop()
-	fmt.Printf("[done] devices_inserted=%d user_id=%s stop=%v\n", cfg.Count, userObjectID.Hex(), atomic.LoadInt32(&stopFlag) != 0)
+
+	// Use finalUserIDHex instead of userObjectID (in case of unexpected mutation).
+	fmt.Printf("[done] devices_inserted=%d user_id=%s stop=%v\n",
+		cfg.Count, finalUserIDHex, atomic.LoadInt32(&stopFlag) != 0)
 
 	if atomic.LoadInt32(&stopFlag) != 0 {
 		return fmt.Errorf("interrupted")
@@ -374,7 +388,7 @@ func SeedDevices(
 		NewUserPasswordPlain: userPassword,
 		NewUserEmail:         userEmail,
 		UserDays:             userDays,
-		SkipIndexes:          noIndex, // reserved
+		SkipIndexes:          noIndex,
 	}
 	if err := RunSeedDevices(cfg); err != nil {
 		fmt.Printf("[error] seed devices: %v\n", err)

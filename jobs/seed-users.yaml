@@ -11,12 +11,8 @@ spec:
         image: uugai/cli:latest
         command: ['/main', '-action', 'seed-users',
             '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
-            '-db', 'Kerberos',
             '-user-prefix', 'testuser',
             '-target', '500',
-            '-user-collection', 'users',
-            '-subscription-collection', 'subscriptions',
-            '-settings-collection', 'settings',
           ]
 
       restartPolicy: Never
