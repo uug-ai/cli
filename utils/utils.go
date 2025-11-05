@@ -23,9 +23,9 @@ func GenerateRandomUsername(prefix string) string {
 		token = token[:10]
 	}
 	if prefix == "" {
-		prefix = "user-"
+		prefix = "user"
 	}
-	return prefix + token
+	return prefix + "-" + token
 }
 
 func PickOne(pool []string) string {

@@ -1,6 +1,20 @@
 package actions
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"os"
+	"sync/atomic"
+	"time"
+
+	"github.com/gosuri/uiprogress"
+	"github.com/uug-ai/cli/database"
+	"github.com/uug-ai/cli/models"
+	"github.com/uug-ai/cli/utils"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
 
 func SeedUsers(
 	prefix string,
@@ -93,5 +107,146 @@ func SeedUsers(
 	}
 
 	fmt.Printf("[info] Seeding %d users with prefix '%s'...\n", count, prefix)
+
+	// -------- Connect --------
+	ctx := context.Background()
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongodbURI).SetServerSelectionTimeout(10*time.Second))
+	if err != nil {
+		fmt.Printf("[error] connect mongo: %v\n", err)
+		os.Exit(1)
+	}
+
+	// -------- Settings (ensure once) --------
+	if err := database.EnsureSettings(ctx, client, dbName, settingsCollName); err != nil {
+		fmt.Printf("[error] ensure settings: %v\n", err)
+		os.Exit(1)
+	}
+
+	userColl := client.Database(dbName).Collection(userCollName)
+
+	// Optional: ensure basic unique indexes
+	_ = database.CreateUserIndexes(ctx, userColl)
+
+	// -------- Build & Insert Users --------
+	var inserted int64
+	batchSize := 1000
+	if count < batchSize {
+		batchSize = count
+	}
+
+	uiprogress.Start()
+	bar := uiprogress.AddBar(count).AppendCompleted().PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		cur := atomic.LoadInt64(&inserted)
+		pct := 100 * float64(cur) / float64(count)
+		return fmt.Sprintf("Users %d/%d (%.1f%%)", cur, count, pct)
+	})
+
+	batch := make([]interface{}, 0, batchSize)
+	userIDs := make([]primitive.ObjectID, 0, count)
+	nameSet := make(map[string]struct{})
+
+	for i := 0; i < count; i++ {
+		if atomic.LoadInt32(&stopFlag) != 0 {
+			fmt.Println("[info] interrupted; stopping build loop")
+			break
+		}
+
+		var username string
+		for {
+			username = utils.GenerateRandomUsername(prefix)
+			if _, exists := nameSet[username]; !exists {
+				nameSet[username] = struct{}{}
+				break
+			}
+		}
+
+		// Keys
+		// amazonSecretAccessKey, err := database.GenerateKey("private", client, dbName, userCollName)
+		// if err != nil {
+		// 	fmt.Printf("[error] generate private key: %v\n", err)
+		// 	os.Exit(1)
+		// }
+		// amazonAccessKeyID, err := database.GenerateKey("public", client, dbName, userCollName)
+		// if err != nil {
+		// 	fmt.Printf("[error] generate public key: %v\n", err)
+		// 	os.Exit(1)
+		// }
+
+		// Using fixed keys for now
+		amazonSecretAccessKey := "AKIAIOSFODNN7EXAMPLE"
+		amazonAccessKeyID := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+		// Password (hashed)
+		hashed, err := utils.Hash(username)
+		if err != nil {
+			fmt.Printf("[error] hash password: %v\n", err)
+			os.Exit(1)
+		}
+
+		info := models.InsertUserInfo{
+			UserName:              username,
+			UserEmail:             fmt.Sprintf("%s@example.com", username),
+			UserPassword:          hashed,
+			AmazonSecretAccessKey: amazonSecretAccessKey,
+			AmazonAccessKeyID:     amazonAccessKeyID,
+			Days:                  7,
+		}
+
+		uid, doc := database.BuildUserDoc(info)
+		batch = append(batch, doc)
+		userIDs = append(userIDs, uid)
+
+		if len(batch) == batchSize {
+			if err := database.InsertMany(ctx, client, dbName, userCollName, batch); err != nil {
+				fmt.Printf("[error] insert users batch: %v\n", err)
+				os.Exit(1)
+			}
+			atomic.AddInt64(&inserted, int64(len(batch)))
+			bar.Set(int(inserted))
+			batch = batch[:0]
+		}
+	}
+
+	// Flush remainder
+	if len(batch) > 0 {
+		if err := database.InsertMany(ctx, client, dbName, userCollName, batch); err != nil {
+			fmt.Printf("[error] insert users final batch: %v\n", err)
+			os.Exit(1)
+		}
+		atomic.AddInt64(&inserted, int64(len(batch)))
+		bar.Set(int(inserted))
+	}
+
+	// -------- Subscriptions --------
+	subBatch := make([]interface{}, 0, 1000)
+	for _, uid := range userIDs {
+		subBatch = append(subBatch, database.BuildSubscriptionDoc(uid))
+		if len(subBatch) == 1000 {
+			if err := database.InsertMany(ctx, client, dbName, subscriptionCollName, subBatch); err != nil {
+				fmt.Printf("[error] insert subscriptions batch: %v\n", err)
+				os.Exit(1)
+			}
+			subBatch = subBatch[:0]
+		}
+	}
+	if len(subBatch) > 0 {
+		if err := database.InsertMany(ctx, client, dbName, subscriptionCollName, subBatch); err != nil {
+			fmt.Printf("[error] insert subscriptions final batch: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	uiprogress.Stop()
+
+	if err := client.Disconnect(ctx); err != nil {
+		fmt.Printf("[warn] disconnect mongo: %v\n", err)
+	}
+
+	fmt.Printf("[done] users_inserted=%d subscriptions=%d stop_flag=%v\n",
+		inserted, len(userIDs), atomic.LoadInt32(&stopFlag) != 0)
+	if atomic.LoadInt32(&stopFlag) != 0 {
+		os.Exit(130)
+	}
 
 }

@@ -2,9 +2,12 @@ package database
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/base32"
 	"fmt"
 	"log"
 	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -114,6 +117,27 @@ func IsDuplicateKey(keyType, keyValue string, client *mongo.Client, dbName, user
 }
 
 // --- Document builders ---
+
+func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName string) (string, error) {
+	const keyLen = 20
+	maxRetries := 10
+	for attempts := 0; attempts < maxRetries; attempts++ {
+		b := make([]byte, keyLen)
+		_, err := crand.Read(b)
+		if err != nil {
+			return "", err
+		}
+		key := strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
+		isDup, err := IsDuplicateKey(keyType, key, client, dbName, userCollName)
+		if err != nil {
+			return "", err
+		}
+		if !isDup {
+			return key, nil
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique key after max retries")
+}
 
 func BuildUserDoc(info models.InsertUserInfo) (primitive.ObjectID, bson.M) {
 	userID := primitive.NewObjectID()
@@ -244,7 +268,7 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, cloudKey string) ([]i
 	return docs, keys
 }
 
-func BuildBatchDocs(
+func GenerateBatchMedia(
 	n int,
 	days int,
 	userObjectID primitive.ObjectID,
@@ -317,7 +341,7 @@ func BuildBatchDocs(
 	return docs
 }
 
-func CreateIndexes(ctx context.Context, col *mongo.Collection) {
+func CreateMediaIndexes(ctx context.Context, col *mongo.Collection) {
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "startTimestamp", Value: 1}}},
 		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
@@ -330,6 +354,17 @@ func CreateIndexes(ctx context.Context, col *mongo.Collection) {
 	if err != nil {
 		fmt.Printf("[info] index creation skipped: %v\n", err)
 	}
+}
+
+func CreateUserIndexes(ctx context.Context, coll *mongo.Collection) error {
+	models := []mongo.IndexModel{
+		{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "amazon_access_key_id", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "amazon_secret_access_key", Value: 1}}, Options: options.Index().SetUnique(true)},
+	}
+	_, err := coll.Indexes().CreateMany(ctx, models)
+	return err
 }
 
 // --- Inserts ---

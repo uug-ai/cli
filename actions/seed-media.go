@@ -2,11 +2,8 @@ package actions
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/base32"
 	"fmt"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -20,27 +17,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
-
-func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName string) (string, error) {
-	const keyLen = 20
-	maxRetries := 10
-	for attempts := 0; attempts < maxRetries; attempts++ {
-		b := make([]byte, keyLen)
-		_, err := crand.Read(b)
-		if err != nil {
-			return "", err
-		}
-		key := strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
-		isDup, err := database.IsDuplicateKey(keyType, key, client, dbName, userCollName)
-		if err != nil {
-			return "", err
-		}
-		if !isDup {
-			return key, nil
-		}
-	}
-	return "", fmt.Errorf("failed to generate unique key after max retries")
-}
 
 func SeedMedia(
 	target int,
@@ -374,12 +350,12 @@ func SeedMedia(
 			os.Exit(1)
 		}
 
-		amazonSecretAccessKey, err = GenerateKey("private", client, dbName, userCollName)
+		amazonSecretAccessKey, err = database.GenerateKey("private", client, dbName, userCollName)
 		if err != nil {
 			fmt.Printf("[error] generate private key: %v\n", err)
 			os.Exit(1)
 		}
-		amazonAccessKeyID, err = GenerateKey("public", client, dbName, userCollName)
+		amazonAccessKeyID, err = database.GenerateKey("public", client, dbName, userCollName)
 		if err != nil {
 			fmt.Printf("[error] generate public key: %v\n", err)
 			os.Exit(1)
@@ -432,7 +408,7 @@ func SeedMedia(
 	// -------- Media collection & indexes --------
 	mediaColl := client.Database(dbName).Collection(mediaCollName)
 	if !noIndex {
-		database.CreateIndexes(ctx, mediaColl)
+		database.CreateMediaIndexes(ctx, mediaColl)
 		fmt.Printf("[info] indexes ensured\n")
 	} else {
 		fmt.Printf("[info] skipping index creation (--no-index)\n")
@@ -484,7 +460,7 @@ func SeedMedia(
 		if remaining < int64(batchSize) {
 			current = int(remaining)
 		}
-		docs := database.BuildBatchDocs(current, days, userObjectID, deviceIDs)
+		docs := database.GenerateBatchMedia(current, days, userObjectID, deviceIDs)
 		batchCh <- docs
 		atomic.AddInt64(&batchCounter, 1)
 		atomic.AddInt64(&totalQueued, int64(current))
