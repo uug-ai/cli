@@ -202,7 +202,7 @@ func RunSeedMedia(cfg SeedMediaConfig) error {
 			AmazonAccessKeyID:     amazonAccessKeyID,
 			Days:                  cfg.Days,
 		}
-		uid, userDoc := database.BuildUserDoc(info) // avoid shadowing
+		uid, userDoc := database.BuildUserDoc(info)
 		userObjectID = uid
 
 		res, err := client.Database(cfg.DBName).Collection(cfg.UserColl).InsertOne(ctx, userDoc)
