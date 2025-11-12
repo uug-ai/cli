@@ -202,14 +202,25 @@ func RunSeedMedia(cfg SeedMediaConfig) error {
 			AmazonAccessKeyID:     amazonAccessKeyID,
 			Days:                  cfg.Days,
 		}
-		userObjectID, userDoc := database.BuildUserDoc(info)
-		if err := database.InsertOne(ctx, client, cfg.DBName, cfg.UserColl, userDoc); err != nil {
+		uid, userDoc := database.BuildUserDoc(info) // avoid shadowing
+		userObjectID = uid
+
+		res, err := client.Database(cfg.DBName).Collection(cfg.UserColl).InsertOne(ctx, userDoc)
+		if err != nil {
 			return fmt.Errorf("insert user: %w", err)
+		}
+		if userObjectID == primitive.NilObjectID {
+			if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
+				userObjectID = oid
+			} else {
+				return fmt.Errorf("insert user returned non-ObjectID _id (%T)", res.InsertedID)
+			}
 		}
 		subDoc := database.BuildSubscriptionDoc(userObjectID)
 		if err := database.InsertOne(ctx, client, cfg.DBName, cfg.SubscriptionColl, subDoc); err != nil {
 			return fmt.Errorf("insert subscription: %w", err)
 		}
+		fmt.Printf("[info] created new user _id = %s username = %s\n", userObjectID.Hex(), cfg.NewUserName)
 	}
 
 	deviceDocs, deviceIDs := database.BuildDeviceDocs(cfg.DeviceCount, userObjectID, amazonSecretAccessKey)
