@@ -15,6 +15,8 @@ func promptAction() string {
 		"seed-media",
 		"seed-users",
 		"seed-devices",
+		"seed-markers",
+		"seed-markers-only",
 	}
 	fmt.Println("Select an action:")
 	for i, c := range choices {
@@ -79,6 +81,15 @@ func main() {
 	userEmail := flag.String("user-email", "", "User email for the media user")
 	deviceCount := flag.Int("device-count", 0, "Number of devices to simulate")
 	days := flag.Int("days", 7, "Number of past days to spread the media over")
+	markerCollName := flag.String("marker-collection", "markers", "Marker collection name")
+	markerOptCollName := flag.String("marker-option-collection", "marker_options", "Marker option collection name")
+	tagOptCollName := flag.String("tag-option-collection", "tag_options", "Tag option collection name")
+	eventTypeOptCollName := flag.String("event-type-option-collection", "event_type_options", "Event type option collection name")
+	markerOptRangesCollName := flag.String("marker-option-ranges-collection", "marker_option_ranges", "Marker option ranges collection name")
+	tagOptRangesCollName := flag.String("tag-option-ranges-collection", "tag_option_ranges", "Tag option ranges collection name")
+	eventTypeOptRangesCollName := flag.String("event-type-option-ranges-collection", "event_type_option_ranges", "Event type option ranges collection name")
+	existingUserIDHex := flag.String("existing-user-id", "", "Existing user ID to use as organisationId for markers")
+	markerBatchSize := flag.Int("marker-batch-size", 100, "Batch size for marker inserts")
 
 	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
 
@@ -171,6 +182,46 @@ func main() {
 			*userEmail,
 			*days,
 			*noIndex,
+		)
+	case "seed-markers":
+		fmt.Println("Seeding synthetic markers...")
+		actions.SeedMarkers(
+			*target,
+			*markerBatchSize,
+			*parallel,
+			*mongodbURI,
+			*dbName,
+			*deviceCollName,
+			*markerCollName,
+			*markerOptCollName,
+			*tagOptCollName,
+			*eventTypeOptCollName,
+			*markerOptRangesCollName,
+			*tagOptRangesCollName,
+			*eventTypeOptRangesCollName,
+			*existingUserIDHex,
+			*deviceCount,
+			*days,
+		)
+	case "seed-markers-only":
+		fmt.Println("Seeding synthetic markers only...")
+		actions.SeedMarkersOnly(
+			*target,
+			*markerBatchSize,
+			*parallel,
+			*mongodbURI,
+			*dbName,
+			*deviceCollName,
+			*markerCollName,
+			*markerOptCollName,
+			*tagOptCollName,
+			*eventTypeOptCollName,
+			*markerOptRangesCollName,
+			*tagOptRangesCollName,
+			*eventTypeOptRangesCollName,
+			*existingUserIDHex,
+			*deviceCount,
+			*days,
 		)
 	default:
 		fmt.Println("Invalid action.")

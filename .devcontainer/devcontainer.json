@@ -5,6 +5,9 @@
         "--network=host"
     ],
     "dockerFile": "Dockerfile",
+    "mounts": [
+		"source=${localWorkspaceFolder}/../models,target=/workspaces/models,type=bind"
+	],
     "customizations": {
         "vscode": {
             "extensions": [
