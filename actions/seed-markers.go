@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gosuri/uiprogress"
-	"github.com/uug-ai/cli/database"
 	hubModels "github.com/uug-ai/models/pkg/models"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -36,22 +36,22 @@ const (
 )
 
 type SeedMarkersConfig struct {
-	Target                 int
-	BatchSize              int
-	Parallel               int
-	MongoURI               string
-	DBName                 string
-	DeviceColl             string
-	MarkerColl             string
-	MarkerOptColl          string
-	TagOptColl             string
-	EventTypeOptColl       string
-	MarkerOptRangesColl    string
-	TagOptRangesColl       string
-	EventTypeOptRangesColl string
-	ExistingUserIDHex      string
-	DeviceCount            int
-	Days                   int
+	Target              int
+	BatchSize           int
+	Parallel            int
+	MongoURI            string
+	DBName              string
+	DeviceColl          string
+	MarkerColl          string
+	MarkerOptColl       string
+	TagOptColl          string
+	EventOptColl        string
+	MarkerOptRangesColl string
+	TagOptRangesColl    string
+	EventOptRangesColl  string
+	ExistingUserIDHex   string
+	DeviceCount         int
+	Days                int
 }
 
 func (c *SeedMarkersConfig) ApplyDefaults() {
@@ -105,8 +105,8 @@ func (c *SeedMarkersConfig) ApplyDefaults() {
 	if c.TagOptColl == "" {
 		c.TagOptColl = "tag_options"
 	}
-	if c.EventTypeOptColl == "" {
-		c.EventTypeOptColl = "event_type_options"
+	if c.EventOptColl == "" {
+		c.EventOptColl = "event_options"
 	}
 	if c.MarkerOptRangesColl == "" {
 		c.MarkerOptRangesColl = "marker_option_ranges"
@@ -114,8 +114,8 @@ func (c *SeedMarkersConfig) ApplyDefaults() {
 	if c.TagOptRangesColl == "" {
 		c.TagOptRangesColl = "tag_option_ranges"
 	}
-	if c.EventTypeOptRangesColl == "" {
-		c.EventTypeOptRangesColl = "event_type_option_ranges"
+	if c.EventOptRangesColl == "" {
+		c.EventOptRangesColl = "event_option_ranges"
 	}
 	if c.DeviceCount < MinDeviceCount {
 		c.DeviceCount = MinDeviceCount
@@ -148,7 +148,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	CreateMarkerIndexes(ctx, db, cfg)
 
 	var userObjectID primitive.ObjectID
-	var amazonSecretAccessKey, amazonAccessKeyID string
+	var organisationId string
 
 	if cfg.ExistingUserIDHex != "" {
 		userObjectID, err = primitive.ObjectIDFromHex(cfg.ExistingUserIDHex)
@@ -156,47 +156,43 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 			return fmt.Errorf("invalid existing user id: %w", err)
 		}
 		var userDoc bson.M
-		err = client.Database(cfg.DBName).Collection("users").
-			FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
+		err = db.Collection("users").FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
 		if err != nil {
 			return fmt.Errorf("fetch existing user: %w", err)
 		}
-		amazonSecretAccessKey, _ = userDoc["amazon_secret_access_key"].(string)
-		amazonAccessKeyID, _ = userDoc["amazon_access_key_id"].(string)
-		if amazonSecretAccessKey == "" || amazonAccessKeyID == "" {
-			return fmt.Errorf("existing user missing keys")
-		}
+		organisationId, _ = userDoc["organisationId"].(string)
 	}
 
-	deviceDocs, _ := database.BuildDeviceDocs(cfg.DeviceCount, userObjectID, amazonSecretAccessKey)
-	if len(deviceDocs) == 0 {
-		return fmt.Errorf("no devices generated")
-	}
-	if err := database.InsertMany(ctx, client, cfg.DBName, cfg.DeviceColl, deviceDocs); err != nil {
-		return fmt.Errorf("insert devices: %w", err)
-	}
-
-	// Extract ObjectIDs from deviceDocs
+	// Query existing devices for the user
 	var deviceObjIDs []primitive.ObjectID
-	for _, doc := range deviceDocs {
-		if m, ok := doc.(bson.M); ok {
-			if id, ok := m["_id"].(primitive.ObjectID); ok {
+	filter := bson.M{}
+	if organisationId != "" {
+		filter["organisationId"] = organisationId
+	}
+	cursor, err := db.Collection(cfg.DeviceColl).Find(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("find devices: %w", err)
+	}
+	defer cursor.Close(ctx)
+	for cursor.Next(ctx) {
+		var device bson.M
+		if err := cursor.Decode(&device); err == nil {
+			if id, ok := device["_id"].(primitive.ObjectID); ok {
 				deviceObjIDs = append(deviceObjIDs, id)
 			}
 		}
 	}
-
 	if len(deviceObjIDs) == 0 {
-		return fmt.Errorf("no valid device ObjectIDs found")
+		return fmt.Errorf("no existing devices found for user/organisation")
 	}
 
-	markerColl := client.Database(cfg.DBName).Collection(cfg.MarkerColl)
-	markerOptColl := client.Database(cfg.DBName).Collection(cfg.MarkerOptColl)
-	tagOptColl := client.Database(cfg.DBName).Collection(cfg.TagOptColl)
-	eventTypeOptColl := client.Database(cfg.DBName).Collection(cfg.EventTypeOptColl)
-	markerOptRangesColl := client.Database(cfg.DBName).Collection(cfg.MarkerOptRangesColl)
-	tagOptRangesColl := client.Database(cfg.DBName).Collection(cfg.TagOptRangesColl)
-	eventTypeOptRangesColl := client.Database(cfg.DBName).Collection(cfg.EventTypeOptRangesColl)
+	markerColl := db.Collection(cfg.MarkerColl)
+	markerOptColl := db.Collection(cfg.MarkerOptColl)
+	tagOptColl := db.Collection(cfg.TagOptColl)
+	eventOptColl := db.Collection(cfg.EventOptColl)
+	markerOptRangesColl := db.Collection(cfg.MarkerOptRangesColl)
+	tagOptRangesColl := db.Collection(cfg.TagOptRangesColl)
+	eventOptRangesColl := db.Collection(cfg.EventOptRangesColl)
 
 	var (
 		totalInserted int64
@@ -218,86 +214,212 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		return fmt.Sprintf("Inserted %d/%d (%.1f%%) %.0f/s", inserted, cfg.Target, pct, rate)
 	})
 
-	doneWorkers := make(chan struct{})
-	go func() {
-		for batch := range batchCh {
-			var docs []interface{}
-			for _, marker := range batch {
-				docs = append(docs, marker)
-			}
-			res, err := markerColl.InsertMany(ctx, docs)
-			if err == nil {
-				atomic.AddInt64(&totalInserted, int64(len(res.InsertedIDs)))
-				progressCh <- int(atomic.LoadInt64(&totalInserted))
-			}
-			// Upsert options and ranges for each marker in batch
-			for _, marker := range batch {
-				// MarkerOption
-				markerOpt := hubModels.MarkerOption{
-					Value: marker.Name,
-					Text:  marker.Name,
-					TimeRanges: []hubModels.MarkerTimeRange{
-						{Start: marker.StartTimestamp, End: marker.EndTimestamp, Name: &marker.Name, DeviceId: &marker.DeviceId},
-					},
-				}
-				_, _ = markerOptColl.UpdateOne(
-					ctx,
-					bson.M{"value": markerOpt.Value},
-					bson.M{"$set": markerOpt},
-					options.Update().SetUpsert(true),
-				)
-				_, _ = markerOptRangesColl.InsertOne(ctx, bson.M{
-					"name":      markerOpt.Text,
-					"timeRange": markerOpt.TimeRanges,
-				})
+	// create a WaitGroup for worker goroutines
+	var wg sync.WaitGroup
+	// Use unordered bulk writes for resiliency / speed
+	bulkOpts := options.BulkWrite().SetOrdered(false)
 
-				// TagOption
-				for _, tag := range marker.Tags {
-					tagOpt := hubModels.MarkerTagOptions{
-						Value: tag,
-						Text:  tag,
-						TimeRanges: []hubModels.MarkerTimeRange{
-							{Start: marker.StartTimestamp, End: marker.EndTimestamp, Name: &tag, DeviceId: &marker.DeviceId},
-						},
+	// spawn cfg.Parallel workers
+	for w := 0; w < cfg.Parallel; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for batch := range batchCh {
+				// Bulk insert markers (use InsertMany)
+				var markerDocs []interface{}
+				for _, marker := range batch {
+					// NOTE: We use the marker as-is (typed struct) — ensure Marker.Id has a valid ObjectID.
+					// Alternatively, encode as bson.M to avoid _id issues.
+					markerDocs = append(markerDocs, marker)
+				}
+				res, err := markerColl.InsertMany(ctx, markerDocs)
+				if err != nil {
+					// log error but continue with the rest (do not crash whole program)
+					fmt.Printf("[warn] worker %d InsertMany markers failed: %v\n", workerID, err)
+				} else {
+					atomic.AddInt64(&totalInserted, int64(len(res.InsertedIDs)))
+					progressCh <- int(atomic.LoadInt64(&totalInserted))
+				}
+
+				// dedupe maps
+				nameSet := make(map[string]struct{})
+				tagSet := make(map[string]struct{})
+				eventSet := make(map[string]struct{})
+
+				var markerOptUpserts []mongo.WriteModel
+				var tagOptUpserts []mongo.WriteModel
+				var eventOptUpserts []mongo.WriteModel
+
+				var markerRangeDocs []interface{}
+				var tagRangeDocs []interface{}
+				var eventRangeDocs []interface{}
+
+				now := time.Now().Unix()
+
+				for _, marker := range batch {
+					// marker option upsert
+					if marker.Name != "" {
+						if _, exists := nameSet[marker.Name]; !exists {
+							nameSet[marker.Name] = struct{}{}
+							createdAt := randomTimeLast30Days()
+							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
+							up := mongo.NewUpdateOneModel()
+							up.SetFilter(bson.M{"value": marker.Name, "organisationId": marker.OrganisationId})
+							up.SetUpdate(bson.M{
+								"$setOnInsert": bson.M{
+									"value":          marker.Name,
+									"text":           marker.Name,
+									"organisationId": marker.OrganisationId,
+									"createdAt":      createdAt,
+								},
+								"$set": bson.M{
+									"updatedAt": updatedAt,
+								},
+							})
+							up.SetUpsert(true)
+							markerOptUpserts = append(markerOptUpserts, up)
+						}
+						// always insert a time-range doc for this marker name
+						markerRangeDocs = append(markerRangeDocs, bson.M{
+							"value":          marker.Name,
+							"text":           marker.Name,
+							"organisationId": marker.OrganisationId,
+							"start":          marker.StartTimestamp,
+							"end":            marker.EndTimestamp,
+							"deviceId":       marker.DeviceId,
+							"createdAt":      now,
+						})
 					}
-					_, _ = tagOptColl.UpdateOne(
-						ctx,
-						bson.M{"value": tagOpt.Value},
-						bson.M{"$set": tagOpt},
-						options.Update().SetUpsert(true),
-					)
-					_, _ = tagOptRangesColl.InsertOne(ctx, bson.M{
-						"name":      tagOpt.Text,
-						"timeRange": tagOpt.TimeRanges,
-					})
+
+					// tags
+					for _, tag := range marker.Tags {
+						if tag.Name == "" {
+							continue
+						}
+						if _, exists := tagSet[tag.Name]; !exists {
+							tagSet[tag.Name] = struct{}{}
+							createdAt := randomTimeLast30Days()
+							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
+							up := mongo.NewUpdateOneModel()
+							up.SetFilter(bson.M{"value": tag.Name, "organisationId": marker.OrganisationId})
+							up.SetUpdate(bson.M{
+								"$setOnInsert": bson.M{
+									"value":          tag.Name,
+									"text":           tag.Name,
+									"organisationId": marker.OrganisationId,
+									"createdAt":      createdAt,
+								},
+								"$set": bson.M{
+									"updatedAt": updatedAt,
+								},
+							})
+							up.SetUpsert(true)
+							tagOptUpserts = append(tagOptUpserts, up)
+						}
+						tagRangeDocs = append(tagRangeDocs, bson.M{
+							"value":          tag.Name,
+							"text":           tag.Name,
+							"organisationId": marker.OrganisationId,
+							"start":          marker.StartTimestamp,
+							"end":            marker.EndTimestamp,
+							"deviceId":       marker.DeviceId,
+							"createdAt":      now,
+						})
+					}
+
+					// events
+					for _, event := range marker.Events {
+						if event.Name == "" {
+							continue
+						}
+						if _, exists := eventSet[event.Name]; !exists {
+							eventSet[event.Name] = struct{}{}
+							createdAt := randomTimeLast30Days()
+							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
+							up := mongo.NewUpdateOneModel()
+							up.SetFilter(bson.M{"value": event.Name, "organisationId": marker.OrganisationId})
+							up.SetUpdate(bson.M{
+								"$setOnInsert": bson.M{
+									"value":          event.Name,
+									"text":           event.Name,
+									"organisationId": marker.OrganisationId,
+									"createdAt":      createdAt,
+								},
+								"$set": bson.M{
+									"updatedAt": updatedAt,
+								},
+							})
+							up.SetUpsert(true)
+							eventOptUpserts = append(eventOptUpserts, up)
+						}
+						// event timestamp may be used as start==end in this model; keep one-second window if desired
+						evStart := event.Timestamp
+						evEnd := event.Timestamp + 1
+						eventRangeDocs = append(eventRangeDocs, bson.M{
+							"value":          event.Name,
+							"text":           event.Name,
+							"organisationId": marker.OrganisationId,
+							"start":          evStart,
+							"end":            evEnd,
+							"deviceId":       marker.DeviceId,
+							"createdAt":      now,
+							"updatedAt":      now,
+						})
+					}
 				}
 
-				// EventTypeOption
-				for _, event := range marker.Events {
-					eventType := string(event.Type.Name)
-					eventTypeOpt := hubModels.MarkerEventTypeOption{
-						Value: eventType,
-						Text:  eventType,
-						TimeRanges: []hubModels.MarkerTimeRange{
-							{Start: event.Timestamp, End: event.Timestamp + 1, Name: &eventType, DeviceId: &marker.DeviceId},
-						},
+				// Bulk upsert options (unordered to be faster / resilient)
+				if len(markerOptUpserts) > 0 {
+					_, err := markerOptColl.BulkWrite(ctx, markerOptUpserts, bulkOpts)
+					if err != nil {
+						fmt.Printf("[warn] worker %d markerOpt BulkWrite error: %v\n", workerID, err)
 					}
-					_, _ = eventTypeOptColl.UpdateOne(
-						ctx,
-						bson.M{"value": eventTypeOpt.Value},
-						bson.M{"$set": eventTypeOpt},
-						options.Update().SetUpsert(true),
-					)
-					_, _ = eventTypeOptRangesColl.InsertOne(ctx, bson.M{
-						"name":      eventTypeOpt.Text,
-						"timeRange": eventTypeOpt.TimeRanges,
-					})
+				}
+				if len(tagOptUpserts) > 0 {
+					_, err := tagOptColl.BulkWrite(ctx, tagOptUpserts, bulkOpts)
+					if err != nil {
+						fmt.Printf("[warn] worker %d tagOpt BulkWrite error: %v\n", workerID, err)
+					}
+				}
+				if len(eventOptUpserts) > 0 {
+					_, err := eventOptColl.BulkWrite(ctx, eventOptUpserts, bulkOpts)
+					if err != nil {
+						fmt.Printf("[warn] worker %d eventOpt BulkWrite error: %v\n", workerID, err)
+					}
+				}
+
+				// Bulk insert ranges (these can be large) - use InsertMany in smaller chunks
+				// helper that splits to chunks to avoid huge InsertMany size
+				insertInChunks := func(coll *mongo.Collection, docs []interface{}) {
+					if len(docs) == 0 {
+						return
+					}
+					const chunkSize = 1000
+					for s := 0; s < len(docs); s += chunkSize {
+						e := s + chunkSize
+						if e > len(docs) {
+							e = len(docs)
+						}
+						if _, err := coll.InsertMany(ctx, docs[s:e]); err != nil {
+							fmt.Printf("[warn] worker %d InsertMany ranges error (%s): %v\n", workerID, coll.Name(), err)
+						}
+					}
+				}
+
+				if len(markerRangeDocs) > 0 {
+					insertInChunks(markerOptRangesColl, markerRangeDocs)
+				}
+				if len(tagRangeDocs) > 0 {
+					insertInChunks(tagOptRangesColl, tagRangeDocs)
+				}
+				if len(eventRangeDocs) > 0 {
+					insertInChunks(eventOptRangesColl, eventRangeDocs)
 				}
 			}
-		}
-		close(doneWorkers)
-	}()
+		}(w)
+	}
 
+	// progress printer goroutine (unchanged except we will close it after wg waits)
 	go func() {
 		for total := range progressCh {
 			if total > cfg.Target {
@@ -307,6 +429,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		}
 	}()
 
+	// producer logic (same as before)
 	var queued int64
 	rand.Seed(time.Now().UnixNano())
 	for atomic.LoadInt64(&queued) < int64(cfg.Target) && atomic.LoadInt32(&stopFlag) == 0 {
@@ -321,7 +444,11 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	}
 
 	close(batchCh)
-	<-doneWorkers
+	// wait for workers
+	wg.Wait()
+	// all workers done, close progress channel so progress goroutine exits
+	close(progressCh)
+
 	finalTotal := int(atomic.LoadInt64(&totalInserted))
 	if finalTotal > cfg.Target {
 		finalTotal = cfg.Target
@@ -341,15 +468,62 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 }
 
 func generateBatchMarkers(batchSize int, days int, organisationId string, deviceIDs []primitive.ObjectID) []hubModels.Marker {
+	tagNames := []string{
+		"vehicle", "license plate", "security", "entrance", "exit", "parking-lot",
+		"lobby-area", "staff", "visitor", "delivery", "motion", "sound", "door", "window",
+		"alarm", "camera", "gate", "restricted", "public", "emergency", "maintenance",
+		"fire exit", "loading dock", "corridor", "break room", "conference room", "server room",
+		"roof access", "basement", "elevator", "stairwell", "main entrance", "side entrance",
+	}
+
+	eventNames := []string{
+		"Motion Detected", "Sound Detected", "Door Opened", "Glass Break", "Tamper Alarm",
+		"Camera Offline", "Low Battery", "Power Restored", "Network Down", "Network Restored",
+		"Intrusion Detected", "Fire Alarm", "System Check", "Manual Trigger", "Temperature Alert",
+		"Humidity Alert", "Light Level Change", "Object Left Behind", "Object Removed",
+		"Face Recognized", "License Plate Read", "Crowd Detected", "Loitering", "Line Crossed",
+		"Access Denied", "Access Granted", "Badge Scan", "RFID Scan", "Smoke Detected",
+		"Water Leak", "Vibration Detected", "Panic Button", "Emergency Call", "Maintenance Required",
+		"Battery Replaced", "Firmware Updated", "Device Restarted", "Device Shutdown", "Device Started",
+		"System Armed", "System Disarmed", "Alarm Silenced", "Alarm Triggered", "Zone Breach",
+		"Zone Cleared", "Visitor Registered", "Delivery Arrived", "Delivery Departed", "Staff Checked In",
+	}
+
+	deviceCount := len(deviceIDs)
+
 	var batch []hubModels.Marker
+	now := time.Now().Unix()
+	maxDays := 30
+	secondsIn30Days := int64(maxDays * 86400)
 	for i := 0; i < batchSize; i++ {
-		start := time.Now().Unix() - int64(rand.Intn(days*86400))
-		duration := int64(rand.Intn(60) + 10)
+		// Random start within last 30 days
+		start := now - int64(rand.Intn(int(secondsIn30Days)))
+		// Random duration up to 600 seconds
+		duration := int64(rand.Intn(600) + 1)
 		end := start + duration
-		deviceId := deviceIDs[rand.Intn(len(deviceIDs))].Hex()
+		deviceId := deviceIDs[rand.Intn(deviceCount)].Hex()
+
+		numTags := rand.Intn(4) + 1
+		tagIndexes := rand.Perm(len(tagNames))[:numTags]
+		var tags []hubModels.MarkerTag
+		for _, idx := range tagIndexes {
+			tags = append(tags, hubModels.MarkerTag{Name: tagNames[idx]})
+		}
+
+		numEvents := rand.Intn(3) + 1
+		var events []hubModels.MarkerEvent
+		for j := 0; j < numEvents; j++ {
+			name := eventNames[rand.Intn(len(eventNames))]
+			events = append(events, hubModels.MarkerEvent{
+				Timestamp:   start + int64(j*5) + int64(rand.Intn(10)),
+				Name:        name,
+				Description: "Random event description",
+				Tags:        []string{"urgent"},
+			})
+		}
+
 		marker := hubModels.Marker{
 			Id:             primitive.NewObjectID(),
-			MediaIds:       []string{randomMediaId(), randomMediaId()},
 			DeviceId:       deviceId,
 			SiteId:         randomSiteId(),
 			GroupId:        randomGroupId(),
@@ -358,214 +532,20 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			EndTimestamp:   end,
 			Duration:       duration,
 			Name:           randomMarkerName(i),
-			Tag:            randomTag(),
-			Events:         []hubModels.MarkerEvent{randomMarkerEvent(start)},
+			Events:         events,
 			Description:    "Random marker description",
-			Metadata:       &hubModels.MarkerMetadata{Tags: []string{"vehicle", "security"}},
+			Metadata:       &hubModels.MarkerMetadata{Comments: nil},
 			Synchronize:    nil,
 			Audit:          nil,
-			Tags:           []string{"vehicle", "license plate"},
+			Tags:           tags,
 		}
 		batch = append(batch, marker)
 	}
 	return batch
 }
 
-func SeedMarkersOnly(
-	target int,
-	batchSize int,
-	parallel int,
-	mongoURI string,
-	dbName string,
-	deviceColl string,
-	markerColl string,
-	markerOptColl string,
-	tagOptColl string,
-	eventTypeOptColl string,
-	markerOptRangesColl string,
-	tagOptRangesColl string,
-	eventTypeOptRangesColl string,
-	existingUserIDHex string,
-	deviceCount int,
-	days int,
-) {
-	HandleSignals()
-	flag.Parse()
-
-	cfg := SeedMarkersConfig{
-		Target:                 target,
-		BatchSize:              batchSize,
-		Parallel:               parallel,
-		MongoURI:               mongoURI,
-		DBName:                 dbName,
-		DeviceColl:             deviceColl,
-		MarkerColl:             markerColl,
-		MarkerOptColl:          markerOptColl,
-		TagOptColl:             tagOptColl,
-		EventTypeOptColl:       eventTypeOptColl,
-		MarkerOptRangesColl:    markerOptRangesColl,
-		TagOptRangesColl:       tagOptRangesColl,
-		EventTypeOptRangesColl: eventTypeOptRangesColl,
-		ExistingUserIDHex:      existingUserIDHex,
-		DeviceCount:            deviceCount,
-		Days:                   days,
-	}
-	if err := RunSeedMarkersOnly(cfg); err != nil {
-		fmt.Printf("[error] seed markers only: %v\n", err)
-		os.Exit(1)
-	}
-}
-
 type MarkerName struct {
 	Name string `bson:"name"`
-}
-
-func RunSeedMarkersOnly(cfg SeedMarkersConfig) error {
-	HandleSignals()
-	cfg.ApplyDefaults()
-
-	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().
-		ApplyURI(cfg.MongoURI).
-		SetServerSelectionTimeout(ServerSelectionTimeoutSeconds*time.Second))
-	if err != nil {
-		return fmt.Errorf("connect mongo: %w", err)
-	}
-	defer client.Disconnect(ctx)
-
-	var userObjectID primitive.ObjectID
-	var amazonSecretAccessKey string
-
-	if cfg.ExistingUserIDHex != "" {
-		userObjectID, err = primitive.ObjectIDFromHex(cfg.ExistingUserIDHex)
-		if err != nil {
-			return fmt.Errorf("invalid existing user id: %w", err)
-		}
-		var userDoc bson.M
-		err = client.Database(cfg.DBName).Collection("users").
-			FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
-		if err != nil {
-			return fmt.Errorf("fetch existing user: %w", err)
-		}
-		amazonSecretAccessKey, _ = userDoc["amazon_secret_access_key"].(string)
-	}
-
-	deviceDocs, _ := database.BuildDeviceDocs(cfg.DeviceCount, userObjectID, amazonSecretAccessKey)
-	if len(deviceDocs) == 0 {
-		return fmt.Errorf("no devices generated")
-	}
-	if err := database.InsertMany(ctx, client, cfg.DBName, cfg.DeviceColl, deviceDocs); err != nil {
-		return fmt.Errorf("insert devices: %w", err)
-	}
-
-	var deviceObjIDs []primitive.ObjectID
-	for _, doc := range deviceDocs {
-		if m, ok := doc.(bson.M); ok {
-			if id, ok := m["_id"].(primitive.ObjectID); ok {
-				deviceObjIDs = append(deviceObjIDs, id)
-			}
-		}
-	}
-	if len(deviceObjIDs) == 0 {
-		return fmt.Errorf("no valid device ObjectIDs found")
-	}
-
-	markerColl := client.Database(cfg.DBName).Collection(cfg.MarkerColl)
-	markerOptColl := client.Database(cfg.DBName).Collection(cfg.MarkerOptColl)
-
-	var (
-		totalInserted int64
-		startTime     = time.Now()
-		batchCh       = make(chan []hubModels.Marker, cfg.Parallel*2)
-		progressCh    = make(chan int, cfg.Parallel*2)
-	)
-
-	uiprogress.Start()
-	bar := uiprogress.AddBar(cfg.Target).AppendCompleted().PrependElapsed()
-	bar.PrependFunc(func(b *uiprogress.Bar) string {
-		inserted := atomic.LoadInt64(&totalInserted)
-		pct := 100 * float64(inserted) / float64(cfg.Target)
-		el := time.Since(startTime).Seconds()
-		rate := float64(inserted)
-		if el > 0 {
-			rate = float64(inserted) / el
-		}
-		return fmt.Sprintf("Inserted %d/%d (%.1f%%) %.0f/s", inserted, cfg.Target, pct, rate)
-	})
-
-	doneWorkers := make(chan struct{})
-	go func() {
-		for batch := range batchCh {
-			// Insert markers in bulk
-			var docs []interface{}
-			for _, marker := range batch {
-				docs = append(docs, marker)
-			}
-			res, err := markerColl.InsertMany(ctx, docs)
-			if err == nil {
-				atomic.AddInt64(&totalInserted, int64(len(res.InsertedIDs)))
-				progressCh <- int(atomic.LoadInt64(&totalInserted))
-			}
-
-			// Upsert marker names into markerOptColl (normalized)
-			seenNames := make(map[string]struct{})
-			for _, marker := range batch {
-				if _, exists := seenNames[marker.Name]; exists {
-					continue
-				}
-				seenNames[marker.Name] = struct{}{}
-				markerName := MarkerName{Name: marker.Name}
-				_, _ = markerOptColl.UpdateOne(
-					ctx,
-					bson.M{"name": markerName.Name},
-					bson.M{"$setOnInsert": markerName},
-					options.Update().SetUpsert(true),
-				)
-			}
-		}
-		close(doneWorkers)
-	}()
-
-	go func() {
-		for total := range progressCh {
-			if total > cfg.Target {
-				total = cfg.Target
-			}
-			bar.Set(total)
-		}
-	}()
-
-	var queued int64
-	rand.Seed(time.Now().UnixNano())
-	for atomic.LoadInt64(&queued) < int64(cfg.Target) && atomic.LoadInt32(&stopFlag) == 0 {
-		remaining := int64(cfg.Target) - atomic.LoadInt64(&queued)
-		current := cfg.BatchSize
-		if remaining < int64(current) {
-			current = int(remaining)
-		}
-		batch := generateBatchMarkers(current, cfg.Days, cfg.ExistingUserIDHex, deviceObjIDs)
-		batchCh <- batch
-		atomic.AddInt64(&queued, int64(current))
-	}
-
-	close(batchCh)
-	<-doneWorkers
-	finalTotal := int(atomic.LoadInt64(&totalInserted))
-	if finalTotal > cfg.Target {
-		finalTotal = cfg.Target
-	}
-	bar.Set(finalTotal)
-	uiprogress.Stop()
-
-	el := time.Since(startTime).Seconds()
-	rate := float64(finalTotal) / el
-	fmt.Printf("[done] inserted=%d elapsed=%.2fs rate=%.0f/s stop=%v\n",
-		finalTotal, el, rate, atomic.LoadInt32(&stopFlag) != 0)
-
-	if atomic.LoadInt32(&stopFlag) != 0 {
-		return fmt.Errorf("interrupted")
-	}
-	return nil
 }
 
 func SeedMarkers(
@@ -578,10 +558,10 @@ func SeedMarkers(
 	markerColl string,
 	markerOptColl string,
 	tagOptColl string,
-	eventTypeOptColl string,
+	eventOptColl string,
 	markerOptRangesColl string,
 	tagOptRangesColl string,
-	eventTypeOptRangesColl string,
+	eventOptRangesColl string,
 	existingUserIDHex string,
 	deviceCount int,
 	days int,
@@ -590,22 +570,22 @@ func SeedMarkers(
 	flag.Parse()
 
 	cfg := SeedMarkersConfig{
-		Target:                 target,
-		BatchSize:              batchSize,
-		Parallel:               parallel,
-		MongoURI:               mongoURI,
-		DBName:                 dbName,
-		DeviceColl:             deviceColl,
-		MarkerColl:             markerColl,
-		MarkerOptColl:          markerOptColl,
-		TagOptColl:             tagOptColl,
-		EventTypeOptColl:       eventTypeOptColl,
-		MarkerOptRangesColl:    markerOptRangesColl,
-		TagOptRangesColl:       tagOptRangesColl,
-		EventTypeOptRangesColl: eventTypeOptRangesColl,
-		ExistingUserIDHex:      existingUserIDHex,
-		DeviceCount:            deviceCount,
-		Days:                   days,
+		Target:              target,
+		BatchSize:           batchSize,
+		Parallel:            parallel,
+		MongoURI:            mongoURI,
+		DBName:              dbName,
+		DeviceColl:          deviceColl,
+		MarkerColl:          markerColl,
+		MarkerOptColl:       markerOptColl,
+		TagOptColl:          tagOptColl,
+		EventOptColl:        eventOptColl,
+		MarkerOptRangesColl: markerOptRangesColl,
+		TagOptRangesColl:    tagOptRangesColl,
+		EventOptRangesColl:  eventOptRangesColl,
+		ExistingUserIDHex:   existingUserIDHex,
+		DeviceCount:         deviceCount,
+		Days:                days,
 	}
 	if err := RunSeedMarkers(cfg); err != nil {
 		fmt.Printf("[error] seed markers: %v\n", err)
@@ -614,9 +594,6 @@ func SeedMarkers(
 }
 
 // Helper functions for random data generation
-func randomMediaId() string {
-	return "img_" + primitive.NewObjectID().Hex() + ".jpg"
-}
 func randomSiteId() string {
 	return "site_" + primitive.NewObjectID().Hex()
 }
@@ -626,17 +603,17 @@ func randomGroupId() string {
 func randomMarkerName(i int) string {
 	return "marker-" + fmt.Sprintf("%d", i)
 }
-func randomTag() string {
-	tags := []string{"entrance-camera-1", "lobby-area", "parking-lot"}
-	return tags[rand.Intn(len(tags))]
-}
 func randomMarkerEvent(ts int64) hubModels.MarkerEvent {
-	eventTypes := []string{"Motion Detected", "Sound Detected", "Door Opened"}
-	name := eventTypes[rand.Intn(len(eventTypes))]
+	events := []string{
+		"Motion Detected", "Sound Detected", "Door Opened", "Glass Break", "Tamper Alarm",
+		"Camera Offline", "Low Battery", "Power Restored", "Network Down", "Network Restored",
+		"Intrusion Detected", "Fire Alarm", "System Check", "Manual Trigger", "Temperature Alert",
+		"Humidity Alert", "Light Level Change", "Object Left Behind", "Object Removed",
+		"Face Recognized", "License Plate Read", "Crowd Detected", "Loitering", "Line Crossed",
+	}
+	name := events[rand.Intn(len(events))]
 	return hubModels.MarkerEvent{
-		Id:          primitive.NewObjectID(),
 		Timestamp:   ts + int64(rand.Intn(10)),
-		Type:        hubModels.MarkerEventType{Name: name},
 		Name:        name,
 		Description: "Random event description",
 		Tags:        []string{"urgent"},
@@ -644,85 +621,99 @@ func randomMarkerEvent(ts int64) hubModels.MarkerEvent {
 }
 
 func CreateMarkerIndexes(ctx context.Context, db *mongo.Database, cfg SeedMarkersConfig) {
-	// Markers
+	// Markers - index fields expected on marker documents
 	markerIndexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "startTimestamp", Value: 1}}},
 		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
 		{Keys: bson.D{{Key: "organisationId", Value: 1}}},
-		{Keys: bson.D{{Key: "tags", Value: 1}}},
+		// tags is an array of objects with "name" -> index tags.name for better matching
+		{Keys: bson.D{{Key: "tags.name", Value: 1}}},
 		{Keys: bson.D{{Key: "duration", Value: 1}}},
 		{Keys: bson.D{{Key: "name", Value: 1}}},
 	}
-	_, err := db.Collection(cfg.MarkerColl).Indexes().CreateMany(ctx, markerIndexes)
-	if err != nil {
+	if _, err := db.Collection(cfg.MarkerColl).Indexes().CreateMany(ctx, markerIndexes); err != nil {
 		fmt.Printf("[info] marker index creation skipped: %v\n", err)
 	}
 
-	// Marker Options
+	// Option collections - value/text
 	optIndexes := []mongo.IndexModel{
-		{Keys: bson.D{{Key: "value", Value: 1}}},
+		{Keys: bson.D{{Key: "value", Value: 1}}, Options: options.Index().SetUnique(false)},
 		{Keys: bson.D{{Key: "text", Value: 1}}},
 	}
-	_, err = db.Collection(cfg.MarkerOptColl).Indexes().CreateMany(ctx, optIndexes)
-	if err != nil {
+	if _, err := db.Collection(cfg.MarkerOptColl).Indexes().CreateMany(ctx, optIndexes); err != nil {
 		fmt.Printf("[info] marker_options index creation skipped: %v\n", err)
 	}
-
-	// Tag Options
-	_, err = db.Collection(cfg.TagOptColl).Indexes().CreateMany(ctx, optIndexes)
-	if err != nil {
+	if _, err := db.Collection(cfg.TagOptColl).Indexes().CreateMany(ctx, optIndexes); err != nil {
 		fmt.Printf("[info] tag_options index creation skipped: %v\n", err)
 	}
-
-	// Event Type Options
-	_, err = db.Collection(cfg.EventTypeOptColl).Indexes().CreateMany(ctx, optIndexes)
-	if err != nil {
-		fmt.Printf("[info] event_type_options index creation skipped: %v\n", err)
+	if _, err := db.Collection(cfg.EventOptColl).Indexes().CreateMany(ctx, optIndexes); err != nil {
+		fmt.Printf("[info] event_options index creation skipped: %v\n", err)
 	}
 
-	// Option Ranges
+	// Range collections - use top-level "start" and "end" (matches insertion below)
 	rangeIndexes := []mongo.IndexModel{
-		{Keys: bson.D{{Key: "name", Value: 1}}},
-		{Keys: bson.D{{Key: "timeRange.start", Value: 1}}},
-		{Keys: bson.D{{Key: "timeRange.end", Value: 1}}},
+		{Keys: bson.D{{Key: "value", Value: 1}}},
+		{Keys: bson.D{{Key: "start", Value: 1}}},
+		{Keys: bson.D{{Key: "end", Value: 1}}},
+		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
 	}
-	_, err = db.Collection(cfg.MarkerOptRangesColl).Indexes().CreateMany(ctx, rangeIndexes)
-	if err != nil {
+	if _, err := db.Collection(cfg.MarkerOptRangesColl).Indexes().CreateMany(ctx, rangeIndexes); err != nil {
 		fmt.Printf("[info] marker_option_ranges index creation skipped: %v\n", err)
 	}
-	_, err = db.Collection(cfg.TagOptRangesColl).Indexes().CreateMany(ctx, rangeIndexes)
-	if err != nil {
+	if _, err := db.Collection(cfg.TagOptRangesColl).Indexes().CreateMany(ctx, rangeIndexes); err != nil {
 		fmt.Printf("[info] tag_option_ranges index creation skipped: %v\n", err)
 	}
-	_, err = db.Collection(cfg.EventTypeOptRangesColl).Indexes().CreateMany(ctx, rangeIndexes)
-	if err != nil {
-		fmt.Printf("[info] event_type_option_ranges index creation skipped: %v\n", err)
+	if _, err := db.Collection(cfg.EventOptRangesColl).Indexes().CreateMany(ctx, rangeIndexes); err != nil {
+		fmt.Printf("[info] event_option_ranges index creation skipped: %v\n", err)
 	}
+}
+func randomTimeLast30Days() int64 {
+	now := time.Now().Unix()
+	secondsIn30Days := int64(30 * 86400)
+	return now - int64(rand.Intn(int(secondsIn30Days)))
+}
+
+// Helper to generate a random timestamp between two times
+func randomTimeBetween(start, end int64) int64 {
+	if end <= start {
+		return start
+	}
+	return start + int64(rand.Intn(int(end-start)))
 }
 
 /*
-1. Insert Marker Document
-The marker document is inserted into the markers collection.
-2. Upsert Marker Option
-A MarkerOption document is upserted into the marker_options collection.
-This contains the marker’s name and its time range.
-3. Insert Marker Option Range
-A corresponding range document is inserted into the marker_option_ranges collection.
-This stores the name and time range for the marker.
-4. Upsert Tag Option(s)
-For each tag in the marker:
-A MarkerTagOptions document is upserted into the tag_options collection.
-Contains the tag value, text, and time range.
-5. Insert Tag Option Range(s)
-For each tag:
-A range document is inserted into the tag_option_ranges collection.
-Stores the tag name and time range.
-6. Upsert Event Type Option(s)
-For each event in the marker:
-A MarkerEventTypeOption document is upserted into the event_type_options collection.
-Contains the event type, text, and time range.
-7. Insert Event Type Option Range(s)
-For each event:
-A range document is inserted into the event_type_option_ranges collection.
-Stores the event type name and time range.
+Connect to MongoDB
+
+Establishes a client connection to the MongoDB server.
+Create Indexes
+
+Calls CreateMarkerIndexes to ensure all necessary indexes exist for marker, option, and range collections.
+User Lookup (Optional)
+
+If ExistingUserIDHex is provided, fetches the user document from the users collection.
+Device Generation and Insert
+
+Generates device documents.
+Inserts devices into the devices collection using InsertMany.
+Marker Seeding Loop (Batch Processing)
+
+For each batch:
+Bulk Insert Markers
+Inserts marker documents into the markers collection using InsertMany.
+Deduplicate Names/Tags/Events
+Collects unique marker names, tag names, and event names in the batch.
+Bulk Upsert Marker/Tag/Event Options
+Upserts unique marker names into marker_options using BulkWrite (with upsert).
+Upserts unique tag names into tag_options using BulkWrite (with upsert).
+Upserts unique event names into event_type_options using BulkWrite (with upsert).
+Bulk Insert Time Ranges
+Inserts marker time ranges into marker_option_ranges using InsertMany.
+Inserts tag time ranges into tag_option_ranges using InsertMany.
+Inserts event time ranges into event_type_option_ranges using InsertMany.
+Progress Tracking
+
+Updates progress bar after each batch.
+Cleanup
+
+Closes batch channels and waits for all workers to finish.
 */
