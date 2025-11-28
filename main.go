@@ -15,6 +15,7 @@ func promptAction() string {
 		"seed-media",
 		"seed-users",
 		"seed-devices",
+		"seed-groups",
 		"seed-markers",
 	}
 	fmt.Println("Select an action:")
@@ -66,7 +67,7 @@ func main() {
 	labelNames := flag.String("label-names", "", "Names of the labels to generate separated by comma")
 	target := flag.Int("target", 0, "Total documents to insert (required)")
 	parallel := flag.Int("parallel", 0, "Concurrent batch workers (required)")
-	dbName := flag.String("db", "Kerberos", "Database name (required)")
+	dbName := flag.String("db", "", "Database name (required)")
 	mediaCollName := flag.String("media-collection", "media", "Media collection name (required)")
 	userCollName := flag.String("user-collection", "users", "User collection name")
 	deviceCollName := flag.String("device-collection", "devices", "Device collection name")
@@ -80,6 +81,7 @@ func main() {
 	userEmail := flag.String("user-email", "", "User email for the media user")
 	deviceCount := flag.Int("device-count", 0, "Number of devices to simulate")
 	days := flag.Int("days", 7, "Number of past days to spread the media over")
+	groupCollName := flag.String("groups-collection", "", "Groups collection name")
 	markerCollName := flag.String("marker-collection", "", "Marker collection name")
 	markerOptCollName := flag.String("marker-option-collection", "marker_options", "Marker option collection name")
 	tagOptCollName := flag.String("tag-option-collection", "", "Tag option collection name")
@@ -91,6 +93,7 @@ func main() {
 	markerBatchSize := flag.Int("marker-batch-size", 100, "Batch size for marker inserts")
 	markerTarget := flag.Int("marker-target", 0, "Total markers to insert (required)")
 	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
+	// useExistingDevices := flag.Bool("use-existing-devices", false, "Use existing devices instead of creating new ones")
 
 	flag.Parse()
 
@@ -182,6 +185,16 @@ func main() {
 			*days,
 			*noIndex,
 		)
+	case "seed-groups":
+		fmt.Println("Seeding synthetic groups...")
+		actions.SeedGroups(
+			*target,
+			*mongodbURI,
+			*dbName,
+			*groupCollName,
+			*deviceCollName,
+			*userId,
+		)
 	case "seed-markers":
 		fmt.Println("Seeding synthetic markers...")
 		actions.SeedMarkers(
@@ -191,6 +204,7 @@ func main() {
 			*mongodbURI,
 			*dbName,
 			*deviceCollName,
+			*groupCollName,
 			*markerCollName,
 			*markerOptCollName,
 			*tagOptCollName,

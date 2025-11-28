@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	DefaultMarkerTarget         = 100000
+	DefaultMarkerTarget         = 1000000
 	SmallMarkerTargetThreshold  = 10000
-	MediumMarkerTargetThreshold = 100000
+	MediumMarkerTargetThreshold = 1000000
 
 	DefaultMarkerBatchSizeSmall  = 500
 	DefaultMarkerBatchSizeMedium = 2000
@@ -163,8 +163,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		organisationId, _ = userDoc["organisationId"].(string)
 	}
 
-	// Query existing devices for the user
-	var deviceObjIDs []primitive.ObjectID
+	var deviceKeys []string
 	filter := bson.M{}
 	if organisationId != "" {
 		filter["organisationId"] = organisationId
@@ -177,13 +176,29 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	for cursor.Next(ctx) {
 		var device bson.M
 		if err := cursor.Decode(&device); err == nil {
-			if id, ok := device["_id"].(primitive.ObjectID); ok {
-				deviceObjIDs = append(deviceObjIDs, id)
+			if key, ok := device["key"].(string); ok && key != "" {
+				deviceKeys = append(deviceKeys, key)
 			}
 		}
 	}
-	if len(deviceObjIDs) == 0 {
+	if len(deviceKeys) == 0 {
 		return fmt.Errorf("no existing devices found for user/organisation")
+	}
+
+	// Query existing groups for the user/organisation
+	var groupIds []string
+	groupCursor, err := db.Collection("groups").Find(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("find groups: %w", err)
+	}
+	defer groupCursor.Close(ctx)
+	for groupCursor.Next(ctx) {
+		var group bson.M
+		if err := groupCursor.Decode(&group); err == nil {
+			if id, ok := group["_id"].(primitive.ObjectID); ok {
+				groupIds = append(groupIds, id.Hex())
+			}
+		}
 	}
 
 	markerColl := db.Collection(cfg.MarkerColl)
@@ -229,7 +244,6 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 				var markerDocs []interface{}
 				for _, marker := range batch {
 					// NOTE: We use the marker as-is (typed struct) — ensure Marker.Id has a valid ObjectID.
-					// Alternatively, encode as bson.M to avoid _id issues.
 					markerDocs = append(markerDocs, marker)
 				}
 				res, err := markerColl.InsertMany(ctx, markerDocs)
@@ -279,7 +293,6 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 							up.SetUpsert(true)
 							markerOptUpserts = append(markerOptUpserts, up)
 						}
-						// always insert a time-range doc for this marker name
 						markerRangeDocs = append(markerRangeDocs, bson.M{
 							"value":          marker.Name,
 							"text":           marker.Name,
@@ -287,6 +300,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 							"start":          marker.StartTimestamp,
 							"end":            marker.EndTimestamp,
 							"deviceId":       marker.DeviceId,
+							"groupId":        marker.GroupId,
 							"createdAt":      now,
 						})
 					}
@@ -323,6 +337,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 							"start":          marker.StartTimestamp,
 							"end":            marker.EndTimestamp,
 							"deviceId":       marker.DeviceId,
+							"groupId":        marker.GroupId,
 							"createdAt":      now,
 						})
 					}
@@ -352,7 +367,6 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 							up.SetUpsert(true)
 							eventOptUpserts = append(eventOptUpserts, up)
 						}
-						// event timestamp may be used as start==end in this model; keep one-second window if desired
 						evStart := event.Timestamp
 						evEnd := event.Timestamp + 1
 						eventRangeDocs = append(eventRangeDocs, bson.M{
@@ -362,6 +376,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 							"start":          evStart,
 							"end":            evEnd,
 							"deviceId":       marker.DeviceId,
+							"groupId":        marker.GroupId,
 							"createdAt":      now,
 							"updatedAt":      now,
 						})
@@ -388,8 +403,6 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 					}
 				}
 
-				// Bulk insert ranges (these can be large) - use InsertMany in smaller chunks
-				// helper that splits to chunks to avoid huge InsertMany size
 				insertInChunks := func(coll *mongo.Collection, docs []interface{}) {
 					if len(docs) == 0 {
 						return
@@ -419,7 +432,6 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		}(w)
 	}
 
-	// progress printer goroutine (unchanged except we will close it after wg waits)
 	go func() {
 		for total := range progressCh {
 			if total > cfg.Target {
@@ -429,7 +441,6 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		}
 	}()
 
-	// producer logic (same as before)
 	var queued int64
 	rand.Seed(time.Now().UnixNano())
 	for atomic.LoadInt64(&queued) < int64(cfg.Target) && atomic.LoadInt32(&stopFlag) == 0 {
@@ -438,15 +449,13 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		if remaining < int64(current) {
 			current = int(remaining)
 		}
-		batch := generateBatchMarkers(current, cfg.Days, cfg.ExistingUserIDHex, deviceObjIDs)
+		batch := generateBatchMarkers(current, cfg.Days, cfg.ExistingUserIDHex, deviceKeys, groupIds)
 		batchCh <- batch
 		atomic.AddInt64(&queued, int64(current))
 	}
 
 	close(batchCh)
-	// wait for workers
 	wg.Wait()
-	// all workers done, close progress channel so progress goroutine exits
 	close(progressCh)
 
 	finalTotal := int(atomic.LoadInt64(&totalInserted))
@@ -467,7 +476,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	return nil
 }
 
-func generateBatchMarkers(batchSize int, days int, organisationId string, deviceIDs []primitive.ObjectID) []hubModels.Marker {
+func generateBatchMarkers(batchSize int, days int, organisationId string, deviceKeys []string, groupIds []string) []hubModels.Marker {
 	tagNames := []string{
 		"vehicle", "license plate", "security", "entrance", "exit", "parking-lot",
 		"lobby-area", "staff", "visitor", "delivery", "motion", "sound", "door", "window",
@@ -489,19 +498,35 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 		"Zone Cleared", "Visitor Registered", "Delivery Arrived", "Delivery Departed", "Staff Checked In",
 	}
 
-	deviceCount := len(deviceIDs)
+	deviceCount := len(deviceKeys)
+	groupCount := len(groupIds)
 
 	var batch []hubModels.Marker
 	now := time.Now().Unix()
 	maxDays := 30
 	secondsIn30Days := int64(maxDays * 86400)
 	for i := 0; i < batchSize; i++ {
-		// Random start within last 30 days
 		start := now - int64(rand.Intn(int(secondsIn30Days)))
-		// Random duration up to 600 seconds
 		duration := int64(rand.Intn(600) + 1)
 		end := start + duration
-		deviceId := deviceIDs[rand.Intn(deviceCount)].Hex()
+
+		// Randomly choose device or group
+		var deviceId, groupId string
+		if deviceCount > 0 && groupCount > 0 {
+			if rand.Intn(2) == 0 {
+				deviceId = deviceKeys[rand.Intn(deviceCount)]
+				groupId = ""
+			} else {
+				groupId = groupIds[rand.Intn(groupCount)]
+				deviceId = ""
+			}
+		} else if deviceCount > 0 {
+			deviceId = deviceKeys[rand.Intn(deviceCount)]
+			groupId = ""
+		} else if groupCount > 0 {
+			groupId = groupIds[rand.Intn(groupCount)]
+			deviceId = ""
+		}
 
 		numTags := rand.Intn(4) + 1
 		tagIndexes := rand.Perm(len(tagNames))[:numTags]
@@ -526,7 +551,7 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			Id:             primitive.NewObjectID(),
 			DeviceId:       deviceId,
 			SiteId:         randomSiteId(),
-			GroupId:        randomGroupId(),
+			GroupId:        groupId,
 			OrganisationId: organisationId,
 			StartTimestamp: start,
 			EndTimestamp:   end,
@@ -555,6 +580,7 @@ func SeedMarkers(
 	mongoURI string,
 	dbName string,
 	deviceColl string,
+	groupColl string,
 	markerColl string,
 	markerOptColl string,
 	tagOptColl string,
@@ -601,7 +627,7 @@ func randomGroupId() string {
 	return "group_" + primitive.NewObjectID().Hex()
 }
 func randomMarkerName(i int) string {
-	return "marker-" + fmt.Sprintf("%d", i)
+	return "marker-" + fmt.Sprintf("%d", int64(rand.Intn(1000000)+3000000))
 }
 func randomMarkerEvent(ts int64) hubModels.MarkerEvent {
 	events := []string{
@@ -650,7 +676,6 @@ func CreateMarkerIndexes(ctx context.Context, db *mongo.Database, cfg SeedMarker
 		fmt.Printf("[info] event_options index creation skipped: %v\n", err)
 	}
 
-	// Range collections - use top-level "start" and "end" (matches insertion below)
 	rangeIndexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "value", Value: 1}}},
 		{Keys: bson.D{{Key: "start", Value: 1}}},

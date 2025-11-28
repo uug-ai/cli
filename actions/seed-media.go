@@ -62,6 +62,7 @@ type SeedMediaConfig struct {
 	NewUserEmail         string
 	DeviceCount          int
 	Days                 int
+	UseExistingDevices   bool
 }
 
 func (c *SeedMediaConfig) ApplyDefaults() {
@@ -223,12 +224,40 @@ func RunSeedMedia(cfg SeedMediaConfig) error {
 		fmt.Printf("[info] created new user _id = %s username = %s\n", userObjectID.Hex(), cfg.NewUserName)
 	}
 
-	deviceDocs, deviceIDs := database.BuildDeviceDocs(cfg.DeviceCount, userObjectID, amazonSecretAccessKey)
-	if len(deviceDocs) == 0 {
-		return fmt.Errorf("no devices generated")
-	}
-	if err := database.InsertMany(ctx, client, cfg.DBName, cfg.DeviceColl, deviceDocs); err != nil {
-		return fmt.Errorf("insert devices: %w", err)
+	var deviceIDs []string
+
+	if cfg.UseExistingDevices && cfg.ExistingUserIDHex != "" {
+		// Query existing devices for the user
+		cursor, err := client.Database(cfg.DBName).Collection(cfg.DeviceColl).
+			Find(ctx, bson.M{"user_id": userObjectID.Hex()})
+		if err != nil {
+			return fmt.Errorf("find devices: %w", err)
+		}
+		defer cursor.Close(ctx)
+		for cursor.Next(ctx) {
+			var device bson.M
+			if err := cursor.Decode(&device); err == nil {
+				if key, ok := device["key"].(string); ok && key != "" {
+					deviceIDs = append(deviceIDs, key)
+				} else {
+					return fmt.Errorf("device missing key field")
+				}
+			} else {
+				return fmt.Errorf("decode device: %w", err)
+			}
+		}
+		if len(deviceIDs) == 0 {
+			return fmt.Errorf("no existing devices found for user")
+		}
+	} else {
+		deviceDocs, _ := database.BuildDeviceDocs(cfg.DeviceCount, userObjectID, amazonSecretAccessKey)
+
+		if len(deviceDocs) == 0 {
+			return fmt.Errorf("no devices generated")
+		}
+		if err := database.InsertMany(ctx, client, cfg.DBName, cfg.DeviceColl, deviceDocs); err != nil {
+			return fmt.Errorf("insert devices: %w", err)
+		}
 	}
 
 	mediaColl := client.Database(cfg.DBName).Collection(cfg.MediaColl)
@@ -500,6 +529,8 @@ func SeedMedia(
 		fmt.Printf("[info] using input -no-index=%v\n", noIndex)
 	}
 
+	var useExistingDevices bool = false
+
 	// --- user-id (existing vs create new) ---
 	if WasFlagPassed("user-id") {
 		fmt.Printf("[info] using flag -user-id=%s\n", userId)
@@ -560,28 +591,37 @@ func SeedMedia(
 				fmt.Printf("[info] using input -user-email=%s\n", userEmail)
 			}
 		}
-	}
-
-	// --- device-count ---
-	if WasFlagPassed("device-count") {
-		if deviceCount < MinDeviceCount {
-			deviceCount = MinDeviceCount
-		} else if deviceCount > MaxDeviceCount {
-			deviceCount = MaxDeviceCount
-		}
-		fmt.Printf("[info] using flag -device-count=%d\n", deviceCount)
 	} else {
-		val := PromptInt(fmt.Sprintf("Number of devices (-device-count, default %d, max %d): ", MinDeviceCount, MaxDeviceCount))
-		if val <= 0 {
-			deviceCount = MinDeviceCount
-			fmt.Printf("[info] using default -device-count=%d\n", deviceCount)
+		if WasFlagPassed("use-existing-devices") {
+			useExistingDevices = true
+			fmt.Printf("[info] using flag -use-existing-devices=%v\n", useExistingDevices)
 		} else {
-			if val > MaxDeviceCount {
-				val = MaxDeviceCount
-				fmt.Printf("[warn] clamped -device-count to %d\n", val)
+			useExistingDevices = PromptBool("Use existing devices for user? (-use-existing-devices Y/n, default Y): ", true)
+			fmt.Printf("[info] using input -use-existing-devices=%v\n", useExistingDevices)
+		}
+
+		if !useExistingDevices {
+			if WasFlagPassed("device-count") {
+				if deviceCount < MinDeviceCount {
+					deviceCount = MinDeviceCount
+				} else if deviceCount > MaxDeviceCount {
+					deviceCount = MaxDeviceCount
+				}
+				fmt.Printf("[info] using flag -device-count=%d\n", deviceCount)
+			} else {
+				val := PromptInt(fmt.Sprintf("Number of devices (-device-count, default %d, max %d): ", MinDeviceCount, MaxDeviceCount))
+				if val <= 0 {
+					deviceCount = MinDeviceCount
+					fmt.Printf("[info] using default -device-count=%d\n", deviceCount)
+				} else {
+					if val > MaxDeviceCount {
+						val = MaxDeviceCount
+						fmt.Printf("[warn] clamped -device-count to %d\n", val)
+					}
+					deviceCount = val
+					fmt.Printf("[info] using input -device-count=%d\n", deviceCount)
+				}
 			}
-			deviceCount = val
-			fmt.Printf("[info] using input -device-count=%d\n", deviceCount)
 		}
 	}
 
@@ -604,6 +644,7 @@ func SeedMedia(
 		NewUserEmail:         userEmail,
 		DeviceCount:          deviceCount,
 		Days:                 days,
+		UseExistingDevices:   useExistingDevices,
 	}
 	if err := RunSeedMedia(cfg); err != nil {
 		fmt.Printf("[error] seed media: %v\n", err)
