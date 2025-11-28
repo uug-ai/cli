@@ -224,40 +224,45 @@ func RunSeedMedia(cfg SeedMediaConfig) error {
 		fmt.Printf("[info] created new user _id = %s username = %s\n", userObjectID.Hex(), cfg.NewUserName)
 	}
 
-	var deviceIDs []string
+	var groups []bson.M
+	var deviceKeys []string
 
 	if cfg.UseExistingDevices && cfg.ExistingUserIDHex != "" {
-		// Query existing devices for the user
-		cursor, err := client.Database(cfg.DBName).Collection(cfg.DeviceColl).
-			Find(ctx, bson.M{"user_id": userObjectID.Hex()})
+		// Query groups for the user
+		groupCursor, err := client.Database(cfg.DBName).Collection("groups").
+			Find(ctx, bson.M{"organisationId": userObjectID.Hex()})
 		if err != nil {
-			return fmt.Errorf("find devices: %w", err)
+			return fmt.Errorf("find groups: %w", err)
 		}
-		defer cursor.Close(ctx)
-		for cursor.Next(ctx) {
-			var device bson.M
-			if err := cursor.Decode(&device); err == nil {
-				if key, ok := device["key"].(string); ok && key != "" {
-					deviceIDs = append(deviceIDs, key)
-				} else {
-					return fmt.Errorf("device missing key field")
-				}
-			} else {
-				return fmt.Errorf("decode device: %w", err)
+		defer groupCursor.Close(ctx)
+		for groupCursor.Next(ctx) {
+			var group bson.M
+			if err := groupCursor.Decode(&group); err == nil {
+				groups = append(groups, group)
 			}
 		}
-		if len(deviceIDs) == 0 {
-			return fmt.Errorf("no existing devices found for user")
+		if len(groups) == 0 {
+			return fmt.Errorf("no groups found for user")
 		}
+		// Pass groups to batch generator for random group/device selection
 	} else {
+		// Generate new devices
 		deviceDocs, _ := database.BuildDeviceDocs(cfg.DeviceCount, userObjectID, amazonSecretAccessKey)
-
 		if len(deviceDocs) == 0 {
 			return fmt.Errorf("no devices generated")
 		}
 		if err := database.InsertMany(ctx, client, cfg.DBName, cfg.DeviceColl, deviceDocs); err != nil {
 			return fmt.Errorf("insert devices: %w", err)
 		}
+		// Collect device keys from generated devices
+		for _, doc := range deviceDocs {
+			if m, ok := doc.(bson.M); ok {
+				if key, ok := m["key"].(string); ok {
+					deviceKeys = append(deviceKeys, key)
+				}
+			}
+		}
+		// Pass deviceKeys to batch generator for random device selection
 	}
 
 	mediaColl := client.Database(cfg.DBName).Collection(cfg.MediaColl)
@@ -301,13 +306,19 @@ func RunSeedMedia(cfg SeedMediaConfig) error {
 	}()
 
 	var queued int64
+
 	for atomic.LoadInt64(&queued) < int64(cfg.Target) && atomic.LoadInt32(&stopFlag) == 0 {
 		remaining := int64(cfg.Target) - atomic.LoadInt64(&queued)
 		current := cfg.BatchSize
 		if remaining < int64(current) {
 			current = int(remaining)
 		}
-		docs := database.GenerateBatchMedia(current, cfg.Days, userObjectID, deviceIDs)
+		var docs []interface{}
+		if cfg.UseExistingDevices && cfg.ExistingUserIDHex != "" {
+			docs = database.GenerateBatchMediaWithGroups(current, cfg.Days, userObjectID, groups)
+		} else {
+			docs = database.GenerateBatchMedia(current, cfg.Days, userObjectID, deviceKeys)
+		}
 		batchCh <- docs
 		atomic.AddInt64(&queued, int64(current))
 	}

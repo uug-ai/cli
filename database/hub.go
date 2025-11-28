@@ -266,34 +266,34 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, cloudKey string) ([]i
 	return docs, keys
 }
 
+// Pools (static)
+var (
+	DETECTION_POOL = []string{
+		"animal", "pedestrian", "cyclist", "motorbike", "lorry", "car", "handbag", "suitcase", "cell phone",
+	}
+	TAG_POOL = []string{
+		"outdoor", "indoor", "evening", "sunny", "crowd", "single-subject", "normal", "rainy", "night", "vehicle",
+		"urban", "rural", "busy", "quiet", "sports", "event", "construction", "park", "school", "shopping", "office",
+		"residential", "traffic", "festival", "emergency", "public-transport", "parking-lot", "playground", "market",
+		"bridge", "tunnel",
+	}
+	COLOR_POOL = []string{"red", "blue", "green", "gray", "black", "white", "yellow"}
+	VIDEO_POOL = []string{
+		"demo/1751987393_3-641_falcon_420-234-408-321_397_29896.mp4",
+		"demo/1751987410_3-505_dublin_1596-648-78-118_1105_26520.mp4",
+		"demo/1751987440_3-425_dublin_1594-708-57-29_1252_29880.mp4",
+		"demo/1751987476_3-482_nashville_1134-654-205-45_691_30440.mp4",
+		"demo/1751987663_3-913_falcon_622-257-301-322_7130_29897.mp4",
+		"demo/1751987924_3-818_nashville_651-649-688-332_9458_30394.mp4",
+	}
+)
+
 func GenerateBatchMedia(
 	n int,
 	days int,
 	userObjectID primitive.ObjectID,
 	deviceIDs []string,
 ) []interface{} {
-
-	// Pools (static)
-	var (
-		DETECTION_POOL = []string{
-			"animal", "pedestrian", "cyclist", "motorbike", "lorry", "car", "handbag", "suitcase", "cell phone",
-		}
-		TAG_POOL = []string{
-			"outdoor", "indoor", "evening", "sunny", "crowd", "single-subject", "normal", "rainy", "night", "vehicle",
-			"urban", "rural", "busy", "quiet", "sports", "event", "construction", "park", "school", "shopping", "office",
-			"residential", "traffic", "festival", "emergency", "public-transport", "parking-lot", "playground", "market",
-			"bridge", "tunnel",
-		}
-		COLOR_POOL = []string{"red", "blue", "green", "gray", "black", "white", "yellow"}
-		VIDEO_POOL = []string{
-			"demo/1751987393_3-641_falcon_420-234-408-321_397_29896.mp4",
-			"demo/1751987410_3-505_dublin_1596-648-78-118_1105_26520.mp4",
-			"demo/1751987440_3-425_dublin_1594-708-57-29_1252_29880.mp4",
-			"demo/1751987476_3-482_nashville_1134-654-205-45_691_30440.mp4",
-			"demo/1751987663_3-913_falcon_622-257-301-322_7130_29897.mp4",
-			"demo/1751987924_3-818_nashville_651-649-688-332_9458_30394.mp4",
-		}
-	)
 
 	if days < 1 {
 		days = 1
@@ -318,6 +318,76 @@ func GenerateBatchMedia(
 			"endTimestamp":    en,
 			"duration":        en - st,
 			"deviceId":        deviceID,
+			"organisationId":  userObjectID.Hex(),
+			"storageSolution": "kstorage",
+			"videoProvider":   "azure-production",
+			"videoFile":       utils.PickOne(VIDEO_POOL),
+			"analysisId":      fmt.Sprintf("AN-%06d", rand.Intn(5001)),
+			"description":     "synthetic media sample for load test",
+			"detections":      utils.SampleUnique(DETECTION_POOL, rand.Intn(4)+1),
+			"dominantColors":  utils.SampleUnique(COLOR_POOL, rand.Intn(3)+1),
+			"count":           rand.Intn(11) - 5,
+			"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(4)+1),
+			"metadata": bson.M{
+				"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(3)+1),
+				"classifications": []string{"normal_activity"},
+			},
+			"userId": userObjectID.Hex(),
+		}
+		docs = append(docs, doc)
+	}
+	return docs
+}
+
+func GenerateBatchMediaWithGroups(
+	n int,
+	days int,
+	userObjectID primitive.ObjectID,
+	groups []bson.M,
+) []interface{} {
+
+	if days < 1 {
+		days = 1
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	docs := make([]interface{}, 0, n)
+	secondsInDays := int64(days) * 86400
+	now := time.Now().Unix()
+
+	for i := 0; i < n; i++ {
+		offset := rand.Int63n(secondsInDays)
+		st := now - offset
+		en := st + int64(rand.Intn(21)+5)
+
+		// Pick a random group
+		group := groups[rand.Intn(len(groups))]
+		var groupId string
+		var deviceKey string
+
+		// Get groupId
+		if id, ok := group["_id"].(primitive.ObjectID); ok {
+			groupId = id.Hex()
+		} else if idStr, ok := group["_id"].(string); ok {
+			groupId = idStr
+		}
+
+		// Get devices array and pick a random device key
+		if devArr, ok := group["devices"].(bson.A); ok && len(devArr) > 0 {
+			dev := devArr[rand.Intn(len(devArr))]
+			if key, ok := dev.(string); ok {
+				deviceKey = key
+			}
+		}
+
+		doc := bson.M{
+			"_id":             primitive.NewObjectID(),
+			"startTimestamp":  st,
+			"endTimestamp":    en,
+			"duration":        en - st,
+			"groupId":         groupId,
+			"deviceId":        deviceKey,
 			"organisationId":  userObjectID.Hex(),
 			"storageSolution": "kstorage",
 			"videoProvider":   "azure-production",
