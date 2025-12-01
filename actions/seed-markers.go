@@ -161,6 +161,8 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 			return fmt.Errorf("fetch existing user: %w", err)
 		}
 		organisationId, _ = userDoc["organisationId"].(string)
+	} else {
+		return fmt.Errorf("no existing user id provided")
 	}
 
 	var deviceKeys []string
