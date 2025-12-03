@@ -47,6 +47,7 @@ type SeedMarkersConfig struct {
 	TagOptColl          string
 	EventOptColl        string
 	MarkerOptRangesColl string
+	CategoryOptColl     string
 	TagOptRangesColl    string
 	EventOptRangesColl  string
 	ExistingUserIDHex   string
@@ -101,6 +102,9 @@ func (c *SeedMarkersConfig) ApplyDefaults() {
 	}
 	if c.MarkerOptColl == "" {
 		c.MarkerOptColl = "marker_options"
+	}
+	if c.CategoryOptColl == "" {
+		c.CategoryOptColl = "category_options"
 	}
 	if c.TagOptColl == "" {
 		c.TagOptColl = "tag_options"
@@ -207,6 +211,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	markerOptColl := db.Collection(cfg.MarkerOptColl)
 	tagOptColl := db.Collection(cfg.TagOptColl)
 	eventOptColl := db.Collection(cfg.EventOptColl)
+	categoryOptColl := db.Collection(cfg.CategoryOptColl)
 	markerOptRangesColl := db.Collection(cfg.MarkerOptRangesColl)
 	tagOptRangesColl := db.Collection(cfg.TagOptRangesColl)
 	eventOptRangesColl := db.Collection(cfg.EventOptRangesColl)
@@ -261,10 +266,12 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 				nameSet := make(map[string]struct{})
 				tagSet := make(map[string]struct{})
 				eventSet := make(map[string]struct{})
+				categorySet := make(map[string]struct{})
 
 				var markerOptUpserts []mongo.WriteModel
 				var tagOptUpserts []mongo.WriteModel
 				var eventOptUpserts []mongo.WriteModel
+				var categoryOptUpserts []mongo.WriteModel
 
 				var markerRangeDocs []interface{}
 				var tagRangeDocs []interface{}
@@ -383,6 +390,33 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 							"updatedAt":      now,
 						})
 					}
+
+					// categories
+					for _, category := range marker.Categories {
+						if category.Name == "" {
+							continue
+						}
+						if _, exists := categorySet[category.Name]; !exists {
+							categorySet[category.Name] = struct{}{}
+							createdAt := randomTimeLast30Days()
+							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
+							up := mongo.NewUpdateOneModel()
+							up.SetFilter(bson.M{"value": category.Name, "organisationId": marker.OrganisationId})
+							up.SetUpdate(bson.M{
+								"$setOnInsert": bson.M{
+									"value":          category.Name,
+									"text":           category.Name,
+									"organisationId": marker.OrganisationId,
+									"createdAt":      createdAt,
+								},
+								"$set": bson.M{
+									"updatedAt": updatedAt,
+								},
+							})
+							up.SetUpsert(true)
+							categoryOptUpserts = append(categoryOptUpserts, up)
+						}
+					}
 				}
 
 				// Bulk upsert options (unordered to be faster / resilient)
@@ -402,6 +436,12 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 					_, err := eventOptColl.BulkWrite(ctx, eventOptUpserts, bulkOpts)
 					if err != nil {
 						fmt.Printf("[warn] worker %d eventOpt BulkWrite error: %v\n", workerID, err)
+					}
+				}
+				if len(categoryOptUpserts) > 0 {
+					_, err := categoryOptColl.BulkWrite(ctx, categoryOptUpserts, bulkOpts)
+					if err != nil {
+						fmt.Printf("[warn] worker %d categoryOpt BulkWrite error: %v\n", workerID, err)
 					}
 				}
 
