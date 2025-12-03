@@ -241,9 +241,6 @@ func RunSeedMedia(cfg SeedMediaConfig) error {
 				groups = append(groups, group)
 			}
 		}
-		if len(groups) == 0 {
-			return fmt.Errorf("no groups found for user")
-		}
 		// Pass groups to batch generator for random group/device selection
 	} else {
 		// Generate new devices

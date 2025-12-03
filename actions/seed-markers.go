@@ -284,6 +284,12 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 					if marker.Name != "" {
 						if _, exists := nameSet[marker.Name]; !exists {
 							nameSet[marker.Name] = struct{}{}
+							var categoryNamesList []string
+							for _, cat := range marker.Categories {
+								if cat.Name != "" {
+									categoryNamesList = append(categoryNamesList, cat.Name)
+								}
+							}
 							createdAt := randomTimeLast30Days()
 							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
 							up := mongo.NewUpdateOneModel()
@@ -297,6 +303,9 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 								},
 								"$set": bson.M{
 									"updatedAt": updatedAt,
+								},
+								"$addToSet": bson.M{
+									"categories": bson.M{"$each": categoryNamesList},
 								},
 							})
 							up.SetUpsert(true)
@@ -540,6 +549,10 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 		"Zone Cleared", "Visitor Registered", "Delivery Arrived", "Delivery Departed", "Staff Checked In",
 	}
 
+	categoryNames := []string{
+		"security", "safety", "access control", "environmental", "maintenance",
+	}
+
 	deviceCount := len(deviceKeys)
 	groupCount := len(groupIds)
 
@@ -577,6 +590,13 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			tags = append(tags, hubModels.MarkerTag{Name: tagNames[idx]})
 		}
 
+		numCategories := rand.Intn(3) + 1
+		categoryIndexes := rand.Perm(len(categoryNames))[:numCategories]
+		var categories []hubModels.MarkerCategory
+		for _, idx := range categoryIndexes {
+			categories = append(categories, hubModels.MarkerCategory{Name: categoryNames[idx]})
+		}
+
 		numEvents := rand.Intn(3) + 1
 		var events []hubModels.MarkerEvent
 		for j := 0; j < numEvents; j++ {
@@ -600,6 +620,7 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			Duration:       duration,
 			Name:           randomMarkerName(i),
 			Events:         events,
+			Categories:     categories,
 			Description:    "Random marker description",
 			Metadata:       &hubModels.MarkerMetadata{Comments: nil},
 			Synchronize:    nil,
