@@ -2,763 +2,660 @@ package actions
 
 import (
 	"context"
-	"encoding/base32"
 	"flag"
 	"fmt"
-	"math/rand"
 	"os"
-	"os/signal"
 	"strings"
-	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
+
+	"github.com/gosuri/uiprogress"
+	"github.com/uug-ai/cli/database"
+	"github.com/uug-ai/cli/models"
+	"github.com/uug-ai/cli/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"golang.org/x/crypto/bcrypt"
 )
 
-// Pools (static)
-var (
-	DETECTION_POOL = []string{
-		"animal", "pedestrian", "cyclist", "motorbike", "lorry", "car", "handbag", "suitcase", "cell phone",
-	}
-	TAG_POOL = []string{
-		"outdoor", "indoor", "evening", "sunny", "crowd", "single-subject", "normal", "rainy", "night", "vehicle",
-		"urban", "rural", "busy", "quiet", "sports", "event", "construction", "park", "school", "shopping", "office",
-		"residential", "traffic", "festival", "emergency", "public-transport", "parking-lot", "playground", "market",
-		"bridge", "tunnel",
-	}
-	COLOR_POOL = []string{"red", "blue", "green", "gray", "black", "white", "yellow"}
-	VIDEO_POOL = []string{
-		"demo/1751987393_3-641_falcon_420-234-408-321_397_29896.mp4",
-		"demo/1751987410_3-505_dublin_1596-648-78-118_1105_26520.mp4",
-		"demo/1751987440_3-425_dublin_1594-708-57-29_1252_29880.mp4",
-		"demo/1751987476_3-482_nashville_1134-654-205-45_691_30440.mp4",
-		"demo/1751987663_3-913_falcon_622-257-301-322_7130_29897.mp4",
-		"demo/1751987924_3-818_nashville_651-649-688-332_9458_30394.mp4",
-	}
+const (
+	DefaultTarget         = 100000
+	SmallTargetThreshold  = 10000
+	MediumTargetThreshold = 100000
+
+	DefaultBatchSizeSmall  = 500
+	DefaultBatchSizeMedium = 2000
+	DefaultBatchSizeLarge  = 5000
+
+	MinParallel        = 1
+	MaxParallel        = 16
+	AutoParallelSmall  = 2
+	AutoParallelMedium = 4
+	AutoParallelLarge  = 8
+
+	MinDeviceCount = 1
+	MaxDeviceCount = 50
+
+	DefaultDays = 7
+	MaxDays     = 30
+
+	ServerSelectionTimeoutSeconds = 10
 )
 
-var stopFlag int32
-var DAYS = 30
-
-func HandleSignals() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-c
-		fmt.Println("\n[signal] Received interrupt, stopping after current batches...")
-		atomic.StoreInt32(&stopFlag, 1)
-	}()
+type SeedMediaConfig struct {
+	Target               int
+	BatchSize            int
+	Parallel             int
+	URI                  string
+	DBName               string
+	MediaColl            string
+	UserColl             string
+	DeviceColl           string
+	SubscriptionColl     string
+	SettingsColl         string
+	NoIndex              bool
+	ExistingUserIDHex    string
+	NewUserName          string
+	NewUserPasswordPlain string
+	NewUserEmail         string
+	DeviceCount          int
+	Days                 int
+	UseExistingDevices   bool
 }
 
-func InsertSettings(settingsColl *mongo.Collection) error {
-	settingsDoc := bson.M{
-		"key": "plan",
-		"map": bson.M{
-			"basic": bson.M{
-				"level":         1,
-				"uploadLimit":   100,
-				"videoLimit":    100,
-				"usage":         500,
-				"analysisLimit": 0,
-				"dayLimit":      3,
-			},
-			"premium": bson.M{
-				"level":         2,
-				"uploadLimit":   500,
-				"videoLimit":    500,
-				"usage":         1000,
-				"analysisLimit": 0,
-				"dayLimit":      7,
-			},
-			"gold": bson.M{
-				"level":         3,
-				"uploadLimit":   1000,
-				"videoLimit":    1000,
-				"usage":         3000,
-				"analysisLimit": 1000,
-				"dayLimit":      30,
-			},
-			"business": bson.M{
-				"level":         4,
-				"uploadLimit":   99999999,
-				"videoLimit":    99999999,
-				"usage":         10000,
-				"analysisLimit": 1000,
-				"dayLimit":      30,
-			},
-			"enterprise": bson.M{
-				"level":         5,
-				"uploadLimit":   99999999,
-				"videoLimit":    99999999,
-				"usage":         99999999,
-				"analysisLimit": 5000,
-				"dayLimit":      30,
-			},
-		},
+func (c *SeedMediaConfig) ApplyDefaults() {
+	if c.Target <= 0 {
+		c.Target = DefaultTarget
 	}
-
-	fmt.Println("[info] Inserting settings document...")
-	_, err := settingsColl.InsertOne(context.Background(), settingsDoc)
-	if err != nil {
-		return fmt.Errorf("inserting settings document: %w", err)
-	}
-	fmt.Println("[info] Settings document inserted successfully.")
-	return nil
-}
-
-func InsertUser(userColl *mongo.Collection, userName, userEmail, userPassword string, amazonSecretAccessKey, amazonAccessKeyID string, days int) (primitive.ObjectID, error) {
-	hashedPassword, err := Hash(userPassword)
-	if err != nil {
-		return primitive.NilObjectID, fmt.Errorf("hashing password: %w", err)
-	}
-	now := time.Now()
-	userObjectID := primitive.NewObjectID()
-
-	var dates []string
-	if days > 0 {
-		dates = make([]string, days)
-		for i := 0; i < days; i++ {
-			date := time.Now().AddDate(0, 0, -i).Format("02-01-2006")
-			dates[i] = date
+	if c.BatchSize <= 0 {
+		switch {
+		case c.Target <= SmallTargetThreshold:
+			c.BatchSize = DefaultBatchSizeSmall
+		case c.Target <= MediumTargetThreshold:
+			c.BatchSize = DefaultBatchSizeMedium
+		default:
+			c.BatchSize = DefaultBatchSizeLarge
 		}
 	}
-
-	userDoc := bson.M{
-		"_id":                      userObjectID,
-		"username":                 userName,
-		"email":                    userEmail,
-		"password":                 hashedPassword,
-		"role":                     "owner",
-		"google2fa_enabled":        false,
-		"timezone":                 "Europe/Brussels",
-		"isActive":                 int64(1),
-		"registerToken":            "",
-		"updated_at":               now,
-		"created_at":               now,
-		"amazon_secret_access_key": amazonSecretAccessKey,
-		"amazon_access_key_id":     amazonAccessKeyID,
-		"card_brand":               "Visa",
-		"card_last_four":           "0000",
-		"card_status":              "ok",
-		"card_status_message":      nil,
-		"days":                     dates,
+	if c.BatchSize > c.Target {
+		c.BatchSize = c.Target
 	}
-	_, err = userColl.InsertOne(context.Background(), userDoc)
-	if err != nil {
-		return primitive.NilObjectID, fmt.Errorf("creating user: %w", err)
-	}
-	fmt.Printf("[info] Created user %s\n", userObjectID.Hex())
-	return userObjectID, nil
-}
-
-func InsertSubscription(subColl *mongo.Collection, userObjectID string) (string, error) {
-
-	subDoc := bson.M{
-		"_id":           primitive.NewObjectID(),
-		"name":          "default",
-		"stripe_id":     "sub_9ECyjjMz3R7etK",
-		"stripe_plan":   "enterprise",
-		"quantity":      1,
-		"trial_ends_at": nil,
-		"ends_at":       nil,
-		"user_id":       userObjectID,
-		"updated_at":    time.Now(),
-		"created_at":    time.Now(),
-		"stripe_status": "active",
-	}
-	_, err := subColl.InsertOne(context.Background(), subDoc)
-	if err != nil {
-		return "", fmt.Errorf("creating subscription: %w", err)
-	}
-	fmt.Printf("[info] Created subscription for user %s\n", userObjectID)
-	return userObjectID, nil
-}
-
-func CreateUser(
-	ctx context.Context,
-	userColl *mongo.Collection,
-	subColl *mongo.Collection,
-	userName, userEmail, userPassword string,
-	amazonSecretAccessKey, amazonAccessKeyID string,
-) (primitive.ObjectID, error) {
-
-	userObjectID, err := InsertUser(userColl, userName, userEmail, userPassword, amazonSecretAccessKey, amazonAccessKeyID, DAYS)
-	if err != nil {
-		return primitive.NilObjectID, err
-	}
-
-	_, err = InsertSubscription(subColl, userObjectID.Hex())
-	if err != nil {
-		return primitive.NilObjectID, err
-	}
-
-	return userObjectID, nil
-}
-
-func SampleUnique(pool []string, n int) []string {
-	if n <= 0 {
-		return []string{}
-	}
-	if n > len(pool) {
-		n = len(pool)
-	}
-	perm := rand.Perm(len(pool))
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		out[i] = pool[perm[i]]
-	}
-	return out
-}
-
-func BuildDeviceDocs(deviceCount int, userObjectID primitive.ObjectID, amazonSecretAccessKey string) ([]interface{}, []primitive.ObjectID) {
-	devices := make([]interface{}, 0, deviceCount)
-	deviceIDs := make([]primitive.ObjectID, 0, deviceCount)
-	for i := 0; i < deviceCount; i++ {
-		deviceID := primitive.NewObjectID()
-		deviceDoc := bson.M{
-			"_id":     deviceID,
-			"key":     amazonSecretAccessKey,
-			"user_id": userObjectID.Hex(),
-			"status":  "inactive",
-			"featurePermissions": bson.M{
-				"ptz":           0,
-				"liveview":      0,
-				"remote_config": 0,
-			},
-			"isActive": false,
-			"analytics": []bson.M{
-				{
-					"cloudpublickey":  amazonSecretAccessKey,
-					"encrypted":       false,
-					"encrypteddata":   []byte{}, // or primitive.Binary{Subtype: 0, Data: []byte{}}
-					"key":             fmt.Sprintf("camera%d", i+1),
-					"hub_encryption":  "true",
-					"e2e_encryption":  "false",
-					"enterprise":      false,
-					"hash":            "",
-					"version":         "3.5.0",
-					"release":         "1f9772d",
-					"mac_list":        []string{},
-					"ip_list":         []string{"192.168.1.100", "10.0.0.100"},
-					"cameraname":      fmt.Sprintf("camera%d", 100+i),
-					"cameratype":      "IPCamera",
-					"architecture":    "x86_64",
-					"hostname":        fmt.Sprintf("host-%d", i+1),
-					"freeMemory":      "481275904",
-					"totalMemory":     "16515977216",
-					"usedMemory":      "16034701312",
-					"processMemory":   "65097728",
-					"kubernetes":      false,
-					"docker":          true,
-					"kios":            false,
-					"raspberrypi":     false,
-					"uptime":          "1 day ",
-					"boot_time":       "1 day ",
-					"timestamp":       time.Now().Unix(),
-					"onvif":           "false",
-					"onvif_zoom":      "false",
-					"onvif_pantilt":   "false",
-					"onvif_presets":   "false",
-					"cameraConnected": "false",
-					"hasBackChannel":  "false",
-				},
-			},
-		}
-		devices = append(devices, deviceDoc)
-		deviceIDs = append(deviceIDs, deviceID)
-	}
-	return devices, deviceIDs
-}
-
-func BuildBatchDocs(n int, days int, userObjectID primitive.ObjectID, deviceIDs []primitive.ObjectID) []interface{} {
-	if days < 1 {
-		days = 1
-	}
-	docs := make([]interface{}, 0, n)
-	secondsInDays := int64(days) * 86400
-	now := time.Now().Unix()
-	for i := 0; i < n; i++ {
-		offset := rand.Int63n(secondsInDays)
-		st := now - offset
-		en := st + int64(rand.Intn(21)+5)
-		deviceID := deviceIDs[rand.Intn(len(deviceIDs))]
-		doc := bson.M{
-			"_id":             primitive.NewObjectID(),
-			"startTimestamp":  st,
-			"endTimestamp":    en,
-			"duration":        en - st,
-			"deviceId":        deviceID,
-			"organisationId":  fmt.Sprintf("ORG-%03d", rand.Intn(100)+1),
-			"storageSolution": "kstorage",
-			"videoProvider":   "azure-production",
-			"videoFile":       VIDEO_POOL[rand.Intn(len(VIDEO_POOL))],
-			"analysisId":      fmt.Sprintf("AN-%06d", rand.Intn(5001)),
-			"description":     "synthetic media sample for load test",
-			"detections":      SampleUnique(DETECTION_POOL, rand.Intn(4)+1),
-			"dominantColors":  SampleUnique(COLOR_POOL, rand.Intn(3)+1),
-			"count":           rand.Intn(11) - 5,
-			"tags":            SampleUnique(TAG_POOL, rand.Intn(4)+1),
-			"metadata": bson.M{
-				"tags":            SampleUnique(TAG_POOL, rand.Intn(3)+1),
-				"classifications": []string{"normal_activity"},
-			},
-			"userId": userObjectID.Hex(),
-		}
-		docs = append(docs, doc)
-	}
-	return docs
-}
-
-func InsertBatch(ctx context.Context, col *mongo.Collection, docs []interface{}) int {
-	if len(docs) == 0 {
-		return 0
-	}
-	_, err := col.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
-	if err != nil {
-		fmt.Printf("[warn] batch error: %v\n", err)
-		return 0
-	}
-	return len(docs)
-}
-
-func CreateIndexes(ctx context.Context, col *mongo.Collection) {
-	indexes := []mongo.IndexModel{
-		{Keys: bson.D{{Key: "startTimestamp", Value: 1}}},
-		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
-		{Keys: bson.D{{Key: "organisationId", Value: 1}}},
-		{Keys: bson.D{{Key: "tags", Value: 1}}},
-		{Keys: bson.D{{Key: "detections", Value: 1}}},
-		{Keys: bson.D{{Key: "duration", Value: 1}}},
-	}
-	_, err := col.Indexes().CreateMany(ctx, indexes)
-	if err != nil {
-		fmt.Printf("[info] index creation skipped: %v\n", err)
-	}
-}
-
-func GenerateKey(keyType string, userColl *mongo.Collection) (string, error) {
-	const keyLen = 20
-	maxRetries := 10
-	for attempts := 0; attempts < maxRetries; attempts++ {
-		// Generate random bytes
-		b := make([]byte, keyLen)
-		_, err := rand.Read(b)
-		if err != nil {
-			return "", err
-		}
-		key := strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
-		// Check for duplicates
-		isDup, err := IsDuplicateKeyInMongodb(keyType, key, userColl)
-		if err != nil {
-			return "", err
-		}
-		if !isDup {
-			return key, nil
+	if c.Parallel <= 0 {
+		switch {
+		case c.Target <= SmallTargetThreshold:
+			c.Parallel = AutoParallelSmall
+		case c.Target <= MediumTargetThreshold:
+			c.Parallel = AutoParallelMedium
+		default:
+			c.Parallel = AutoParallelLarge
 		}
 	}
-	return "", fmt.Errorf("failed to generate unique key after max retries")
-}
-
-func IsDuplicateKeyInMongodb(keyType string, keyValue string, userColl *mongo.Collection) (bool, error) {
-	var filter bson.M
-	switch keyType {
-	case "public":
-		filter = bson.M{"amazon_access_key_id": keyValue}
-	case "private":
-		filter = bson.M{"amazon_secret_access_key": keyValue}
-	default:
-		return false, fmt.Errorf("invalid key type: %s", keyType)
+	if c.Parallel < MinParallel {
+		c.Parallel = MinParallel
 	}
-	count, err := userColl.CountDocuments(context.Background(), filter)
-	if err != nil {
-		return false, err
+	if c.Parallel > MaxParallel {
+		c.Parallel = MaxParallel
 	}
-	return count > 0, nil
-}
-
-func PromptInt(prompt string) int {
-	for {
-		if atomic.LoadInt32(&stopFlag) != 0 {
-			fmt.Println("\n[info] Interrupt received, exiting prompt.")
-			os.Exit(130)
-		}
-		fmt.Print(prompt)
-		var input string
-		_, err := fmt.Scanln(&input)
-		if err != nil {
-			return 0
-		}
-		if input == "" {
-			return 0
-		}
-		var val int
-		_, err = fmt.Sscanf(input, "%d", &val)
-		if err == nil && val > 0 {
-			return val
-		}
-		fmt.Println("Please enter a positive integer or press Enter for default.")
+	if c.URI == "" {
+		c.URI = "mongodb://localhost:27017"
+	}
+	if c.DBName == "" {
+		c.DBName = "Kerberos"
+	}
+	if c.MediaColl == "" {
+		c.MediaColl = "media"
+	}
+	if c.UserColl == "" {
+		c.UserColl = "users"
+	}
+	if c.DeviceColl == "" {
+		c.DeviceColl = "devices"
+	}
+	if c.SubscriptionColl == "" {
+		c.SubscriptionColl = "subscriptions"
+	}
+	if c.SettingsColl == "" {
+		c.SettingsColl = "settings"
+	}
+	if c.DeviceCount <= 0 {
+		c.DeviceCount = MinDeviceCount
+	}
+	if c.DeviceCount > MaxDeviceCount {
+		c.DeviceCount = MaxDeviceCount
+	}
+	if c.Days <= 0 {
+		c.Days = DefaultDays
+	}
+	if c.Days > MaxDays {
+		c.Days = MaxDays
+	}
+	if c.NewUserName == "" && c.ExistingUserIDHex == "" {
+		c.NewUserName = utils.GenerateRandomUsername("media")
+	}
+	if c.NewUserPasswordPlain == "" {
+		c.NewUserPasswordPlain = "media-password"
+	}
+	if c.NewUserEmail == "" {
+		c.NewUserEmail = "example-media-user@email.com"
 	}
 }
 
-func PromptString(prompt string) string {
-	if atomic.LoadInt32(&stopFlag) != 0 {
-		fmt.Println("\n[info] Interrupt received, exiting prompt.")
-		os.Exit(130)
-	}
-	fmt.Print(prompt)
-	var val string
-	_, _ = fmt.Scanln(&val)
-	return val
-}
-
-func Hash(str string) (string, error) {
-	hashed, err := bcrypt.GenerateFromPassword([]byte(str), bcrypt.DefaultCost)
-	return string(hashed), err
-}
-
-func WasFlagPassed(name string) bool {
-	found := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
-		}
-	})
-	return found
-}
-
-func SeedMedia() {
-	rand.Seed(time.Now().UnixNano())
+func RunSeedMedia(cfg SeedMediaConfig) error {
 	HandleSignals()
-
-	var (
-		target               = flag.Int("target", 0, "Total documents to insert (required)")
-		batchSize            = flag.Int("batch", 0, "Documents per batch (required)")
-		parallel             = flag.Int("parallel", 0, "Concurrent batch workers (required)")
-		uri                  = flag.String("uri", "", "MongoDB URI (required)")
-		dbName               = flag.String("db", "", "Database name (required)")
-		mediaCollName        = flag.String("media-collection", "", "Media collection name (required)")
-		userCollName         = flag.String("user-collection", "", "User collection name")
-		deviceCollName       = flag.String("device-collection", "", "Device collection name")
-		subscriptionCollName = flag.String("subscription-collection", "", "Subscription collection name")
-		settingsCollName     = flag.String("settings-collection", "settings", "Settings collection name")
-		noIndex              = flag.Bool("no-index", false, "Skip index creation")
-		reportEvery          = flag.Int("report-every", 10, "Report progress every N batches")
-		userId               = flag.String("user-id", "", "User ID to linki media to")
-		userName             = flag.String("user-name", "", "User name for the media user")
-		userPassword         = flag.String("user-password", "", "User password for the media user")
-		userEmail            = flag.String("user-email", "", "User email for the media user")
-
-		deviceCount = flag.Int("device-count", 0, "Number of devices to simulate")
-	)
-	flag.Parse()
-
-	fmt.Printf("[info] Skip any prompt to use default values.")
-
-	if !WasFlagPassed("target") {
-		*target = PromptInt("Enter total documents to insert (--target): ")
-		if *target == 0 {
-			*target = 100000 // default target
-			fmt.Printf("[info] Using default target: %d\n", *target)
-		}
-	}
-
-	if !WasFlagPassed("batch") {
-		*batchSize = PromptInt("Enter documents per batch (--batch) (1-100,000): ")
-		if *batchSize == 0 {
-			switch {
-			case *target <= 10000:
-				*batchSize = 500
-			case *target <= 100000:
-				*batchSize = 2000
-			default:
-				*batchSize = 5000
-			}
-			fmt.Printf("[info] Using recommended batch size: %d\n", *batchSize)
-		}
-	} else if *batchSize < 0 {
-		*batchSize = 1
-	} else if *batchSize > 100000 {
-		*batchSize = 100000
-	}
-
-	if !WasFlagPassed("parallel") {
-		*parallel = PromptInt("Enter concurrent batch workers (--parallel) (1-16): ")
-		if *parallel == 0 {
-			switch {
-			case *target <= 10000:
-				*parallel = 2
-			case *target <= 100000:
-				*parallel = 4
-			default:
-				*parallel = 8
-			}
-			fmt.Printf("[info] Using recommended parallel value: %d\n", *parallel)
-		}
-	} else if *parallel < 1 {
-		*parallel = 1
-	} else if *parallel > 16 {
-		*parallel = 16
-	}
-
-	if !WasFlagPassed("uri") {
-		*uri = PromptString("Enter MongoDB URI (--uri): ")
-		if *uri == "" {
-			*uri = "mongodb://localhost:27017"
-			fmt.Printf("[info] Using default MongoDB URI: %s\n", *uri)
-		}
-	}
-	if !WasFlagPassed("db") {
-		*dbName = PromptString("Enter database name (--db): ")
-		if *dbName == "" {
-			*dbName = "Kerberos"
-			fmt.Printf("[info] Using default database name: %s\n", *dbName)
-		}
-	}
-	if !WasFlagPassed("media-collection") {
-		*mediaCollName = PromptString("Enter target media collection name (--media-collection): ")
-		if *mediaCollName == "" {
-			*mediaCollName = "media"
-			fmt.Printf("[info] Using default media collection name: %s\n", *mediaCollName)
-		}
-	}
-	if !WasFlagPassed("user-id") {
-		*userId = PromptString("Enter user ID (--user-id), keep empty to create new user: ")
-	}
-	if !WasFlagPassed("user-id") && *userId == "" {
-		if *userName == "" {
-			*userName = PromptString("Enter user name (--user-name): ")
-			if *userName == "" {
-				*userName = "media-user"
-				fmt.Printf("[info] Using default user name: %s\n", *userName)
-			}
-		}
-		if *userPassword == "" {
-			*userPassword = PromptString("Enter user password (--user-password): ")
-			if *userPassword == "" {
-				*userPassword = "media-password"
-				fmt.Printf("[info] Using default user password: %s\n", *userPassword)
-			}
-		}
-		if *userEmail == "" {
-			*userEmail = PromptString("Enter user email (--user-email): ")
-			if *userEmail == "" {
-				*userEmail = "example-media-user@email.com"
-				fmt.Printf("[info] Using default user email: %s\n", *userEmail)
-			}
-		}
-		if !WasFlagPassed("settings-collection") {
-			*settingsCollName = PromptString("Enter target settings collection name (--settings-collection): ")
-			if *settingsCollName == "" {
-				*settingsCollName = "settings"
-				fmt.Printf("[info] Using default settings collection name: %s\n", *settingsCollName)
-			}
-		}
-		if *subscriptionCollName == "" {
-			*subscriptionCollName = PromptString("Enter target subscription collection name, needed to log in (--subscription-collection): ")
-			if *subscriptionCollName == "" {
-				*subscriptionCollName = "subscriptions"
-				fmt.Printf("[info] Using default subscription collection name: %s\n", *subscriptionCollName)
-			}
-		}
-	} else {
-		fmt.Printf("[info] Using existing user ID: %s\n", *userId)
-	}
-	if !WasFlagPassed("user-collection") {
-		*userCollName = PromptString("Enter target user collection name (--user-collection): ")
-		if *userCollName == "" {
-			*userCollName = "users"
-			fmt.Printf("[info] Using default user collection name: %s\n", *userCollName)
-		}
-	}
-	if !WasFlagPassed("device-collection") {
-		*deviceCollName = PromptString("Enter target device collection name (--device-collection): ")
-		if *deviceCollName == "" {
-			*deviceCollName = "devices"
-			fmt.Printf("[info] Using default device collection name: %s\n", *deviceCollName)
-		}
-	}
-	if !WasFlagPassed("device-count") {
-		*deviceCount = PromptInt("Enter number of devices to simulate (--device-count) (1-50): ")
-		if *deviceCount < 1 {
-			*deviceCount = 1
-		} else if *deviceCount > 50 {
-			*deviceCount = 50
-		}
-		if *deviceCount == 0 {
-			*deviceCount = 2
-			fmt.Printf("[info] Using default device count: %d\n", *deviceCount)
-		}
-	}
+	cfg.ApplyDefaults()
 
 	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(*uri).SetServerSelectionTimeout(10*time.Second))
+	client, err := mongo.Connect(ctx, options.Client().
+		ApplyURI(cfg.URI).
+		SetServerSelectionTimeout(ServerSelectionTimeoutSeconds*time.Second))
 	if err != nil {
-		fmt.Printf("[error] MongoDB connect: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("connect mongo: %w", err)
 	}
+	defer client.Disconnect(ctx)
 
-	userColl := client.Database(*dbName).Collection(*userCollName)
-	subColl := client.Database(*dbName).Collection(*subscriptionCollName)
-	mediaColl := client.Database(*dbName).Collection(*mediaCollName)
-	settingsColl := client.Database(*dbName).Collection(*settingsCollName)
-
-	// Ensure settings document exists
-	var settingsDoc bson.M
-	err = settingsColl.FindOne(ctx, bson.M{"key": "plan", "map.enterprise": bson.M{"$exists": true}}).Decode(&settingsDoc)
-	if err == mongo.ErrNoDocuments {
-		if err := InsertSettings(settingsColl); err != nil {
-			fmt.Printf("[error] Inserting settings: %v\n", err)
-			os.Exit(1)
-		}
-	} else if err != nil {
-		fmt.Printf("[error] Checking settings: %v\n", err)
-		os.Exit(1)
+	if err := database.EnsureSettings(ctx, client, cfg.DBName, cfg.SettingsColl); err != nil {
+		return fmt.Errorf("ensure settings: %w", err)
 	}
 
 	var userObjectID primitive.ObjectID
 	var amazonSecretAccessKey, amazonAccessKeyID string
 
-	if *userId != "" {
-		// Fetch the user and use their keys
-		userObjectID, err = primitive.ObjectIDFromHex(*userId)
+	if cfg.ExistingUserIDHex != "" {
+		userObjectID, err = primitive.ObjectIDFromHex(cfg.ExistingUserIDHex)
 		if err != nil {
-			fmt.Printf("[error] Invalid userId: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("invalid existing user id: %w", err)
 		}
 		var userDoc bson.M
-		err = userColl.FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
+		err = client.Database(cfg.DBName).Collection(cfg.UserColl).
+			FindOne(ctx, bson.M{"_id": userObjectID}).Decode(&userDoc)
 		if err != nil {
-			fmt.Printf("[error] Could not find user with id %s: %v\n", *userId, err)
-			os.Exit(1)
+			return fmt.Errorf("fetch existing user: %w", err)
 		}
 		amazonSecretAccessKey, _ = userDoc["amazon_secret_access_key"].(string)
 		amazonAccessKeyID, _ = userDoc["amazon_access_key_id"].(string)
 		if amazonSecretAccessKey == "" || amazonAccessKeyID == "" {
-			fmt.Printf("[error] User is missing AWS keys.\n")
-			os.Exit(1)
+			return fmt.Errorf("existing user missing keys")
 		}
 	} else {
-		amazonSecretAccessKey, err = GenerateKey("private", userColl)
-		if err != nil {
-			fmt.Printf("[error] Generating amazon_secret_access_key: %v\n", err)
-			os.Exit(1)
+		existing := database.GetUserFromMongodb(client, cfg.DBName, cfg.NewUserName, cfg.UserColl)
+		if existing.Username != "" {
+			return fmt.Errorf("user with name %s already exists", cfg.NewUserName)
 		}
-		amazonAccessKeyID, err = GenerateKey("public", userColl)
+		amazonSecretAccessKey, err = database.GenerateKey("private", client, cfg.DBName, cfg.UserColl)
 		if err != nil {
-			fmt.Printf("[error] Generating amazon_access_key_id: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("generate private key: %w", err)
 		}
+		amazonAccessKeyID, err = database.GenerateKey("public", client, cfg.DBName, cfg.UserColl)
+		if err != nil {
+			return fmt.Errorf("generate public key: %w", err)
+		}
+		hashed, err := utils.Hash(cfg.NewUserPasswordPlain)
+		if err != nil {
+			return fmt.Errorf("hash password: %w", err)
+		}
+		info := models.InsertUserInfo{
+			UserName:              cfg.NewUserName,
+			UserEmail:             cfg.NewUserEmail,
+			UserPassword:          hashed,
+			AmazonSecretAccessKey: amazonSecretAccessKey,
+			AmazonAccessKeyID:     amazonAccessKeyID,
+			Days:                  cfg.Days,
+		}
+		uid, userDoc := database.BuildUserDoc(info)
+		userObjectID = uid
 
-		// Create new user with subscription
-		userObjectID, err = InsertUser(
-			userColl,
-			*userName,
-			*userEmail,
-			*userPassword,
-			amazonSecretAccessKey,
-			amazonAccessKeyID,
-			DAYS,
-		)
+		res, err := client.Database(cfg.DBName).Collection(cfg.UserColl).InsertOne(ctx, userDoc)
 		if err != nil {
-			fmt.Printf("[error] %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("insert user: %w", err)
 		}
-
-		_, err = InsertSubscription(subColl, userObjectID.Hex())
-		if err != nil {
-			fmt.Printf("[error] %v\n", err)
-			os.Exit(1)
+		if userObjectID == primitive.NilObjectID {
+			if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
+				userObjectID = oid
+			} else {
+				return fmt.Errorf("insert user returned non-ObjectID _id (%T)", res.InsertedID)
+			}
 		}
-
-		fmt.Printf("[info] Created new user with enterprise subscription.\n")
+		subDoc := database.BuildSubscriptionDoc(userObjectID)
+		if err := database.InsertOne(ctx, client, cfg.DBName, cfg.SubscriptionColl, subDoc); err != nil {
+			return fmt.Errorf("insert subscription: %w", err)
+		}
+		fmt.Printf("[info] created new user _id = %s username = %s\n", userObjectID.Hex(), cfg.NewUserName)
 	}
 
-	deviceColl := client.Database(*dbName).Collection(*deviceCollName)
+	var groups []bson.M
+	var deviceKeys []string
 
-	deviceDocs, deviceIDs := BuildDeviceDocs(*deviceCount, userObjectID, amazonSecretAccessKey)
-	if len(deviceDocs) > 0 {
-		_, err := deviceColl.InsertMany(ctx, deviceDocs)
+	if cfg.UseExistingDevices && cfg.ExistingUserIDHex != "" {
+		// Query groups for the user
+		groupCursor, err := client.Database(cfg.DBName).Collection("groups").
+			Find(ctx, bson.M{"organisationId": userObjectID.Hex()})
 		if err != nil {
-			fmt.Printf("[error] Creating devices: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("find groups: %w", err)
 		}
-		fmt.Printf("[info] Created %d devices for user %s\n", len(deviceDocs), userObjectID.Hex())
+		defer groupCursor.Close(ctx)
+		for groupCursor.Next(ctx) {
+			var group bson.M
+			if err := groupCursor.Decode(&group); err == nil {
+				groups = append(groups, group)
+			}
+		}
+		// Pass groups to batch generator for random group/device selection
+	} else {
+		// Generate new devices
+		deviceDocs, _ := database.BuildDeviceDocs(cfg.DeviceCount, userObjectID, amazonSecretAccessKey)
+		if len(deviceDocs) == 0 {
+			return fmt.Errorf("no devices generated")
+		}
+		if err := database.InsertMany(ctx, client, cfg.DBName, cfg.DeviceColl, deviceDocs); err != nil {
+			return fmt.Errorf("insert devices: %w", err)
+		}
+		// Collect device keys from generated devices
+		for _, doc := range deviceDocs {
+			if m, ok := doc.(bson.M); ok {
+				if key, ok := m["key"].(string); ok {
+					deviceKeys = append(deviceKeys, key)
+				}
+			}
+		}
+		// Pass deviceKeys to batch generator for random device selection
 	}
 
-	col := mediaColl
-	if !*noIndex {
-		CreateIndexes(ctx, col)
+	mediaColl := client.Database(cfg.DBName).Collection(cfg.MediaColl)
+	if !cfg.NoIndex {
+		database.CreateMediaIndexes(ctx, mediaColl)
 	}
 
 	var (
 		totalInserted int64
-		batchCounter  int64
 		startTime     = time.Now()
-		wg            sync.WaitGroup
-		batchCh       = make(chan []interface{}, *parallel*2)
+		batchCh       = make(chan []interface{}, cfg.Parallel*2)
+		progressCh    = make(chan int, cfg.Parallel*2)
 	)
 
-	fmt.Printf("[start] target=%d batch=%d parallel=%d uri=%s db=%s.%s\n",
-		*target, *batchSize, *parallel, *uri, *dbName, *mediaCollName)
+	uiprogress.Start()
+	bar := uiprogress.AddBar(cfg.Target).AppendCompleted().PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		inserted := atomic.LoadInt64(&totalInserted)
+		pct := 100 * float64(inserted) / float64(cfg.Target)
+		el := time.Since(startTime).Seconds()
+		rate := float64(inserted)
+		if el > 0 {
+			rate = float64(inserted) / el
+		}
+		return fmt.Sprintf("Inserted %d/%d (%.1f%%) %.0f/s", inserted, cfg.Target, pct, rate)
+	})
 
-	// Workers
-	for i := 0; i < *parallel; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for docs := range batchCh {
-				if atomic.LoadInt32(&stopFlag) != 0 {
-					return
-				}
-				inserted := InsertBatch(ctx, col, docs)
-				atomic.AddInt64(&totalInserted, int64(inserted))
+	doneWorkers := make(chan struct{})
+	go func() {
+		database.RunBatchWorkers(ctx, cfg.Parallel, mediaColl, batchCh, &stopFlag, &totalInserted, progressCh)
+		close(doneWorkers)
+	}()
+
+	go func() {
+		for total := range progressCh {
+			if total > cfg.Target {
+				total = cfg.Target
 			}
-		}()
-	}
+			bar.Set(total)
+		}
+	}()
 
-	var totalQueued int64
+	var queued int64
 
-mainLoop:
-	for atomic.LoadInt64(&totalQueued) < int64(*target) && atomic.LoadInt32(&stopFlag) == 0 {
-		remaining := int64(*target) - atomic.LoadInt64(&totalQueued)
-		current := *batchSize
-		if remaining < int64(*batchSize) {
+	for atomic.LoadInt64(&queued) < int64(cfg.Target) && atomic.LoadInt32(&stopFlag) == 0 {
+		remaining := int64(cfg.Target) - atomic.LoadInt64(&queued)
+		current := cfg.BatchSize
+		if remaining < int64(current) {
 			current = int(remaining)
 		}
-		docs := BuildBatchDocs(current, DAYS, userObjectID, deviceIDs)
+		var docs []interface{}
+		if cfg.UseExistingDevices && cfg.ExistingUserIDHex != "" {
+			docs = database.GenerateBatchMediaWithGroups(current, cfg.Days, userObjectID, groups)
+		} else {
+			docs = database.GenerateBatchMedia(current, cfg.Days, userObjectID, deviceKeys)
+		}
 		batchCh <- docs
-		atomic.AddInt64(&batchCounter, 1)
-		atomic.AddInt64(&totalQueued, int64(current))
+		atomic.AddInt64(&queued, int64(current))
+	}
 
-		if atomic.LoadInt64(&batchCounter)%int64(*reportEvery) == 0 {
-			elapsed := time.Since(startTime).Seconds()
-			rate := float64(atomic.LoadInt64(&totalInserted)) / elapsed
-			pct := 100 * float64(atomic.LoadInt64(&totalInserted)) / float64(*target)
-			fmt.Printf("[progress] batches=%d inserted=%d (%.2f%%) rate=%.0f/s\n",
-				atomic.LoadInt64(&batchCounter), atomic.LoadInt64(&totalInserted), pct, rate)
-		}
-		if atomic.LoadInt32(&stopFlag) != 0 {
-			break mainLoop
-		}
-	}
 	close(batchCh)
-	wg.Wait()
-	if err := client.Disconnect(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "[warn] error disconnecting MongoDB: %v\n", err)
+	<-doneWorkers
+	finalTotal := int(atomic.LoadInt64(&totalInserted))
+	if finalTotal > cfg.Target {
+		finalTotal = cfg.Target
 	}
-	elapsed := time.Since(startTime).Seconds()
-	rate := float64(atomic.LoadInt64(&totalInserted)) / elapsed
-	fmt.Printf("[done] inserted=%d elapsed=%.2fs rate=%.0f/s stop_flag=%v\n",
-		atomic.LoadInt64(&totalInserted), elapsed, rate, atomic.LoadInt32(&stopFlag) != 0)
+	bar.Set(finalTotal)
+	uiprogress.Stop()
+
+	el := time.Since(startTime).Seconds()
+	rate := float64(finalTotal) / el
+	fmt.Printf("[done] inserted=%d elapsed=%.2fs rate=%.0f/s stop=%v\n",
+		finalTotal, el, rate, atomic.LoadInt32(&stopFlag) != 0)
+
 	if atomic.LoadInt32(&stopFlag) != 0 {
-		os.Exit(130)
+		return fmt.Errorf("interrupted")
+	}
+	return nil
+}
+
+func SeedMedia(
+	target int,
+	batchSize int,
+	parallel int,
+	uri string,
+	dbName string,
+	mediaCollName string,
+	userCollName string,
+	deviceCollName string,
+	subscriptionCollName string,
+	settingsCollName string,
+	noIndex bool,
+	reportEvery int,
+	userId string,
+	userName string,
+	userPassword string,
+	userEmail string,
+	deviceCount int,
+	days int,
+) {
+	HandleSignals()
+	flag.Parse()
+
+	// --- db (no prompt by design) ---
+	if WasFlagPassed("db") {
+		fmt.Printf("[info] using flag -db=%s\n", dbName)
 	} else {
-		os.Exit(0)
+		fmt.Printf("[info] using default -db=%s (no flag)\n", dbName)
+	}
+	// --- collections (no prompt) ---
+	if WasFlagPassed("media-collection") {
+		fmt.Printf("[info] using flag -media-collection=%s\n", mediaCollName)
+	} else {
+		fmt.Printf("[info] using default -media-collection=%s\n", mediaCollName)
+	}
+	if WasFlagPassed("user-collection") {
+		fmt.Printf("[info] using flag -user-collection=%s\n", userCollName)
+	} else {
+		fmt.Printf("[info] using default -user-collection=%s\n", userCollName)
+	}
+	if WasFlagPassed("device-collection") {
+		fmt.Printf("[info] using flag -device-collection=%s\n", deviceCollName)
+	} else {
+		fmt.Printf("[info] using default -device-collection=%s\n", deviceCollName)
+	}
+	if WasFlagPassed("subscription-collection") {
+		fmt.Printf("[info] using flag -subscription-collection=%s\n", subscriptionCollName)
+	} else {
+		fmt.Printf("[info] using default -subscription-collection=%s\n", subscriptionCollName)
+	}
+	if WasFlagPassed("settings-collection") {
+		fmt.Printf("[info] using flag -settings-collection=%s\n", settingsCollName)
+	} else {
+		fmt.Printf("[info] using default -settings-collection=%s\n", settingsCollName)
+	}
+
+	// --- target ---
+	if WasFlagPassed("target") {
+		if target <= 0 {
+			target = DefaultTarget
+		} else if target > 10_000_000 { // original max clamp
+			target = 10_000_000
+		}
+		fmt.Printf("[info] using flag -target=%d\n", target)
+	} else {
+		val := PromptInt(fmt.Sprintf("Total documents (-target, default %d, max 10000000): ", DefaultTarget))
+		if val <= 0 {
+			target = DefaultTarget
+			fmt.Printf("[info] using default -target=%d\n", target)
+		} else {
+			if val > 10_000_000 {
+				val = 10_000_000
+				fmt.Printf("[warn] clamped -target to %d\n", val)
+			}
+			target = val
+			fmt.Printf("[info] using input -target=%d\n", target)
+		}
+	}
+
+	// --- batch-size ---
+	if WasFlagPassed("batch-size") {
+		if batchSize < 1 {
+			batchSize = 1
+		} else if batchSize > 100_000 {
+			batchSize = 100_000
+		}
+		if batchSize > target {
+			batchSize = target
+		}
+		fmt.Printf("[info] using flag -batch-size=%d\n", batchSize)
+	} else {
+		val := PromptInt("Documents per batch (-batch-size, auto if empty): ")
+		if val <= 0 {
+			switch {
+			case target <= SmallTargetThreshold:
+				batchSize = DefaultBatchSizeSmall
+			case target <= MediumTargetThreshold:
+				batchSize = DefaultBatchSizeMedium
+			default:
+				batchSize = DefaultBatchSizeLarge
+			}
+			if batchSize > target {
+				batchSize = target
+			}
+			fmt.Printf("[info] using auto -batch-size=%d\n", batchSize)
+		} else {
+			if val > 100_000 {
+				val = 100_000
+				fmt.Printf("[warn] clamped -batch-size to %d\n", val)
+			}
+			if val > target {
+				val = target
+			}
+			batchSize = val
+			fmt.Printf("[info] using input -batch-size=%d\n", batchSize)
+		}
+	}
+
+	// --- parallel ---
+	if WasFlagPassed("parallel") {
+		if parallel < MinParallel {
+			parallel = MinParallel
+		} else if parallel > MaxParallel {
+			parallel = MaxParallel
+		}
+		fmt.Printf("[info] using flag -parallel=%d\n", parallel)
+	} else {
+		val := PromptInt("Concurrent workers (-parallel, auto if empty): ")
+		if val <= 0 {
+			switch {
+			case target <= SmallTargetThreshold:
+				parallel = AutoParallelSmall
+			case target <= MediumTargetThreshold:
+				parallel = AutoParallelMedium
+			default:
+				parallel = AutoParallelLarge
+			}
+			fmt.Printf("[info] using auto -parallel=%d\n", parallel)
+		} else {
+			if val < MinParallel {
+				val = MinParallel
+			} else if val > MaxParallel {
+				val = MaxParallel
+			}
+			parallel = val
+			fmt.Printf("[info] using input -parallel=%d\n", parallel)
+		}
+	}
+
+	// --- days ---
+	if WasFlagPassed("days") {
+		if days < 1 {
+			days = 1
+		} else if days > MaxDays {
+			days = MaxDays
+		}
+		fmt.Printf("[info] using flag -days=%d\n", days)
+	} else {
+		val := PromptInt(fmt.Sprintf("Number of past days (-days, default %d, max %d): ", DefaultDays, MaxDays))
+		if val <= 0 {
+			days = DefaultDays
+			fmt.Printf("[info] using default -days=%d\n", days)
+		} else {
+			if val > MaxDays {
+				val = MaxDays
+				fmt.Printf("[warn] clamped -days to %d\n", val)
+			}
+			days = val
+			fmt.Printf("[info] using input -days=%d\n", days)
+		}
+	}
+
+	// --- mongodb-uri ---
+	if WasFlagPassed("mongodb-uri") {
+		if uri == "" {
+			uri = "mongodb://localhost:27017"
+		}
+		fmt.Printf("[info] using flag -mongodb-uri=%s\n", uri)
+	} else {
+		in := PromptString("MongoDB URI (-mongodb-uri, default mongodb://localhost:27017): ")
+		if strings.TrimSpace(in) == "" {
+			uri = "mongodb://localhost:27017"
+			fmt.Printf("[info] using default -mongodb-uri=%s\n", uri)
+		} else {
+			uri = in
+			fmt.Printf("[info] using input -mongodb-uri=%s\n", uri)
+		}
+	}
+
+	// --- no-index ---
+	if WasFlagPassed("no-index") {
+		fmt.Printf("[info] using flag -no-index=%v\n", noIndex)
+	} else {
+		noIndex = PromptBool("Skip index creation? (-no-index y/N, default N): ", false)
+		fmt.Printf("[info] using input -no-index=%v\n", noIndex)
+	}
+
+	var useExistingDevices bool = false
+
+	// --- user-id (existing vs create new) ---
+	if WasFlagPassed("user-id") {
+		fmt.Printf("[info] using flag -user-id=%s\n", userId)
+	} else {
+		in := PromptString("Existing user ID (-user-id, empty to create new): ")
+		userId = strings.TrimSpace(in)
+		if userId == "" {
+			fmt.Println("[info] no -user-id provided; will create new user")
+		} else {
+			fmt.Printf("[info] using input -user-id=%s\n", userId)
+		}
+	}
+
+	// --- new user fields if creating ---
+	if userId == "" {
+		if WasFlagPassed("user-name") {
+			if userName == "" {
+				userName = "media-user"
+			}
+			fmt.Printf("[info] using flag -user-name=%s\n", userName)
+		} else {
+			if userName == "" {
+				userName = utils.GenerateRandomUsername("media-")
+				fmt.Printf("[info] generated random -user-name=%s\n", userName)
+			} else {
+				fmt.Printf("[info] using input -user-name=%s\n", userName)
+			}
+		}
+
+		if WasFlagPassed("user-password") {
+			if userPassword == "" {
+				userPassword = "media-password"
+			}
+			fmt.Printf("[info] using flag -user-password=[hidden]\n")
+		} else {
+			in := PromptString("User password (-user-password, default media-password): ")
+			if strings.TrimSpace(in) == "" {
+				userPassword = "media-password"
+				fmt.Printf("[info] using default -user-password=[hidden]\n")
+			} else {
+				userPassword = in
+				fmt.Printf("[info] using input -user-password=[hidden]\n")
+			}
+		}
+
+		if WasFlagPassed("user-email") {
+			if userEmail == "" {
+				userEmail = "example-media-user@email.com"
+			}
+			fmt.Printf("[info] using flag -user-email=%s\n", userEmail)
+		} else {
+			in := PromptString("User email (-user-email, default example-media-user@email.com): ")
+			if strings.TrimSpace(in) == "" {
+				userEmail = "example-media-user@email.com"
+				fmt.Printf("[info] using default -user-email=%s\n", userEmail)
+			} else {
+				userEmail = in
+				fmt.Printf("[info] using input -user-email=%s\n", userEmail)
+			}
+		}
+	} else {
+		if WasFlagPassed("use-existing-devices") {
+			useExistingDevices = true
+			fmt.Printf("[info] using flag -use-existing-devices=%v\n", useExistingDevices)
+		} else {
+			useExistingDevices = PromptBool("Use existing devices for user? (-use-existing-devices Y/n, default Y): ", true)
+			fmt.Printf("[info] using input -use-existing-devices=%v\n", useExistingDevices)
+		}
+
+		if !useExistingDevices {
+			if WasFlagPassed("device-count") {
+				if deviceCount < MinDeviceCount {
+					deviceCount = MinDeviceCount
+				} else if deviceCount > MaxDeviceCount {
+					deviceCount = MaxDeviceCount
+				}
+				fmt.Printf("[info] using flag -device-count=%d\n", deviceCount)
+			} else {
+				val := PromptInt(fmt.Sprintf("Number of devices (-device-count, default %d, max %d): ", MinDeviceCount, MaxDeviceCount))
+				if val <= 0 {
+					deviceCount = MinDeviceCount
+					fmt.Printf("[info] using default -device-count=%d\n", deviceCount)
+				} else {
+					if val > MaxDeviceCount {
+						val = MaxDeviceCount
+						fmt.Printf("[warn] clamped -device-count to %d\n", val)
+					}
+					deviceCount = val
+					fmt.Printf("[info] using input -device-count=%d\n", deviceCount)
+				}
+			}
+		}
+	}
+
+	// Build config and run
+	cfg := SeedMediaConfig{
+		Target:               target,
+		BatchSize:            batchSize,
+		Parallel:             parallel,
+		URI:                  uri,
+		DBName:               dbName,
+		MediaColl:            mediaCollName,
+		UserColl:             userCollName,
+		DeviceColl:           deviceCollName,
+		SubscriptionColl:     subscriptionCollName,
+		SettingsColl:         settingsCollName,
+		NoIndex:              noIndex,
+		ExistingUserIDHex:    userId,
+		NewUserName:          userName,
+		NewUserPasswordPlain: userPassword,
+		NewUserEmail:         userEmail,
+		DeviceCount:          deviceCount,
+		Days:                 days,
+		UseExistingDevices:   useExistingDevices,
+	}
+	if err := RunSeedMedia(cfg); err != nil {
+		fmt.Printf("[error] seed media: %v\n", err)
+		os.Exit(1)
 	}
 }

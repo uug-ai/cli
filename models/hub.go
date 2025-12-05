@@ -183,3 +183,12 @@ type Label struct {
 	IsPrivate   bool               `json:"is_private" bson:"is_private"`           // Could be available on only private tasks in future
 	Types       []string           `json:"type" bson:"type,omitempty"`             // Could be used to group labels by tasks, media, alerts,...
 }
+
+type InsertUserInfo struct {
+	UserName              string
+	UserEmail             string
+	UserPassword          string
+	AmazonSecretAccessKey string
+	AmazonAccessKeyID     string
+	Days                  int
+}
