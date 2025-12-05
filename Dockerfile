@@ -1,4 +1,4 @@
-FROM golang:1.24.9-bullseye AS builder
+FROM mcr.microsoft.com/devcontainers/go:1.24-bookworm AS builder
 
 ARG github_username
 ARG github_token
