@@ -7,7 +7,7 @@ require (
 	github.com/confluentinc/confluent-kafka-go/v2 v2.12.0
 	github.com/gosuri/uiprogress v0.0.1
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/uug-ai/models v1.2.2
+	github.com/uug-ai/models v1.2.10
 	go.mongodb.org/mongo-driver v1.17.6
 	golang.org/x/crypto v0.45.0
 	gopkg.in/mgo.v2 v2.0.0-20190816093944-a6b53ec6cb22

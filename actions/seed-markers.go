@@ -385,14 +385,12 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 							up.SetUpsert(true)
 							eventOptUpserts = append(eventOptUpserts, up)
 						}
-						evStart := event.Timestamp
-						evEnd := event.Timestamp + 1
 						eventRangeDocs = append(eventRangeDocs, bson.M{
 							"value":          event.Name,
 							"text":           event.Name,
 							"organisationId": marker.OrganisationId,
-							"start":          evStart,
-							"end":            evEnd,
+							"start":          event.StartTimestamp,
+							"end":            event.EndTimestamp,
 							"deviceId":       marker.DeviceId,
 							"groupId":        marker.GroupId,
 							"createdAt":      now,
@@ -601,11 +599,29 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 		var events []hubModels.MarkerEvent
 		for j := 0; j < numEvents; j++ {
 			name := eventNames[rand.Intn(len(eventNames))]
+			// event duration: 1–10% of marker duration, at least 1s
+			evDur := int64(rand.Intn(int(max(1, int(duration/10)))) + 1)
+			// pick start within [start, end - evDur]
+			var evStart int64
+			if end-start > evDur {
+				evStart = start + int64(rand.Int63n((end-start)-evDur+1))
+			} else {
+				// fallback: clamp to start
+				evStart = start
+				evDur = max(1, end-start)
+			}
+			evEnd := evStart + evDur
+			// slight jitter for variety
+			evStart += int64(rand.Intn(3))
+			if evEnd > end {
+				evEnd = end
+			}
 			events = append(events, hubModels.MarkerEvent{
-				Timestamp:   start + int64(j*5) + int64(rand.Intn(10)),
-				Name:        name,
-				Description: "Random event description",
-				Tags:        []string{"urgent"},
+				StartTimestamp: evStart,
+				EndTimestamp:   evEnd,
+				Name:           name,
+				Description:    "Random event description",
+				Tags:           []string{"urgent"},
 			})
 		}
 
@@ -691,22 +707,6 @@ func randomGroupId() string {
 }
 func randomMarkerName(i int) string {
 	return "marker-" + fmt.Sprintf("%d", int64(rand.Intn(1000000)+3000000))
-}
-func randomMarkerEvent(ts int64) hubModels.MarkerEvent {
-	events := []string{
-		"Motion Detected", "Sound Detected", "Door Opened", "Glass Break", "Tamper Alarm",
-		"Camera Offline", "Low Battery", "Power Restored", "Network Down", "Network Restored",
-		"Intrusion Detected", "Fire Alarm", "System Check", "Manual Trigger", "Temperature Alert",
-		"Humidity Alert", "Light Level Change", "Object Left Behind", "Object Removed",
-		"Face Recognized", "License Plate Read", "Crowd Detected", "Loitering", "Line Crossed",
-	}
-	name := events[rand.Intn(len(events))]
-	return hubModels.MarkerEvent{
-		Timestamp:   ts + int64(rand.Intn(10)),
-		Name:        name,
-		Description: "Random event description",
-		Tags:        []string{"urgent"},
-	}
 }
 
 func CreateMarkerIndexes(ctx context.Context, db *mongo.Database, cfg SeedMarkersConfig) {
