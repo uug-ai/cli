@@ -21,15 +21,15 @@ type IndexSpec struct {
 }
 
 const (
-	DefaultDBName               = "Kerberos"
-	DefaultMongoURI             = "mongodb://localhost:27017"
-	DefaultIndexVersion         = "hub-08-12-2025"
-	ServerSelectionTimeoutCheck = 10 // seconds
+	DefaultmongodbDestinationDatabase = "Kerberos"
+	DefaultMongoURI                   = "mongodb://localhost:27017"
+	DefaultIndexVersion               = "hub-08-12-2025"
+	ServerSelectionTimeoutCheck       = 10 // seconds
 )
 
 func CheckIndexes(
 	mongoURI string,
-	dbName string,
+	mongodbDestinationDatabase string,
 	collectionsCSV string,
 	mode string,
 	indexVersion string,
@@ -54,28 +54,32 @@ func CheckIndexes(
 		}
 	}
 
-	// --- db ---
-	if WasFlagPassed("db") {
-		if dbName == "" {
-			dbName = DefaultDBName
+	// --- destination database ---
+	if WasFlagPassed("mongodb-destination-database") {
+		if mongodbDestinationDatabase == "" {
+			mongodbDestinationDatabase = DefaultmongodbDestinationDatabase
 		}
-		fmt.Printf("[info] using flag -db=%s\n", dbName)
+		fmt.Printf("[info] using flag -mongodb-destination-database=%s\n", mongodbDestinationDatabase)
 	} else {
-		in := PromptString(fmt.Sprintf("Database (-db, default %s): ", DefaultDBName))
+		in := PromptString(fmt.Sprintf("Database (-mongodb-destination-database, default %s): ", DefaultmongodbDestinationDatabase))
 		if strings.TrimSpace(in) == "" {
-			dbName = DefaultDBName
-			fmt.Printf("[info] using default -db=%s\n", dbName)
+			mongodbDestinationDatabase = DefaultmongodbDestinationDatabase
+			fmt.Printf("[info] using default -mongodb-destination-database=%s\n", mongodbDestinationDatabase)
 		} else {
-			dbName = in
-			fmt.Printf("[info] using input -db=%s\n", dbName)
+			mongodbDestinationDatabase = in
+			fmt.Printf("[info] using input -mongodb-destination-database=%s\n", mongodbDestinationDatabase)
 		}
 	}
 
 	// --- collections (optional) ---
 	var collections []string
 	if WasFlagPassed("collections") {
-		collections = parseCSV(collectionsCSV)
-		fmt.Printf("[info] using flag -collections=%v\n", collections)
+		collections = parseCSV(collectionsCSV) // may be empty => all
+		if len(collections) == 0 {
+			fmt.Println("[info] -collections passed empty: checking all collections from indexes file")
+		} else {
+			fmt.Printf("[info] using flag -collections=%v\n", collections)
+		}
 	} else {
 		in := PromptString("Collections to check (-collections, comma-separated, empty for all): ")
 		collections = parseCSV(in)
@@ -131,7 +135,7 @@ func CheckIndexes(
 		os.Exit(1)
 	}
 	defer client.Disconnect(ctx)
-	db := client.Database(dbName)
+	db := client.Database(mongodbDestinationDatabase)
 
 	// Load canonical index specs from file
 	canonical, err := loadCanonicalIndexSpecsFromFile(indexesFile)
@@ -611,12 +615,12 @@ func parseInt(s string) (int, error) {
 // CLI entry wrapper to match SeedMedia signature, if you prefer calling like others.
 func RunCheckIndexesCLI(
 	mongodbURI string,
-	dbName string,
+	mongodbDestinationDatabase string,
 	collections string,
 	mode string,
 	indexVersion string,
 ) {
-	if err := runCheckIndexesInternal(mongodbURI, dbName, collections, mode, indexVersion); err != nil {
+	if err := runCheckIndexesInternal(mongodbURI, mongodbDestinationDatabase, collections, mode, indexVersion); err != nil {
 		fmt.Printf("[error] check-indexes: %v\n", err)
 		os.Exit(1)
 	}
@@ -625,12 +629,12 @@ func RunCheckIndexesCLI(
 // If you want a single-return API:
 func runCheckIndexesInternal(
 	mongoURI string,
-	dbName string,
+	mongodbDestinationDatabase string,
 	collectionsCSV string,
 	mode string,
 	indexVersion string,
 ) error {
 	// Delegate to CheckIndexes which handles prompts and prints. Keeping a simple API surface.
-	CheckIndexes(mongoURI, dbName, collectionsCSV, mode, indexVersion)
+	CheckIndexes(mongoURI, mongodbDestinationDatabase, collectionsCSV, mode, indexVersion)
 	return nil
 }
