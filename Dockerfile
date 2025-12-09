@@ -45,7 +45,6 @@ RUN cd /go/src/github.com/uug-ai/${project} && \
 
 WORKDIR /dist
 RUN cp -r /${project} ./
-RUN /dist/${project}/main
 
 ##############################
 # Final Stage: Create the small runtime image.
