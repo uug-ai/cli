@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: init-container
-        image: uugai/cli:latest
+        image: ghcr.io/uug-ai/cli:v1.2.2
         command: ['/main', '-action', 'check-indexes',
           '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
           #'-mongodb-host', '<host>',
@@ -17,7 +17,7 @@ spec:
           '-mongodb-destination-database', 'Kerberos',
           '-collections', '', # comma separated list of collections to check (default empty for all)
           '-mode', 'dry-run', # or live to execute for real.
-          '-index-version', '08-12-2025',
+          '-index-version', 'hub-08-12-2025',
         ]
             
       restartPolicy: Never
