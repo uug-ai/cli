@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: init-container
-        image: ghcr.io/uug-ai/cli:v1.2.2
+        image: ghcr.io/uug-ai/cli:v1.2.3
         command: ['/main', '-action', 'check-indexes',
           '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
           '-mongodb-destination-database', 'Kerberos', # specify the target database
