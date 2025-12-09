@@ -96,7 +96,7 @@ func main() {
 	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
 	// useExistingDevices := flag.Bool("use-existing-devices", false, "Use existing devices instead of creating new ones")
 	collections := flag.String("collections", "", "Comma separated list of collections to migrate (default all)")
-	indexesFilePath := flag.String("index-version", "", "Path to the indexes specification file")
+	indexVersion := flag.String("index-version", "", "Path to the indexes specification file")
 
 	flag.Parse()
 
@@ -145,7 +145,7 @@ func main() {
 			*mongodbDestinationDatabase,
 			*collections,
 			*mode,
-			*indexesFilePath,
+			*indexVersion,
 		)
 	case "seed-media":
 		fmt.Println("Seeding synthetic media...")
