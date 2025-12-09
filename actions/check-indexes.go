@@ -204,9 +204,9 @@ func CheckIndexes(
 		fmt.Println("")
 		fmt.Printf(">> Collection: %s\n", collName)
 		fmt.Println("")
-		fmt.Println("  +------------------------------+-----------------------------------------------+---------+")
-		fmt.Println("  | Name                         | Key                                           | Unique  |")
-		fmt.Println("  +------------------------------+-----------------------------------------------+---------+")
+		fmt.Println("  +------------------------------+----------------------------------------------------+---------+")
+		fmt.Println("  | Name                         | Key                                                | Unique  |")
+		fmt.Println("  +------------------------------+----------------------------------------------------+---------+")
 		for _, m := range misses {
 			name := m.Name
 			key := normalizeKey(m.Key)
@@ -214,9 +214,9 @@ func CheckIndexes(
 			if m.Unique {
 				unique = "true"
 			}
-			fmt.Printf("  | %-28s | %-45s | %-7s |\n", name, key, unique)
+			fmt.Printf("  | %-28s | %-50s | %-7s |\n", name, key, unique)
 		}
-		fmt.Println("  +------------------------------+-----------------------------------------------+---------+")
+		fmt.Println("  +------------------------------+----------------------------------------------------+---------+")
 	}
 
 	fmt.Printf("\n[summary] missing_total=%d mode=%s\n", missingTotal, mode)
