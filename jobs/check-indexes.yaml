@@ -13,7 +13,6 @@ spec:
           '-mongodb-destination-database', 'Kerberos', # specify the target database
           '-collections', '', # comma separated list of collections to check (default empty for all)
           '-mode', 'dry-run', # or live to execute for real.
-          '-index-version', '08-12-2025', # specify the index version to check against
           '-index-version', 'hub-08-12-2025',
         ]
             
