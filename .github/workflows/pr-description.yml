@@ -2,6 +2,11 @@ name: Autofill PR description
 
 on: pull_request
 
+env:
+  ORGANIZATION: uugai
+  PROJECT: ${{ github.event.repository.name }}
+  PR_NUMBER: ${{ github.event.number }}
+  
 jobs:
   openai-pr-description:
     runs-on: ubuntu-22.04
@@ -16,4 +21,5 @@ jobs:
           azure_openai_api_key: ${{ secrets.AZURE_OPENAI_API_KEY }}
           azure_openai_endpoint: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           azure_openai_version: ${{ secrets.AZURE_OPENAI_VERSION }}
+          pull_request_url: https://pr${{ env.PR_NUMBER }}.api.kerberos.lol
           overwrite_description: true

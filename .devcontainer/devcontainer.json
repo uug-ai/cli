@@ -17,6 +17,5 @@
                 "mongodb.mongodb-vscode"
             ]
         }
-    },
-    "postCreateCommand": "go mod tidy"
+    }
 }
