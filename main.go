@@ -12,6 +12,7 @@ func promptAction() string {
 	choices := []string{
 		"vault-to-hub-migration",
 		"generate-default-labels",
+		"check-indexes",
 		"seed-media",
 		"seed-users",
 		"seed-devices",
@@ -94,6 +95,8 @@ func main() {
 	markerTarget := flag.Int("marker-target", 0, "Total markers to insert (required)")
 	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
 	// useExistingDevices := flag.Bool("use-existing-devices", false, "Use existing devices instead of creating new ones")
+	collections := flag.String("collections", "", "Comma separated list of collections to migrate (default all)")
+	indexVersion := flag.String("index-version", "", "Path to the indexes specification file")
 
 	flag.Parse()
 
@@ -134,6 +137,15 @@ func main() {
 			*mongodbPassword,
 			*labelNames,
 			*username,
+		)
+	case "check-indexes":
+		fmt.Println("Checking indexes...")
+		actions.CheckIndexes(
+			*mongodbURI,
+			*mongodbDestinationDatabase,
+			*collections,
+			*mode,
+			*indexVersion,
 		)
 	case "seed-media":
 		fmt.Println("Seeding synthetic media...")

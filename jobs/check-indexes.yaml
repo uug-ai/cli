@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: uugai-cli-check-indexes
+spec:
+  template:
+    spec:
+      containers:
+      - name: init-container
+        image: uugai/cli:latest
+        command: ['/main', '-action', 'check-indexes',
+          '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
+          #'-mongodb-host', '<host>',
+          #'-mongodb-port', '27017',
+          #'-mongodb-username', '<username>',
+          #'-mongodb-password', '<password>',
+          '-mongodb-destination-database', 'Kerberos',
+          '-collections', '', # comma separated list of collections to check (default empty for all)
+          '-mode', 'dry-run', # or live to execute for real.
+          '-index-version', '08-12-2025',
+        ]
+            
+      restartPolicy: Never
+      volumes:
+      - name: hub-import
+        emptyDir: {}
