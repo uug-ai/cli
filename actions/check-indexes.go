@@ -23,7 +23,7 @@ type IndexSpec struct {
 const (
 	DefaultDBName               = "Kerberos"
 	DefaultMongoURI             = "mongodb://localhost:27017"
-	DefaultIndexesFilePath      = "indexes/08-12-2025.txt"
+	DefaultIndexVersion         = "hub-08-12-2025"
 	ServerSelectionTimeoutCheck = 10 // seconds
 )
 
@@ -31,9 +31,8 @@ func CheckIndexes(
 	mongoURI string,
 	dbName string,
 	collectionsCSV string,
-	autoFix bool,
 	mode string,
-	indexesFilePath string,
+	indexVersion string,
 ) {
 	HandleSignals()
 	flag.Parse()
@@ -87,13 +86,6 @@ func CheckIndexes(
 		}
 	}
 
-	// --- auto-fix ---
-	// if WasFlagPassed("auto-fix") {
-	// 	fmt.Printf("[info] using flag -auto-fix=%v\n", autoFix)
-	// } else {
-	// 	fmt.Printf("[info] -auto-fix not set; will ask after reporting if missing indexes exist (unless dry-run).\n")
-	// }
-
 	// --- mode ---
 	if WasFlagPassed("mode") {
 		fmt.Printf("[info] using flag -mode=%s\n", mode)
@@ -106,19 +98,26 @@ func CheckIndexes(
 		fmt.Printf("[info] using mode=%s\n", mode)
 	}
 
-	// --- indexes file ---
-	indexesFile := strings.TrimSpace(indexesFilePath)
-	if WasFlagPassed("indexes-file") {
-		if indexesFile == "" {
-			indexesFile = DefaultIndexesFilePath
+	// --- index version ---
+	var indexesFile string
+	var version string = strings.TrimSpace(indexVersion)
+
+	if WasFlagPassed("index-version") {
+		if version == "" {
+			// Flag was passed but empty; fall back to default
+			indexesFile = fmt.Sprintf("indexes/%s.txt", DefaultIndexVersion)
+			fmt.Printf("[warn] -index-version was passed but empty; using default version %q\n", DefaultIndexVersion)
+		} else {
+			// Flag passed and non-empty; use it
+			indexesFile = fmt.Sprintf("indexes/%s.txt", version)
+			fmt.Printf("[info] using -index-version=%q -> file %s\n", version, indexesFile)
 		}
-		fmt.Printf("[info] using flag -indexes-file=%s\n", indexesFile)
-	} else if indexesFile != "" {
-		fmt.Printf("[info] using provided indexes file=%s\n", indexesFile)
+	} else {
+		// Flag not passed; use default
+		indexesFile = fmt.Sprintf("indexes/%s.txt", DefaultIndexVersion)
+		fmt.Printf("[info] -index-version not set; using default version %q -> file %s\n", DefaultIndexVersion, indexesFile)
 	}
-	if indexesFile == "" {
-		indexesFile = DefaultIndexesFilePath
-	}
+
 	indexesFile = filepath.Clean(indexesFile)
 	fmt.Printf("[info] using indexes file: %s\n", indexesFile)
 
@@ -220,7 +219,7 @@ func CheckIndexes(
 		fmt.Println("  +------------------------------+-----------------------------------------------+---------+")
 	}
 
-	fmt.Printf("\n[summary] missing_total=%d auto_fix=%v mode=%s\n", missingTotal, autoFix, mode)
+	fmt.Printf("\n[summary] missing_total=%d mode=%s\n", missingTotal, mode)
 
 	// Mode gate: dry-run skips creation and any prompts
 	if strings.EqualFold(mode, "dry-run") {
@@ -228,36 +227,31 @@ func CheckIndexes(
 		return
 	}
 
-	// Decide creation behavior (live mode)
-	proceed := autoFix
-	if !autoFix {
-		proceed = PromptBool("Create ALL missing indexes across listed collections now? (y/N): ", false)
-	}
-	if !proceed {
-		fmt.Println("[info] skipping index creation. Re-run with -auto-fix to create without prompt.")
+	if strings.EqualFold(mode, "live") {
+		// Create all missing indexes in one pass
+		fmt.Printf("[action] creating %d missing index(es) across %d collection(s)...\n", missingTotal, len(targetCollections))
+		for _, m := range allMissing {
+			opts := options.Index().SetName(m.spec.Name)
+			if m.spec.Unique {
+				opts.SetUnique(true)
+			}
+			_, err := db.Collection(m.coll).Indexes().CreateOne(ctx, mongo.IndexModel{
+				Keys:    m.spec.Key,
+				Options: opts,
+			})
+			if err != nil {
+				fmt.Printf("  [error] create %s/%s: %v\n", m.coll, m.spec.Name, err)
+			} else {
+				fmt.Printf("  [ok] created %s/%s\n", m.coll, m.spec.Name)
+			}
+		}
+		fmt.Println("")
+		fmt.Println("[done] index creation pass complete.")
+		fmt.Println("")
 		return
 	}
 
-	// Create all missing indexes in one pass
-	fmt.Printf("[action] creating %d missing index(es) across %d collection(s)...\n", missingTotal, len(targetCollections))
-	for _, m := range allMissing {
-		opts := options.Index().SetName(m.spec.Name)
-		if m.spec.Unique {
-			opts.SetUnique(true)
-		}
-		_, err := db.Collection(m.coll).Indexes().CreateOne(ctx, mongo.IndexModel{
-			Keys:    m.spec.Key,
-			Options: opts,
-		})
-		if err != nil {
-			fmt.Printf("  [error] create %s/%s: %v\n", m.coll, m.spec.Name, err)
-		} else {
-			fmt.Printf("  [ok] created %s/%s\n", m.coll, m.spec.Name)
-		}
-	}
-	fmt.Println("")
-	fmt.Println("[done] index creation pass complete.")
-	fmt.Println("")
+	fmt.Printf("[info] unrecognized mode %q; skipping index creation.\n", mode)
 }
 
 // Helpers
@@ -354,147 +348,6 @@ func normalizeKey(d bson.D) string {
 		}
 	}
 	return sb.String()
-}
-
-// keyAsJS returns a JS object literal for createIndex keys, e.g. { user_id: 1, timestamp: 1 }
-func keyAsJS(d bson.D) string {
-	if len(d) == 0 {
-		return "{}"
-	}
-	// Preserve original order provided in spec
-	var parts []string
-	for _, e := range d {
-		parts = append(parts, fmt.Sprintf("%s: %v", e.Key, e.Value))
-	}
-	return "{ " + strings.Join(parts, ", ") + " }"
-}
-
-func canonicalIndexSpecs() map[string][]IndexSpec {
-	return map[string][]IndexSpec{
-		"media": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "startTimestamp_1", Key: bson.D{{Key: "startTimestamp", Value: 1}}},
-			{Name: "deviceId_1", Key: bson.D{{Key: "deviceId", Value: 1}}},
-			{Name: "organisationId_1", Key: bson.D{{Key: "organisationId", Value: 1}}},
-			{Name: "tags_1", Key: bson.D{{Key: "tags", Value: 1}}},
-			{Name: "detections_1", Key: bson.D{{Key: "detections", Value: 1}}},
-			{Name: "duration_1", Key: bson.D{{Key: "duration", Value: 1}}},
-			{Name: "deviceId_1_startTimestamp_1", Key: bson.D{{Key: "deviceId", Value: 1}, {Key: "startTimestamp", Value: 1}}},
-			{Name: "organisationId_1_startTimestamp_1", Key: bson.D{{Key: "organisationId", Value: 1}, {Key: "startTimestamp", Value: 1}}},
-			{Name: "organisationId_1_deviceId_1_startTimestamp_1_endTimestamp_1", Key: bson.D{
-				{Key: "organisationId", Value: 1},
-				{Key: "deviceId", Value: 1},
-				{Key: "startTimestamp", Value: 1},
-				{Key: "endTimestamp", Value: 1},
-			}},
-			{Name: "startTimestamp_1__id_1", Key: bson.D{{Key: "startTimestamp", Value: 1}, {Key: "_id", Value: 1}}},
-		},
-		"settings": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-		},
-		"subscriptions": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-		},
-		"groups": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-		},
-		"marker_options": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "value_1", Key: bson.D{{Key: "value", Value: 1}}},
-			{Name: "text_1", Key: bson.D{{Key: "text", Value: 1}}},
-		},
-		"devices": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-		},
-		"event_options": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "value_1", Key: bson.D{{Key: "value", Value: 1}}},
-			{Name: "text_1", Key: bson.D{{Key: "text", Value: 1}}},
-		},
-		"users": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "username_1", Key: bson.D{{Key: "username", Value: 1}}, Unique: true},
-			{Name: "email_1", Key: bson.D{{Key: "email", Value: 1}}, Unique: true},
-			{Name: "amazon_access_key_id_1", Key: bson.D{{Key: "amazon_access_key_id", Value: 1}}, Unique: true},
-			{Name: "amazon_secret_access_key_1", Key: bson.D{{Key: "amazon_secret_access_key", Value: 1}}, Unique: true},
-		},
-		"marker_option_ranges": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "value_1", Key: bson.D{{Key: "value", Value: 1}}},
-			{Name: "start_1", Key: bson.D{{Key: "start", Value: 1}}},
-			{Name: "end_1", Key: bson.D{{Key: "end", Value: 1}}},
-			{Name: "deviceId_1", Key: bson.D{{Key: "deviceId", Value: 1}}},
-			{Name: "organisationId_1_deviceId_1_end_1_groupId_1_start_1_text_1", Key: bson.D{
-				{Key: "organisationId", Value: 1},
-				{Key: "deviceId", Value: 1},
-				{Key: "end", Value: 1},
-				{Key: "groupId", Value: 1},
-				{Key: "start", Value: 1},
-				{Key: "text", Value: 1},
-			}},
-			{Name: "organisationId_1_text_1_start_1_end_1_deviceId_1", Key: bson.D{
-				{Key: "organisationId", Value: 1},
-				{Key: "text", Value: 1},
-				{Key: "start", Value: 1},
-				{Key: "end", Value: 1},
-				{Key: "deviceId", Value: 1},
-			}},
-		},
-		"tag_options": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "value_1", Key: bson.D{{Key: "value", Value: 1}}},
-			{Name: "text_1", Key: bson.D{{Key: "text", Value: 1}}},
-		},
-		"sites": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-		},
-		"event_option_ranges": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "value_1", Key: bson.D{{Key: "value", Value: 1}}},
-			{Name: "start_1", Key: bson.D{{Key: "start", Value: 1}}},
-			{Name: "end_1", Key: bson.D{{Key: "end", Value: 1}}},
-			{Name: "deviceId_1", Key: bson.D{{Key: "deviceId", Value: 1}}},
-			{Name: "organisationId_1_text_1", Key: bson.D{{Key: "organisationId", Value: 1}, {Key: "text", Value: 1}}},
-			{Name: "organisationId_1_text_1_start_1_end_1_deviceId_1", Key: bson.D{
-				{Key: "organisationId", Value: 1},
-				{Key: "text", Value: 1},
-				{Key: "start", Value: 1},
-				{Key: "end", Value: 1},
-				{Key: "deviceId", Value: 1},
-			}},
-			{Name: "organisationId_1_deviceId_1_groupId_1_start_1_end_1_text_1", Key: bson.D{
-				{Key: "organisationId", Value: 1},
-				{Key: "deviceId", Value: 1},
-				{Key: "groupId", Value: 1},
-				{Key: "start", Value: 1},
-				{Key: "end", Value: 1},
-				{Key: "text", Value: 1},
-			}},
-		},
-		"tag_option_ranges": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "value_1", Key: bson.D{{Key: "value", Value: 1}}},
-			{Name: "start_1", Key: bson.D{{Key: "start", Value: 1}}},
-			{Name: "end_1", Key: bson.D{{Key: "end", Value: 1}}},
-			{Name: "deviceId_1", Key: bson.D{{Key: "deviceId", Value: 1}}},
-			{Name: "organisationId_1_text_1_start_1_end_1_deviceId_1", Key: bson.D{
-				{Key: "organisationId", Value: 1},
-				{Key: "text", Value: 1},
-				{Key: "start", Value: 1},
-				{Key: "end", Value: 1},
-				{Key: "deviceId", Value: 1},
-			}},
-		},
-		"markers": {
-			{Name: "_id_", Key: bson.D{{Key: "_id", Value: 1}}},
-			{Name: "startTimestamp_1", Key: bson.D{{Key: "startTimestamp", Value: 1}}},
-			{Name: "deviceId_1", Key: bson.D{{Key: "deviceId", Value: 1}}},
-			{Name: "organisationId_1", Key: bson.D{{Key: "organisationId", Value: 1}}},
-			{Name: "tags.name_1", Key: bson.D{{Key: "tags.name", Value: 1}}},
-			{Name: "duration_1", Key: bson.D{{Key: "duration", Value: 1}}},
-			{Name: "name_1", Key: bson.D{{Key: "name", Value: 1}}},
-		},
-	}
 }
 
 func loadCanonicalIndexSpecsFromFile(path string) (map[string][]IndexSpec, error) {
@@ -735,8 +588,8 @@ func parseKeyFields(doc string) bson.D {
 func parseInt(s string) (int, error) {
 	s = strings.TrimSpace(s)
 	sign := 1
-	if strings.HasPrefix(s, "+") {
-		s = strings.TrimPrefix(s, "+")
+	if after, ok := strings.CutPrefix(s, "+"); ok {
+		s = after
 	}
 	if strings.HasPrefix(s, "-") {
 		sign = -1
@@ -760,11 +613,10 @@ func RunCheckIndexesCLI(
 	mongodbURI string,
 	dbName string,
 	collections string,
-	autoFix bool,
 	mode string,
-	indexesFilePath string,
+	indexVersion string,
 ) {
-	if err := runCheckIndexesInternal(mongodbURI, dbName, collections, autoFix, mode, indexesFilePath); err != nil {
+	if err := runCheckIndexesInternal(mongodbURI, dbName, collections, mode, indexVersion); err != nil {
 		fmt.Printf("[error] check-indexes: %v\n", err)
 		os.Exit(1)
 	}
@@ -775,11 +627,10 @@ func runCheckIndexesInternal(
 	mongoURI string,
 	dbName string,
 	collectionsCSV string,
-	autoFix bool,
 	mode string,
-	indexesFilePath string,
+	indexVersion string,
 ) error {
 	// Delegate to CheckIndexes which handles prompts and prints. Keeping a simple API surface.
-	CheckIndexes(mongoURI, dbName, collectionsCSV, autoFix, mode, indexesFilePath)
+	CheckIndexes(mongoURI, dbName, collectionsCSV, mode, indexVersion)
 	return nil
 }

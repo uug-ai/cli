@@ -96,8 +96,7 @@ func main() {
 	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
 	// useExistingDevices := flag.Bool("use-existing-devices", false, "Use existing devices instead of creating new ones")
 	collections := flag.String("collections", "", "Comma separated list of collections to migrate (default all)")
-	autoFix := flag.Bool("auto-fix", false, "Automatically fix missing indexes")
-	indexesFilePath := flag.String("indexes-file", "", "Path to the indexes specification file")
+	indexesFilePath := flag.String("index-version", "", "Path to the indexes specification file")
 
 	flag.Parse()
 
@@ -143,9 +142,8 @@ func main() {
 		fmt.Println("Checking indexes...")
 		actions.CheckIndexes(
 			*mongodbURI,
-			*dbName,
+			*mongodbDestinationDatabase,
 			*collections,
-			*autoFix,
 			*mode,
 			*indexesFilePath,
 		)
