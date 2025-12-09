@@ -1,7 +1,7 @@
 {
     "name": "go:1.24-bookworm",
     "runArgs": [
-        "--name=uugai-cli-dev",
+        "--name=uugai-cli",
         "--network=host"
     ],
     "dockerFile": "Dockerfile",
