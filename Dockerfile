@@ -1,41 +1,61 @@
 FROM mcr.microsoft.com/devcontainers/go:1.24-bookworm AS builder
 
+ENV GOROOT=/usr/local/go
+ENV GOPATH=/go
+ENV PATH=$GOPATH/bin:$GOROOT/bin:/usr/local/lib:$PATH
+ENV GOSUMDB=off
+
+ARG project
 ARG github_username
 ARG github_token
 
-WORKDIR /build
+##############################################################################
+# Copy all the relevant source code in the Docker image, so we can build this.
 
-# Copy the code necessary to build the application
-# You may want to change this to copy only what you actually need.
-COPY . .
-
-# Get local dependencies from private repo.
 RUN git config --global \
     url."https://${github_username}:${github_token}@github.com/".insteadOf \
     "https://github.com/"
 
-# Build the application
-RUN go mod download && \
-    go build -tags timetzdata,netgo --ldflags '-s -w -extldflags "-static -latomic"' main.go && \
-    mkdir -p /cli && \
-    mv main /cli
+##########################################
+# Installing some additional dependencies.
 
-# Copy or create other directories/files your app needs during runtime.
-# E.g. this example uses /data as a working directory that would probably
-#      be bound to a perstistent dir when running the container normally
-RUN mkdir /data
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential cmake pkg-config unzip libgtk2.0-dev \
+    curl ca-certificates libcurl4-openssl-dev libssl-dev libjpeg62-turbo-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+##############################################################################
+# Copy all the relevant source code in the Docker image, so we can build this.
+
+RUN mkdir -p /go/src/github.com/uug-ai/${project}
+COPY . /go/src/github.com/uug-ai/${project}
+
+##################
+# Build Project
+
+RUN cd /go/src/github.com/uug-ai/${project} && \
+    go mod download && \
+    go build -tags timetzdata,netgo --ldflags '-s -w -extldflags "-static -latomic"' main.go && \
+    mkdir -p /${project} && mv main /${project} && \
+    rm -rf /go/src/github.com/uug-ai/${project}
+
+####################################
+# Let's create a /dist folder containing just the files necessary for runtime.
+# Later, it will be copied as the / (root) of the output image.
+
+WORKDIR /dist
+RUN cp -r /${project} ./
+RUN /dist/${project}/main
+
+##############################
+# Final Stage: Create the small runtime image.
 
 FROM alpine:latest
+LABEL org.opencontainers.image.source https://github.com/uug-ai/cli
+LABEL AUTHOR=uug-ai
 
-COPY --chown=0:0 --from=builder /cli /
+ARG project
 
-RUN apk update && apk add ca-certificates curl libstdc++ libc6-compat --no-cache && rm -rf /var/cache/apk/*
-
-# Set up the app to run as a non-root user inside the /data folder
-# User ID 65534 is usually user 'nobody'.
-# The executor of this image should still specify a user during setup.
-COPY --chown=65534:0 --from=builder /data /data
-USER 65534
-WORKDIR /data
+COPY --chown=0:0 --from=builder /${project} /
 
 ENTRYPOINT ["/main"]
