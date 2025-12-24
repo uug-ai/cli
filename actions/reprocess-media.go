@@ -12,6 +12,10 @@ import (
 	"github.com/uug-ai/cli/database"
 	"github.com/uug-ai/cli/models"
 	"github.com/uug-ai/cli/queue"
+	pipeline "github.com/uug-ai/models/pkg/models"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 func ReprocessMedia(mode string,
@@ -71,9 +75,10 @@ func ReprocessMedia(mode string,
 	var steps = []string{
 		"MongoDB: verify connection",
 		"MongoDB: open connection",
+		"Hub: load user metadata",
 		"Hub: query sequences",
 		"Hub: filter media without analysis",
-		"Vault: get queue connection",
+		"Hub: get queue connection",
 		"Queue: connect",
 		"Queue: send analysis events",
 	}
@@ -106,12 +111,24 @@ func ReprocessMedia(mode string,
 	defer client.Disconnect(context.Background())
 	time.Sleep(time.Second * 2)
 
-	// Step 3: Fetch sequences for the user in the hub database
+	// Step 3: Load user + subscription + plan settings (analysis expects monitor stage)
+	bar.Incr()
+	user, subscription, plans, err := loadMonitorContext(client, mongodbSourceDatabase, userId)
+	if err != nil {
+		log.Printf("Error loading monitor context: %v\n", err)
+		return
+	}
+	if user.Email == "" {
+		log.Println("Warning: user has no email; analysis pipeline will skip these events")
+	}
+	time.Sleep(time.Second * 2)
+
+	// Step 4: Fetch sequences for the user in the hub database
 	bar.Incr()
 	sequences := database.GetSequencesFromMongodb(client, mongodbSourceDatabase, userId, startTimestamp, endTimestamp)
 	time.Sleep(time.Second * 2)
 
-	// Step 4: Filter media that has no analysis
+	// Step 5: Filter media that has no analysis
 	bar.Incr()
 	var candidates []models.Media
 	for _, sequence := range sequences {
@@ -144,7 +161,7 @@ func ReprocessMedia(mode string,
 
 	log.Printf("Media to reprocess: %d\n", len(candidates))
 
-	// Step 5: Retrieve the selected queue and the connection settings
+	// Step 6: Retrieve the selected queue and the connection settings
 	bar.Incr()
 	queueFound := false
 	var selectedQueue models.Queue
@@ -161,11 +178,11 @@ func ReprocessMedia(mode string,
 		return
 	}
 
-	// Step 6: Connect to the queue service
+	// Step 7: Connect to the queue service
 	bar.Incr()
 	queueService, _ := queue.CreateQueue(selectedQueue.Queue, selectedQueue)
 
-	// Step 7: Send analysis events for the missing media
+	// Step 8: Send analysis events for the missing media
 	bar.Incr()
 	barProgressMedia := uiprogress.AddBar(len(candidates)).AppendCompleted().PrependElapsed()
 	barProgressMedia.PrependFunc(func(b *uiprogress.Bar) string {
@@ -174,6 +191,7 @@ func ReprocessMedia(mode string,
 	uiprogress.Start()
 
 	batch := 0
+	log.Printf("Sending %d analysis events to the queue...\n", len(candidates))
 	for _, media := range candidates {
 		mediaKey := media.Key
 		if mediaKey == "" {
@@ -191,22 +209,31 @@ func ReprocessMedia(mode string,
 		}
 
 		timestampString := fmt.Sprintf("%d", media.Timestamp)
-		event := queue.Payload{
-			Events:   []string{"analysis"},
-			Provider: "kstorage",
-			Request:  "analysis",
-			Source:   source,
-			Date:     media.Timestamp,
-			Payload: queue.Media{
-				FileName: mediaKey,
-				FileSize: 1,
-				MetaData: queue.MetaData{
-					UploadTime:   timestampString,
-					ProductId:    media.CameraId,
-					InstanceName: instanceName,
-					Timestamp:    timestampString,
+		monitorStage := pipeline.NewMonitorStage()
+		monitorStage.User = user
+		monitorStage.Subscription = subscription
+		monitorStage.Plans = plans
+		monitorStage.HighUpload = user.HighUpload
+
+		event := pipeline.PipelineEvent{
+			Operation: "event",
+			Stages:    []string{"analysis"},
+			Storage:   "kstorage",
+			Provider:  source,
+			Timestamp: media.Timestamp,
+			Payload: pipeline.PipelinePayload{
+				Timestamp: media.Timestamp,
+				FileName:  mediaKey,
+				FileSize:  1,
+				Metadata: pipeline.PipelineMetadata{
+					Timestamp:  timestampString,
+					Duration:   "",
+					UploadTime: timestampString,
+					DeviceId:   media.CameraId,
+					DeviceName: instanceName,
 				},
 			},
+			MonitorStage: &monitorStage,
 		}
 
 		if mode == "live" {
@@ -246,4 +273,79 @@ func instanceNameFromKey(mediaKey string) string {
 		return ""
 	}
 	return fileParts[2]
+}
+
+type planSettings struct {
+	Key string                 `bson:"key"`
+	Map map[string]interface{} `bson:"map"`
+}
+
+func defaultPlanSettings() map[string]interface{} {
+	return map[string]interface{}{
+		"enterprise": map[string]interface{}{
+			"analysisLimit": float64(99999999),
+			"uploadLimit":   float64(99999999),
+			"videoLimit":    float64(99999999),
+			"usage":         float64(99999999),
+			"dayLimit":      float64(30),
+		},
+	}
+}
+
+func loadMonitorContext(client *mongo.Client, dbName, userId string) (pipeline.User, pipeline.Subscription, map[string]interface{}, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), database.TIMEOUT)
+	defer cancel()
+
+	db := client.Database(dbName)
+	var user pipeline.User
+	var subscription pipeline.Subscription
+	plans := map[string]interface{}{}
+
+	if oid, err := primitive.ObjectIDFromHex(userId); err == nil {
+		err = db.Collection("users").FindOne(ctx, bson.M{"_id": oid}).Decode(&user)
+		if err != nil && err != mongo.ErrNoDocuments {
+			return user, subscription, plans, err
+		}
+	}
+	if user.Id.IsZero() {
+		err := db.Collection("users").FindOne(ctx, bson.M{"username": userId}).Decode(&user)
+		if err != nil {
+			return user, subscription, plans, err
+		}
+	}
+
+	subUserID := userId
+	if user.Id.IsZero() == false {
+		subUserID = user.Id.Hex()
+	}
+	err := db.Collection("subscriptions").FindOne(ctx, bson.M{"user_id": subUserID}).Decode(&subscription)
+	if err != nil && err != mongo.ErrNoDocuments {
+		return user, subscription, plans, err
+	}
+	if subscription.Plan == "" {
+		subscription.Plan = "enterprise"
+		subscription.UserId = subUserID
+	}
+
+	var settings planSettings
+	err = db.Collection("settings").FindOne(ctx, bson.M{"key": "plan"}).Decode(&settings)
+	if err == nil && len(settings.Map) > 0 {
+		plans = settings.Map
+	} else {
+		plans = defaultPlanSettings()
+	}
+
+	if len(user.Activity) == 0 {
+		user.Activity = []map[string]interface{}{
+			{
+				"day":      time.Now().Format("02-01-2006"),
+				"requests": float64(0),
+				"videos":   float64(0),
+				"images":   float64(0),
+				"usage":    float64(0),
+			},
+		}
+	}
+
+	return user, subscription, plans, nil
 }
