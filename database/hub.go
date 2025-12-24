@@ -34,8 +34,11 @@ func GetUsersFromMongodb(client *mongo.Client, DatabaseName string) []models.Use
 	cursor, err := accountsCollection.Find(ctx, match)
 	if err != nil {
 		log.Println(err)
+		return users
 	}
-	defer cursor.Close(ctx)
+	if cursor != nil {
+		defer cursor.Close(ctx)
+	}
 	err = cursor.All(ctx, &users)
 	if err != nil {
 		log.Println(err)
@@ -84,8 +87,11 @@ func GetSequencesFromMongodb(client *mongo.Client, DatabaseName string, userId s
 	cursor, err := sequenceCollection.Find(ctx, match)
 	if err != nil {
 		log.Println(err)
+		return sequences
 	}
-	defer cursor.Close(ctx)
+	if cursor != nil {
+		defer cursor.Close(ctx)
+	}
 	err = cursor.All(ctx, &sequences)
 	if err != nil {
 		log.Println(err)

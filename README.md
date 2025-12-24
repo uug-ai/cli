@@ -3,6 +3,7 @@
 This repository contains CLI tools for performing specific automations.
 
 - `vault-to-hub-migration`: Migrating data from a Vault database to a Hub database.
+- `reprocess-media`: Re-queue hub media for analysis when analysis is missing.
 - `generate-default-labels`: Adding labels to existing users.
 
 
@@ -179,3 +180,44 @@ go run main.go -action generate-default-labels \
 ```
 
 Add -username to add labels to just one specific user
+
+### Reprocess media
+
+This tool re-queues media for analysis when analysis has not been created yet.
+
+#### Command Line Arguments
+
+- `-action`: The action to take (required). For reprocessing, use `reprocess-media`.
+- `-mongodb-uri`: The MongoDB URI (optional if host and port are provided).
+- `-mongodb-host`: The MongoDB host (optional if URI is provided).
+- `-mongodb-port`: The MongoDB port (optional if URI is provided).
+- `-mongodb-source-database`: The Vault database name (required, used to fetch queue config).
+- `-mongodb-destination-database`: Ignored for this action (reprocess runs within the source database).
+- `-mongodb-database-credentials`: The database credentials (optional).
+- `-mongodb-username`: The MongoDB username (optional).
+- `-mongodb-password`: The MongoDB password (optional).
+- `-queue`: The queue used to send analysis events (required).
+- `-user-id`: The hub user ID to reprocess.
+- `-start-timestamp`: The start timestamp for filtering media (required).
+- `-end-timestamp`: The end timestamp for filtering media (required).
+- `-timezone`: The timezone for converting timestamps (optional, default is `UTC`).
+- `-mode`: You can choose to run a `dry-run` or `live`.
+- `-batch-size`: The size of each batch (optional, default is `10`).
+- `-batch-delay`: The delay between batches in milliseconds (optional, default is `1000`).
+
+#### Example
+
+```sh
+go run main.go -action reprocess-media \
+               -mongodb-uri "mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>" \
+               -mongodb-source-database=<vaultDatabase> \
+               -mongodb-destination-database=<ignored> \
+               -queue <analysis-queue> \
+               -user-id <userId> \
+               -start-timestamp <startTimestamp> \
+               -end-timestamp <endTimestamp> \
+               -timezone <timezone> \
+               -mode dry-run \
+               -batch-size 100 \
+               -batch-delay 1000
+```
