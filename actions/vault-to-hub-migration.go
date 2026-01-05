@@ -233,7 +233,6 @@ func VaultToHubMigration(mode string,
 		event.Request = "persist"
 		event.Source = media.Provider
 		event.Operation = "event"
-		event.FileName = media.FileName
 		event.Date = media.Timestamp
 
 		// Get instance name from media filename

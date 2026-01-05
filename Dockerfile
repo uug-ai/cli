@@ -4,6 +4,7 @@ ENV GOROOT=/usr/local/go
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:$GOROOT/bin:/usr/local/lib:$PATH
 ENV GOSUMDB=off
+ENV GOTOOLCHAIN=auto
 
 ARG project
 ARG github_username
