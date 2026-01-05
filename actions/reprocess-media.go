@@ -248,6 +248,14 @@ func ReprocessMedia(mode string,
 			} else {
 				log.Println("Error marshalling the event")
 			}
+		} else {
+			// Dry-run mode: log the event that would be sent instead of sending it.
+			e, err := json.MarshalIndent(event, "", "  ")
+			if err != nil {
+				log.Printf("Dry-run: error marshalling event for media %s (timestamp %d): %v", mediaKey, media.Timestamp, err)
+			} else {
+				log.Printf("Dry-run: would send event: %s", string(e))
+			}
 		}
 
 		time.Sleep(time.Millisecond * 100)
