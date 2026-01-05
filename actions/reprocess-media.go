@@ -39,7 +39,11 @@ func ReprocessMedia(mode string,
 		timezone = "UTC"
 	}
 
-	location, _ := time.LoadLocation(timezone)
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		log.Printf("Invalid timezone %q, defaulting to UTC: %v", timezone, err)
+		location = time.UTC
+	}
 	startTime := time.Unix(startTimestamp, 0).In(location)
 	endTime := time.Unix(endTimestamp, 0).In(location)
 
