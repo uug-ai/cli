@@ -55,8 +55,8 @@ func ReprocessMedia(mode string,
 	log.Println("  MongoDB Password:", "************")
 	log.Println("  Queue:", queueName)
 	log.Println("  User ID:", userId)
-	log.Println("  Start Time", startTime)
-	log.Println("  End Time", endTime)
+	log.Println("  Start Time:", startTime)
+	log.Println("  End Time:", endTime)
 	log.Println("====================================")
 	fmt.Println("")
 
