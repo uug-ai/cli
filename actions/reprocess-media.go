@@ -133,9 +133,6 @@ func ReprocessMedia(mode string,
 	var candidates []models.Media
 	for _, sequence := range sequences {
 		for _, media := range sequence.Images {
-			if media.Timestamp < startTimestamp || media.Timestamp > endTimestamp {
-				continue
-			}
 			mediaKey := media.Key
 			if mediaKey == "" {
 				mediaKey = media.Path
