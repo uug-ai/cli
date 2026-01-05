@@ -71,8 +71,8 @@ func ReprocessMedia(mode string,
 	if mongodbDestinationDatabase != "" && mongodbDestinationDatabase != mongodbSourceDatabase {
 		log.Println("Warning: reprocess-media runs within one database; using source database for sequences.")
 	}
-	if startTimestamp == 0 || endTimestamp == 0 {
-		log.Println("Please provide valid start and end timestamps")
+	if startTimestamp <= 0 || endTimestamp <= 0 || startTimestamp >= endTimestamp {
+		log.Println("Please provide valid, positive start and end timestamps where start < end")
 		return
 	}
 
