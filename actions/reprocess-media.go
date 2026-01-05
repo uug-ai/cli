@@ -181,7 +181,11 @@ func ReprocessMedia(mode string,
 
 	// Step 7: Connect to the queue service
 	bar.Incr()
-	queueService, _ := queue.CreateQueue(selectedQueue.Queue, selectedQueue)
+	queueService, err := queue.CreateQueue(selectedQueue.Queue, selectedQueue)
+	if err != nil {
+		log.Printf("Aborting: failed to connect to queue %s: %v\n", selectedQueue.Queue, err)
+		return
+	}
 
 	// Step 8: Send analysis events for the missing media
 	bar.Incr()
