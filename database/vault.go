@@ -21,8 +21,11 @@ func GetAccountsFromMongodb(client *mongo.Client, DatabaseName string) []models.
 	cursor, err := accountsCollection.Find(ctx, match)
 	if err != nil {
 		log.Println(err)
+		return accounts
 	}
-	defer cursor.Close(ctx)
+	if cursor != nil {
+		defer cursor.Close(ctx)
+	}
 	err = cursor.All(ctx, &accounts)
 	if err != nil {
 		log.Println(err)
@@ -50,8 +53,11 @@ func GetMediaOfUserFromMongodb(client *mongo.Client, DatabaseName string, userna
 	cursor, err := mediaCollection.Find(ctx, match)
 	if err != nil {
 		log.Println(err)
+		return media
 	}
-	defer cursor.Close(ctx)
+	if cursor != nil {
+		defer cursor.Close(ctx)
+	}
 	err = cursor.All(ctx, &media)
 	if err != nil {
 		log.Println(err)
@@ -72,8 +78,11 @@ func GetActiveQueuesFromMongodb(client *mongo.Client, DatabaseName string) []mod
 	cursor, err := queuesCollection.Find(ctx, match)
 	if err != nil {
 		log.Println(err)
+		return queues
 	}
-	defer cursor.Close(ctx)
+	if cursor != nil {
+		defer cursor.Close(ctx)
+	}
 	err = cursor.All(ctx, &queues)
 	if err != nil {
 		log.Println(err)

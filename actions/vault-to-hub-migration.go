@@ -224,14 +224,15 @@ func VaultToHubMigration(mode string,
 	for _, media := range delta {
 		var event queue.Payload
 
-		event.Events = []string{"monitor", "sequence"} // We are only interested in the sequence event
-		if pipeline != "" {                            // Check if we need to override the pipeline.
+		event.Events = []string{"monitor", "sequence"}
+		if pipeline != "" { // Check if we need to override the pipeline.
 			event.Events = strings.Split(pipeline, ",")
 		}
 
 		event.Provider = "kstorage"
 		event.Request = "persist"
 		event.Source = media.Provider
+		event.Operation = "event"
 		event.Date = media.Timestamp
 
 		// Get instance name from media filename
@@ -240,10 +241,11 @@ func VaultToHubMigration(mode string,
 
 		timestampString := strconv.FormatInt(media.Timestamp, 10)
 		event.Payload = queue.Media{
-			FileName:     media.FileName,
-			FileSize:     1, // Make sure the limit is not reached
-			IsFragmented: media.Metadata.IsFragmented,
-			BytesRanges:  media.Metadata.BytesRanges,
+			FileName:         media.FileName,
+			FileSize:         1, // Make sure the limit is not reached
+			IsFragmented:     media.Metadata.IsFragmented,
+			BytesRanges:      media.Metadata.BytesRanges,
+			BytesRangeOnTime: media.Metadata.BytesRangeOnTime,
 			MetaData: queue.MetaData{
 				UploadTime:   timestampString,
 				ProductId:    media.Device,
@@ -254,6 +256,9 @@ func VaultToHubMigration(mode string,
 
 		if mode == "dry-run" {
 			// Nothing to do here..
+			eventJSON, _ := json.Marshal(event)
+			log.Printf("Sending event: %s", string(eventJSON))
+
 		} else if mode == "live" {
 			if !queueFound {
 				log.Println("Queue not found")

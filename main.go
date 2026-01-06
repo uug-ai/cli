@@ -11,6 +11,7 @@ import (
 func promptAction() string {
 	choices := []string{
 		"vault-to-hub-migration",
+		"reprocess-media",
 		"generate-default-labels",
 		"check-indexes",
 		"seed-media",
@@ -122,6 +123,25 @@ func main() {
 			*endTimestamp,
 			*timezone,
 			*pipeline,
+			*batchSize,
+			*batchDelay,
+		)
+	case "reprocess-media":
+		fmt.Println("Reprocessing media for analysis...")
+		actions.ReprocessMedia(*mode,
+			*mongodbURI,
+			*mongodbHost,
+			*mongodbPort,
+			*mongodbSourceDatabase,
+			*mongodbDestinationDatabase,
+			*mongodbDatabaseCredentials,
+			*mongodbUsername,
+			*mongodbPassword,
+			*queueName,
+			*userId,
+			*startTimestamp,
+			*endTimestamp,
+			*timezone,
 			*batchSize,
 			*batchDelay,
 		)
