@@ -60,6 +60,7 @@ This tool migrates data from a Vault database to a Hub database.
 - `-mongodb-password`: The MongoDB password (optional).
 - `-username`: The username to filter data (required).
 - `-queue`: The integration used to transfer events to the hub pipeline.
+- `-vault-url`: Optional Vault API URL override (e.g. `https://vault.example.com/api`).
 - `-start-timestamp`: The start timestamp for filtering data (required).
 - `-end-timestamp`: The end timestamp for filtering data (required).
 - `-timezone`: The timezone for converting timestamps (optional, default is `UTC`).
@@ -78,6 +79,7 @@ go run main.go -action vault-to-hub-migration \
                -mongodb-source-database=<sourceDatabase> \
                -mongodb-destination-database=<destinationDatabase> \
                -queue <rabbitmq-integration> \
+               -vault-url https://vault.kerberos.io/api \
                -username <username> \
                -start-timestamp <startTimestamp> \
                -end-timestamp <endTimestamp> \

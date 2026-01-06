@@ -3,16 +3,20 @@ package actions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gosuri/uiprogress"
 	"github.com/uug-ai/cli/database"
-	"github.com/uug-ai/cli/models"
+	modelsOld "github.com/uug-ai/cli/models"
 	"github.com/uug-ai/cli/queue"
+	"github.com/uug-ai/models/pkg/models"
 )
 
 var TIMEOUT = 10 * time.Second
@@ -27,6 +31,7 @@ func VaultToHubMigration(mode string,
 	mongodbUsername string,
 	mongodbPassword string,
 	queueName string,
+	vaultURLOverride string,
 	username string,
 	startTimestamp int64,
 	endTimestamp int64,
@@ -120,6 +125,11 @@ func VaultToHubMigration(mode string,
 	//
 	bar.Incr()
 	vaultMedia := database.GetMediaOfUserFromMongodb(client, mongodbSourceDatabase, username, startTimestamp, endTimestamp)
+	accounts := database.GetAccountsFromMongodb(client, mongodbSourceDatabase)
+	accountByName := make(map[string]modelsOld.Account, len(accounts))
+	for _, account := range accounts {
+		accountByName[account.Account] = account
+	}
 	time.Sleep(time.Second * 2)
 
 	// #####################################
@@ -144,7 +154,7 @@ func VaultToHubMigration(mode string,
 	userId := user.Id.Hex()
 	sequences := database.GetSequencesFromMongodb(client, mongodbDestinationDatabase, userId, startTimestamp, endTimestamp)
 	// Iterate over the sequences and media and look for differences.
-	var hubMedia []models.Media
+	var hubMedia []modelsOld.Media
 	for _, sequence := range sequences {
 		hubMedia = append(hubMedia, sequence.Images...)
 	}
@@ -156,7 +166,7 @@ func VaultToHubMigration(mode string,
 	//
 	bar.Incr()
 	queueFound := false
-	var selectedQueue models.Queue
+	var selectedQueue modelsOld.Queue
 	queues := database.GetActiveQueuesFromMongodb(client, mongodbSourceDatabase)
 	for _, q := range queues {
 		if q.Name == queueName {
@@ -176,7 +186,11 @@ func VaultToHubMigration(mode string,
 	// Connect to the queue service
 	//
 	bar.Incr()
-	queueService, _ := queue.CreateQueue(selectedQueue.Queue, selectedQueue)
+	queueService, err := queue.CreateQueue(selectedQueue.Queue, selectedQueue)
+	if err != nil {
+		log.Printf("Aborting: failed to connect to queue %s: %v\n", selectedQueue.Queue, err)
+		return
+	}
 
 	// #####################################
 	//
@@ -184,7 +198,7 @@ func VaultToHubMigration(mode string,
 	// Now we will verify if the media in the vault is in the hub.
 	//
 	bar.Incr()
-	var delta []models.VaultMedia
+	var delta []modelsOld.VaultMedia
 
 	// Transform the hub media to a map for faster lookup
 	hubMediaMap := make(map[string]bool)
@@ -221,36 +235,81 @@ func VaultToHubMigration(mode string,
 	uiprogress.Start()
 
 	batch := 0
+	vaultURL := strings.TrimSpace(vaultURLOverride)
+	if vaultURL == "" {
+		vaultURL = selectedQueue.VaultUrl
+	} else {
+		log.Printf("Using vault_url override: %s", vaultURL)
+	}
+	if vaultURL == "" {
+		log.Printf("Warning: queue %s has no vault_url configured; signed URLs cannot be generated", selectedQueue.Name)
+	} else {
+		log.Printf("Using vault_url: %s", vaultURL)
+	}
 	for _, media := range delta {
-		var event queue.Payload
+		var event models.PipelineEvent
 
-		event.Events = []string{"monitor", "sequence"}
+		event.Stages = []string{"monitor", "sequence"}
 		if pipeline != "" { // Check if we need to override the pipeline.
-			event.Events = strings.Split(pipeline, ",")
+			event.Stages = strings.Split(pipeline, ",")
 		}
 
-		event.Provider = "kstorage"
+		event.Storage = "kstorage"
 		event.Request = "persist"
-		event.Source = media.Provider
+		event.Provider = media.Provider
 		event.Operation = "event"
-		event.Date = media.Timestamp
+		event.Timestamp = media.Timestamp
 
 		// Get instance name from media filename
-		file := strings.Split(media.FileName, "/")[1]
-		instanceName := strings.Split(file, "_")[2]
+		instanceName, regionCoordinates, numberOfChanges, duration := parseMediaAttributes(media.FileName)
+		if duration == "" && media.Metadata.Duration > 0 {
+			duration = strconv.FormatUint(media.Metadata.Duration, 10)
+		}
 
 		timestampString := strconv.FormatInt(media.Timestamp, 10)
-		event.Payload = queue.Media{
+
+		log.Printf("Selected Queue: %+v\n", selectedQueue)
+
+		signedURL := ""
+		if vaultURL != "" {
+			account := accountByName[media.Account]
+			if account.AccessKey == "" && selectedQueue.AccessKey != "" && selectedQueue.Secret != "" {
+				account = modelsOld.Account{
+					AccessKey:       selectedQueue.AccessKey,
+					SecretAccessKey: selectedQueue.Secret,
+				}
+			}
+			signedURLErr := error(nil)
+			signedURL, signedURLErr = getSignedURLFromVault(vaultURL, account, media.FileName, media.Provider)
+			if signedURLErr != nil {
+				log.Printf("Warning: unable to fetch signed url for %s: %v", media.FileName, signedURLErr)
+			} else {
+				log.Printf("%s", signedURL)
+			}
+		}
+
+		fileSize := media.FileSize
+		if fileSize == 0 {
+			fileSize = 1
+		}
+
+		event.Payload = models.PipelinePayload{
+			Timestamp:        media.Timestamp,
 			FileName:         media.FileName,
-			FileSize:         1, // Make sure the limit is not reached
+			FileSize:         fileSize,
+			Duration:         duration,
+			SignedURL:        signedURL,
 			IsFragmented:     media.Metadata.IsFragmented,
 			BytesRanges:      media.Metadata.BytesRanges,
-			BytesRangeOnTime: media.Metadata.BytesRangeOnTime,
-			MetaData: queue.MetaData{
-				UploadTime:   timestampString,
-				ProductId:    media.Device,
-				InstanceName: instanceName,
-				Timestamp:    timestampString,
+			BytesRangeOnTime: convertBytesRangeOnTime(media.Metadata.BytesRangeOnTime),
+			Metadata: models.PipelineMetadata{
+				Timestamp:         timestampString,
+				Duration:          duration,
+				UploadTime:        timestampString,
+				DeviceId:          media.Device,
+				DeviceName:        instanceName,
+				RegionCoordinates: regionCoordinates,
+				NumberOfChanges:   numberOfChanges,
 			},
 		}
 
@@ -304,4 +363,89 @@ func VaultToHubMigration(mode string,
 	log.Println("  +---------------------------------------------------------------------------------------+-----------------+-----------------+-------------------------------------+")
 	log.Println("")
 	log.Println("Migration completed.")
+}
+
+func parseMediaAttributes(fileName string) (string, string, string, string) {
+	parts := strings.Split(fileName, "/")
+	if len(parts) < 2 {
+		return "", "", "", ""
+	}
+	file := strings.TrimSuffix(parts[1], ".mp4")
+	fileParts := strings.Split(file, "_")
+	if len(fileParts) < 6 {
+		return "", "", "", ""
+	}
+	return fileParts[2], fileParts[3], fileParts[4], fileParts[5]
+}
+
+func convertBytesRangeOnTime(ranges []modelsOld.BytesRangeOnTime) []models.FragmentedBytesRangeOnTime {
+	if len(ranges) == 0 {
+		return nil
+	}
+	converted := make([]models.FragmentedBytesRangeOnTime, 0, len(ranges))
+	for _, r := range ranges {
+		converted = append(converted, models.FragmentedBytesRangeOnTime{
+			Duration: r.Duration,
+			Time:     r.Time,
+			Range:    r.Range,
+		})
+	}
+	return converted
+}
+
+func getSignedURLFromVault(vaultURL string, account modelsOld.Account, fileName string, provider string) (string, error) {
+	if vaultURL == "" {
+		return "", errors.New("vault url missing")
+	}
+	if account.AccessKey == "" || account.SecretAccessKey == "" {
+		return "", errors.New("vault access key/secret missing")
+	}
+	if provider == "" {
+		return "", errors.New("provider missing")
+	}
+	endpoint := strings.TrimRight(vaultURL, "/")
+	if strings.HasSuffix(endpoint, "/api") {
+		endpoint = endpoint + "/storage"
+	} else {
+		endpoint = endpoint + "/api/storage"
+	}
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Kerberos-Storage-FileName", fileName)
+	req.Header.Set("X-Kerberos-Storage-Provider", provider)
+	req.Header.Set("X-Kerberos-Storage-AccessKey", account.AccessKey)
+	req.Header.Set("X-Kerberos-Storage-SecretAccessKey", account.SecretAccessKey)
+
+	client := &http.Client{Timeout: TIMEOUT}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(bodyBytes, &response); err != nil {
+		return "", fmt.Errorf("vault response decode error: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		bodyString := strings.TrimSpace(string(bodyBytes))
+		if bodyString == "" {
+			bodyString = "empty body"
+		}
+		return "", fmt.Errorf("vault returned status %d: %s", resp.StatusCode, bodyString)
+	}
+	if response.Data == "" {
+		return "", errors.New("vault response missing data")
+	}
+	return response.Data, nil
 }
