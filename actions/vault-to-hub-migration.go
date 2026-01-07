@@ -238,13 +238,9 @@ func VaultToHubMigration(mode string,
 	vaultURL := strings.TrimSpace(vaultURLOverride)
 	if vaultURL == "" {
 		vaultURL = selectedQueue.VaultUrl
-	} else {
-		log.Printf("Using vault_url override: %s", vaultURL)
 	}
 	if vaultURL == "" {
 		log.Printf("Warning: queue %s has no vault_url configured; signed URLs cannot be generated", selectedQueue.Name)
-	} else {
-		log.Printf("Using vault_url: %s", vaultURL)
 	}
 	for _, media := range delta {
 		var event models.PipelineEvent
@@ -267,8 +263,6 @@ func VaultToHubMigration(mode string,
 		}
 
 		timestampString := strconv.FormatInt(media.Timestamp, 10)
-
-		log.Printf("Selected Queue: %+v\n", selectedQueue)
 
 		signedURL := ""
 		if vaultURL != "" {
@@ -315,8 +309,7 @@ func VaultToHubMigration(mode string,
 
 		if mode == "dry-run" {
 			// Nothing to do here..
-			eventJSON, _ := json.Marshal(event)
-			log.Printf("Sending event: %s", string(eventJSON))
+			log.Printf("Dry-run: would send event for %s", media.FileName)
 
 		} else if mode == "live" {
 			if !queueFound {
