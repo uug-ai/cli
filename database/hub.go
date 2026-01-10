@@ -12,8 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/uug-ai/cli/models"
+	cliModels "github.com/uug-ai/cli/models"
 	"github.com/uug-ai/cli/utils"
+	"github.com/uug-ai/models/pkg/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,13 +23,13 @@ import (
 
 // --- Queries (read-only) ---
 
-func GetUsersFromMongodb(client *mongo.Client, DatabaseName string) []models.User {
+func GetUsersFromMongodb(client *mongo.Client, DatabaseName string) []cliModels.User {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
 	db := client.Database(DatabaseName)
 	accountsCollection := db.Collection("users")
 
-	var users []models.User
+	var users []cliModels.User
 
 	match := bson.M{}
 	cursor, err := accountsCollection.Find(ctx, match)
@@ -47,7 +48,7 @@ func GetUsersFromMongodb(client *mongo.Client, DatabaseName string) []models.Use
 	return users
 }
 
-func GetUserFromMongodb(client *mongo.Client, DatabaseName string, username string, userCollName ...string) models.User {
+func GetUserFromMongodb(client *mongo.Client, DatabaseName string, username string, userCollName ...string) cliModels.User {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
 	collName := "users"
@@ -56,6 +57,23 @@ func GetUserFromMongodb(client *mongo.Client, DatabaseName string, username stri
 	}
 	db := client.Database(DatabaseName)
 	accountsCollection := db.Collection(collName)
+
+	var user cliModels.User
+
+	match := bson.M{"username": username}
+	err := accountsCollection.FindOne(ctx, match).Decode(&user)
+	if err != nil {
+		log.Println(err)
+	}
+
+	return user
+}
+
+func GetPipelineUserFromMongodb(client *mongo.Client, DatabaseName string, username string) models.User {
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	accountsCollection := db.Collection("users")
 
 	var user models.User
 
@@ -68,13 +86,185 @@ func GetUserFromMongodb(client *mongo.Client, DatabaseName string, username stri
 	return user
 }
 
-func GetSequencesFromMongodb(client *mongo.Client, DatabaseName string, userId string, startTimestamp int64, endTimestamp int64) []models.Sequences {
+func GetActiveSubscriptionFromMongodb(client *mongo.Client, DatabaseName string, userId string) models.Subscription {
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	subscriptionCollection := db.Collection("subscriptions")
+
+	var subscription models.Subscription
+	now := time.Now()
+	match := bson.M{
+		"user_id": userId,
+		"$or": []bson.M{
+			{"ends_at": bson.M{"$gt": now}},
+			{"ends_at": nil},
+		},
+	}
+	err := subscriptionCollection.FindOne(ctx, match).Decode(&subscription)
+	if err != nil {
+		log.Println(err)
+	}
+
+	return subscription
+}
+
+type planSettings struct {
+	Key string                 `json:"key" bson:"key"`
+	Map map[string]interface{} `json:"map" bson:"map"`
+}
+
+func GetPlansFromMongodb(client *mongo.Client, DatabaseName string, user models.User) map[string]interface{} {
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	settingsCollection := db.Collection("settings")
+
+	var settings planSettings
+	err := settingsCollection.FindOne(ctx, bson.M{"key": "plan"}).Decode(&settings)
+	if err != nil {
+		log.Println(err)
+		return map[string]interface{}{}
+	}
+
+	plans := settings.Map
+	if user.Settings != nil {
+		if userSettings, ok := user.Settings["plan"].(map[string]interface{}); ok {
+			for k, v := range userSettings {
+				plans[k] = v
+			}
+		}
+	}
+
+	return plans
+}
+
+func AnalysisExistsByID(client *mongo.Client, DatabaseName string, userId string, analysisId string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	analysisCollection := db.Collection("analysis")
+
+	objectID, err := primitive.ObjectIDFromHex(analysisId)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	match := bson.M{
+		"_id": objectID,
+		"$or": []bson.M{
+			{"user_id": userId},
+			{"userid": userId},
+		},
+	}
+	err = analysisCollection.FindOne(ctx, match).Err()
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func AnalysisIDsExistMap(client *mongo.Client, DatabaseName string, userId string, analysisIds []string) map[string]bool {
+	exists := make(map[string]bool)
+	if len(analysisIds) == 0 {
+		return exists
+	}
+
+	objectIDs := make([]primitive.ObjectID, 0, len(analysisIds))
+	for _, analysisId := range analysisIds {
+		objectID, err := primitive.ObjectIDFromHex(analysisId)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		objectIDs = append(objectIDs, objectID)
+	}
+	if len(objectIDs) == 0 {
+		return exists
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	analysisCollection := db.Collection("analysis")
+
+	match := bson.M{
+		"_id": bson.M{"$in": objectIDs},
+		"$or": []bson.M{
+			{"user_id": userId},
+			{"userid": userId},
+		},
+	}
+
+	cursor, err := analysisCollection.Find(ctx, match)
+	if err != nil {
+		log.Println(err)
+		return exists
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var doc struct {
+			Id primitive.ObjectID `bson:"_id"`
+		}
+		if err := cursor.Decode(&doc); err != nil {
+			log.Println(err)
+			continue
+		}
+		exists[doc.Id.Hex()] = true
+	}
+
+	return exists
+}
+
+func AnalysisKeysExistMap(client *mongo.Client, DatabaseName string, userId string, keys []string) map[string]bool {
+	exists := make(map[string]bool)
+	if len(keys) == 0 {
+		return exists
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	analysisCollection := db.Collection("analysis")
+
+	match := bson.M{
+		"key": bson.M{"$in": keys},
+		"$or": []bson.M{
+			{"user_id": userId},
+			{"userid": userId},
+		},
+	}
+
+	cursor, err := analysisCollection.Find(ctx, match)
+	if err != nil {
+		log.Println(err)
+		return exists
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var doc struct {
+			Key string `bson:"key"`
+		}
+		if err := cursor.Decode(&doc); err != nil {
+			log.Println(err)
+			continue
+		}
+		exists[doc.Key] = true
+	}
+
+	return exists
+}
+
+func GetSequencesFromMongodb(client *mongo.Client, DatabaseName string, userId string, startTimestamp int64, endTimestamp int64) []cliModels.Sequences {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
 	db := client.Database(DatabaseName)
 	sequenceCollection := db.Collection("sequences")
 
-	var sequences []models.Sequences
+	var sequences []cliModels.Sequences
 	match := bson.M{
 		"user_id": userId,
 		"start": bson.M{
@@ -145,7 +335,7 @@ func GenerateKey(keyType string, client *mongo.Client, dbName, userCollName stri
 	return "", fmt.Errorf("failed to generate unique key after max retries")
 }
 
-func BuildUserDoc(info models.InsertUserInfo) (primitive.ObjectID, bson.M) {
+func BuildUserDoc(info cliModels.InsertUserInfo) (primitive.ObjectID, bson.M) {
 	userID := primitive.NewObjectID()
 	var days []string
 	if info.Days > 0 {

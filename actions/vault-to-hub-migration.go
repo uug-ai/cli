@@ -2,6 +2,8 @@ package actions
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,6 +145,19 @@ func VaultToHubMigration(mode string,
 		log.Println("Aborting: specified user not found in the hub database")
 		return
 	}
+	pipelineStages := parsePipelineStages(pipeline)
+	analysisRequested := stageInList("analysis", pipelineStages)
+	var pipelineUser models.User
+	var pipelineSubscription models.Subscription
+	var pipelinePlans map[string]interface{}
+	if analysisRequested {
+		pipelineUser = database.GetPipelineUserFromMongodb(client, mongodbDestinationDatabase, username)
+		if pipelineUser.Username == "" {
+			log.Println("Warning: unable to load pipeline user for analysis-only events")
+		}
+		pipelineSubscription = database.GetActiveSubscriptionFromMongodb(client, mongodbDestinationDatabase, user.Id.Hex())
+		pipelinePlans = database.GetPlansFromMongodb(client, mongodbDestinationDatabase, pipelineUser)
+	}
 	time.Sleep(time.Second * 2)
 
 	// #####################################
@@ -206,6 +221,11 @@ func VaultToHubMigration(mode string,
 		hubMediaMap[media.Key] = true
 	}
 
+	vaultMediaByKey := make(map[string]modelsOld.VaultMedia, len(vaultMedia))
+	for _, vMedia := range vaultMedia {
+		vaultMediaByKey[vMedia.FileName] = vMedia
+	}
+
 	// Iterate over the vault media and check if it is in the hub
 	for _, vMedia := range vaultMedia {
 		// Check if media is a mp4
@@ -217,22 +237,91 @@ func VaultToHubMigration(mode string,
 		}
 	}
 
+	var missingAnalysis []modelsOld.VaultMedia
+	if analysisRequested {
+		analysisIDSet := make(map[string]bool)
+		sequenceKeySet := make(map[string]bool)
+		for _, sequence := range sequences {
+			for _, image := range sequence.Images {
+				if image.Key != "" {
+					sequenceKeySet[image.Key] = true
+				}
+				analysisID := strings.TrimSpace(image.AnalysisID)
+				if analysisID == "" {
+					continue
+				}
+				analysisIDSet[analysisID] = true
+			}
+		}
+		sequenceKeys := make([]string, 0, len(sequenceKeySet))
+		for key := range sequenceKeySet {
+			sequenceKeys = append(sequenceKeys, key)
+		}
+		analysisIDs := make([]string, 0, len(analysisIDSet))
+		for analysisID := range analysisIDSet {
+			analysisIDs = append(analysisIDs, analysisID)
+		}
+		analysisExistsMap := database.AnalysisIDsExistMap(client, mongodbDestinationDatabase, userId, analysisIDs)
+		analysisByKeyExistsMap := database.AnalysisKeysExistMap(client, mongodbDestinationDatabase, userId, sequenceKeys)
+		missingAnalysisMap := make(map[string]bool)
+		for _, sequence := range sequences {
+			for _, image := range sequence.Images {
+				analysisID := strings.TrimSpace(image.AnalysisID)
+				if analysisID != "" {
+					if analysisExistsMap[analysisID] {
+						continue
+					}
+				}
+				if analysisByKeyExistsMap[image.Key] {
+					continue
+				}
+				if missingAnalysisMap[image.Key] {
+					continue
+				}
+				vMedia, ok := vaultMediaByKey[image.Key]
+				if !ok {
+					log.Printf("Warning: sequence media not found in vault media list: %s", image.Key)
+					continue
+				}
+				missingAnalysis = append(missingAnalysis, vMedia)
+				missingAnalysisMap[image.Key] = true
+			}
+		}
+	}
+	if analysisRequested && len(missingAnalysis) > 0 {
+		if pipelineUser.Id.IsZero() || pipelineUser.Email == "" {
+			log.Println("Warning: missing user details for analysis pipeline; skipping analysis-only events")
+			missingAnalysis = nil
+		}
+	}
+
 	// #####################################
 	//
 	// Step 8: Send the delta to the queue
 	// Send the delta to the queue
 
 	bar.Incr()
-	if len(delta) == 0 {
+	if len(delta) == 0 && len(missingAnalysis) == 0 {
 		log.Println("No media to transfer")
 		return
 	}
 
-	barProgressMedia := uiprogress.AddBar(len(delta)).AppendCompleted().PrependElapsed()
-	barProgressMedia.PrependFunc(func(b *uiprogress.Bar) string {
-		return "Transferring media"
-	})
-	uiprogress.Start()
+	var barProgressMedia *uiprogress.Bar
+	if len(delta) > 0 {
+		barProgressMedia = uiprogress.AddBar(len(delta)).AppendCompleted().PrependElapsed()
+		barProgressMedia.PrependFunc(func(b *uiprogress.Bar) string {
+			return "Transferring media"
+		})
+		uiprogress.Start()
+	}
+	var barProgressAnalysis *uiprogress.Bar
+	if len(missingAnalysis) > 0 {
+		barProgressAnalysis = uiprogress.AddBar(len(missingAnalysis)).AppendCompleted().PrependElapsed()
+		barProgressAnalysis.PrependFunc(func(b *uiprogress.Bar) string {
+			return "Forwarding to analysis"
+		})
+		uiprogress.Start()
+	}
 
 	batch := 0
 	vaultURL := strings.TrimSpace(vaultURLOverride)
@@ -245,9 +334,10 @@ func VaultToHubMigration(mode string,
 	for _, media := range delta {
 		var event models.PipelineEvent
 
-		event.Stages = []string{"monitor", "sequence"}
-		if pipeline != "" { // Check if we need to override the pipeline.
-			event.Stages = strings.Split(pipeline, ",")
+		if len(pipelineStages) > 0 {
+			event.Stages = pipelineStages
+		} else {
+			event.Stages = []string{"monitor", "sequence"}
 		}
 
 		event.Storage = "kstorage"
@@ -326,7 +416,9 @@ func VaultToHubMigration(mode string,
 		}
 
 		time.Sleep(time.Millisecond * 100)
-		barProgressMedia.Incr()
+		if barProgressMedia != nil {
+			barProgressMedia.Incr()
+		}
 
 		// Specify the batch size and delay
 		batch++
@@ -335,8 +427,100 @@ func VaultToHubMigration(mode string,
 		}
 	}
 
+	if analysisRequested && len(missingAnalysis) > 0 {
+		analysisStages := sliceStagesFrom("analysis", pipelineStages)
+		monitorStage := buildMonitorStage(pipelineUser, pipelineSubscription, pipelinePlans)
+		for _, media := range missingAnalysis {
+			var event models.PipelineEvent
+
+			event.Stages = analysisStages
+			event.Storage = "kstorage"
+			event.Request = "persist"
+			event.Provider = media.Provider
+			event.Operation = "event"
+			event.Timestamp = media.Timestamp
+			event.TraceId = generateTraceID()
+			event.MonitorStage = &monitorStage
+
+			instanceName, regionCoordinates, numberOfChanges, duration := parseMediaAttributes(media.FileName)
+			if duration == "" && media.Metadata.Duration > 0 {
+				duration = strconv.FormatUint(media.Metadata.Duration, 10)
+			}
+
+			timestampString := strconv.FormatInt(media.Timestamp, 10)
+
+			signedURL := ""
+			if vaultURL != "" {
+				account := accountByName[media.Account]
+				if account.AccessKey == "" && selectedQueue.AccessKey != "" && selectedQueue.Secret != "" {
+					account = modelsOld.Account{
+						AccessKey:       selectedQueue.AccessKey,
+						SecretAccessKey: selectedQueue.Secret,
+					}
+				}
+				signedURLErr := error(nil)
+				signedURL, signedURLErr = getSignedURLFromVault(vaultURL, account, media.FileName, media.Provider)
+				if signedURLErr != nil {
+					log.Printf("Warning: unable to fetch signed url for %s: %v", media.FileName, signedURLErr)
+				} else {
+					log.Printf("%s", signedURL)
+				}
+			}
+
+			fileSize := media.FileSize
+			if fileSize == 0 {
+				fileSize = 1
+			}
+
+			event.Payload = models.PipelinePayload{
+				Timestamp:        media.Timestamp,
+				FileName:         media.FileName,
+				FileSize:         fileSize,
+				Duration:         duration,
+				SignedURL:        signedURL,
+				IsFragmented:     media.Metadata.IsFragmented,
+				BytesRanges:      media.Metadata.BytesRanges,
+				BytesRangeOnTime: convertBytesRangeOnTime(media.Metadata.BytesRangeOnTime),
+				Metadata: models.PipelineMetadata{
+					Timestamp:         timestampString,
+					Duration:          duration,
+					UploadTime:        timestampString,
+					DeviceId:          media.Device,
+					DeviceName:        instanceName,
+					RegionCoordinates: regionCoordinates,
+					NumberOfChanges:   numberOfChanges,
+				},
+			}
+
+			if mode == "dry-run" {
+				log.Printf("Dry-run: would send analysis event for %s", media.FileName)
+			} else if mode == "live" {
+				e, err := json.Marshal(event)
+				if err == nil {
+					queueService.SendMessage("kcloud-analysis-queue", string(e), 0)
+				} else {
+					log.Println("Error marshalling the event")
+				}
+			}
+
+			time.Sleep(time.Millisecond * 100)
+			if barProgressAnalysis != nil {
+				barProgressAnalysis.Incr()
+			}
+			batch++
+			if batch%batchSize == 0 {
+				time.Sleep(time.Millisecond * time.Duration(batchDelay))
+			}
+		}
+	}
+
 	queueService.Close()
-	barProgressMedia.Set(100)
+	if barProgressMedia != nil {
+		barProgressMedia.Set(100)
+	}
+	if barProgressAnalysis != nil {
+		barProgressAnalysis.Set(100)
+	}
 	bar.Set(100)
 
 	// #####################################
@@ -355,6 +539,18 @@ func VaultToHubMigration(mode string,
 	}
 	log.Println("  +---------------------------------------------------------------------------------------+-----------------+-----------------+-------------------------------------+")
 	log.Println("")
+	if len(missingAnalysis) > 0 {
+		log.Println(">>Media forwarded to analysis:")
+		log.Println("")
+		log.Println("  +---------------------------------------------------------------------------------------+-----------------+-----------------+-------------------------------------+")
+		log.Println("  | File Name                                                                             | File Size       | Timestamp       | Device                              |")
+		log.Println("  +---------------------------------------------------------------------------------------+-----------------+-----------------+-------------------------------------+")
+		for _, media := range missingAnalysis {
+			log.Printf("  | %-85s | %-15d | %-15d | %-35s |\n", media.FileName, media.FileSize, media.Timestamp, media.Device)
+		}
+		log.Println("  +---------------------------------------------------------------------------------------+-----------------+-----------------+-------------------------------------+")
+		log.Println("")
+	}
 	log.Println("Migration completed.")
 }
 
@@ -384,6 +580,61 @@ func convertBytesRangeOnTime(ranges []modelsOld.BytesRangeOnTime) []models.Fragm
 		})
 	}
 	return converted
+}
+
+func parsePipelineStages(pipeline string) []string {
+	pipeline = strings.TrimSpace(pipeline)
+	if pipeline == "" {
+		return nil
+	}
+	parts := strings.Split(pipeline, ",")
+	stages := make([]string, 0, len(parts))
+	for _, part := range parts {
+		stage := strings.TrimSpace(part)
+		if stage == "" {
+			continue
+		}
+		stages = append(stages, stage)
+	}
+	return stages
+}
+
+func stageInList(stage string, stages []string) bool {
+	for _, s := range stages {
+		if s == stage {
+			return true
+		}
+	}
+	return false
+}
+
+func sliceStagesFrom(stage string, stages []string) []string {
+	for i, s := range stages {
+		if s == stage {
+			return stages[i:]
+		}
+	}
+	return []string{stage}
+}
+
+func generateTraceID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	return hex.EncodeToString(bytes)
+}
+
+func buildMonitorStage(user models.User, subscription models.Subscription, plans map[string]interface{}) models.MonitorStage {
+	stage := models.NewMonitorStage()
+	stage.User = user
+	stage.Subscription = subscription
+	if plans != nil {
+		stage.Plans = plans
+	} else {
+		stage.Plans = map[string]interface{}{}
+	}
+	return stage
 }
 
 func getSignedURLFromVault(vaultURL string, account modelsOld.Account, fileName string, provider string) (string, error) {
