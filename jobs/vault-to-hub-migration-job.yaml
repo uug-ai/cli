@@ -26,6 +26,8 @@ spec:
           '-mode', 'dry-run', # or live to execute for real.
           '-batch-size', '100',
           '-batch-delay', '1000',
+          '-vault-url', 'https://vault.example.com',
+          '-operation-count', '4',
         ]
             
       restartPolicy: Never
