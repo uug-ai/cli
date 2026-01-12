@@ -47,6 +47,21 @@ kubectl apply -f jobs/generate-default-labels-job.yaml
 
 This tool migrates data from a Vault database to a Hub database.
 
+#### Flow (how media is selected and routed)
+
+- **Missing sequence**: Vault media that is not present in any Hub sequence is sent through the standard pipeline (`monitor,sequence,...`) using the configured `-pipeline` stages.
+- **Sequence present**: If a Hub sequence entry exists for a media item, it will be considered for **analysis-only** migration when `analysis` is included in `-pipeline`.
+- **Analysis selection rules (analysis-only path)**:
+  - If `analysis_id` is empty on the sequence image, the item is queued for analysis.
+  - If `analysis_id` is present but the analysis document is missing, the item is queued for analysis.
+  - If `analysis_id` is present and the analysis exists, the item is skipped.
+  - If `-operation-count` is set and the analysis exists but has fewer `resolvedoperations` than the threshold, the analysis is deleted and the item is queued for analysis.
+  - If no `analysis_id` exists but an analysis exists for the same media key, the item is skipped unless `-operation-count` is set and the resolved count is below the threshold (then it is deleted and reprocessed).
+
+Notes:
+- The analysis-only path assumes a valid `-vault-url` so thumbnail/dominantcolor/sprite workers can fetch the media.
+- The analysis-only path skips monitor/sequence side effects (activity counters, sequence creation).
+
 #### Command Line Arguments
 
 - `-action`: The action to take (required). For migration, use `vault-to-hub-migration`.
