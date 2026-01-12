@@ -65,6 +65,7 @@ func main() {
 	timezone := flag.String("timezone", "", "Timezone")
 	mode := flag.String("mode", "dry-run", "Mode")
 	pipeline := flag.String("pipeline", "monitor,sequence", "Provide the pipeline to execute")
+	operationCount := flag.Int("operation-count", 0, "Minimum resolved operations required to keep an existing analysis")
 	batchSize := flag.Int("batch-size", 10, "Batch Size")
 	batchDelay := flag.Int("batch-delay", 1000, "Batch Delay in milliseconds")
 	labelNames := flag.String("label-names", "", "Names of the labels to generate separated by comma")
@@ -125,6 +126,7 @@ func main() {
 			*endTimestamp,
 			*timezone,
 			*pipeline,
+			*operationCount,
 			*batchSize,
 			*batchDelay,
 		)
