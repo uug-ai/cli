@@ -1,0 +1,12 @@
+media
+[
+  { v: 2, key: { filename: 1, timestamp: 1 }, name: 'filename_1_timestamp_1' },
+  { v: 2, key: { provider: 1, account: 1, timestamp: 1 }, name: 'provider_1_account_1_timestamp_1' },
+  { v: 2, key: { provider: 1, timestamp: 1, device: 1 }, name: 'provider_1_timestamp_1_device_1' },
+  { v: 2, key: { filename: 1, provider: 1 }, name: 'filename_1_provider_1' },
+  { v: 2, key: { timestamp: -1 }, name: 'timestamp_-1' }
+]
+queues
+[
+  { v: 2, key: { enabled: 1, name: 1 }, name: 'enabled_1_name_1' }
+]
