@@ -114,6 +114,12 @@ type planSettings struct {
 	Map map[string]interface{} `json:"map" bson:"map"`
 }
 
+type analysisInfo struct {
+	ID            string
+	Key           string
+	ResolvedCount int
+}
+
 func GetPlansFromMongodb(client *mongo.Client, DatabaseName string, user models.User) map[string]interface{} {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
@@ -256,6 +262,159 @@ func AnalysisKeysExistMap(client *mongo.Client, DatabaseName string, userId stri
 	}
 
 	return exists
+}
+
+func AnalysisInfoByIDs(client *mongo.Client, DatabaseName string, userId string, analysisIds []string) map[string]analysisInfo {
+	info := make(map[string]analysisInfo)
+	if len(analysisIds) == 0 {
+		return info
+	}
+
+	objectIDs := make([]primitive.ObjectID, 0, len(analysisIds))
+	for _, analysisId := range analysisIds {
+		objectID, err := primitive.ObjectIDFromHex(analysisId)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		objectIDs = append(objectIDs, objectID)
+	}
+	if len(objectIDs) == 0 {
+		return info
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	analysisCollection := db.Collection("analysis")
+
+	match := bson.M{
+		"_id": bson.M{"$in": objectIDs},
+		"$or": []bson.M{
+			{"user_id": userId},
+			{"userid": userId},
+		},
+	}
+
+	cursor, err := analysisCollection.Find(ctx, match)
+	if err != nil {
+		log.Println(err)
+		return info
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var doc struct {
+			Id                 primitive.ObjectID `bson:"_id"`
+			Key                string             `bson:"key"`
+			ResolvedOperations []string           `bson:"resolvedoperations"`
+		}
+		if err := cursor.Decode(&doc); err != nil {
+			log.Println(err)
+			continue
+		}
+		info[doc.Id.Hex()] = analysisInfo{
+			ID:            doc.Id.Hex(),
+			Key:           doc.Key,
+			ResolvedCount: len(doc.ResolvedOperations),
+		}
+	}
+
+	return info
+}
+
+func AnalysisInfoByKeys(client *mongo.Client, DatabaseName string, userId string, keys []string) map[string]analysisInfo {
+	info := make(map[string]analysisInfo)
+	if len(keys) == 0 {
+		return info
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	analysisCollection := db.Collection("analysis")
+
+	match := bson.M{
+		"key": bson.M{"$in": keys},
+		"$or": []bson.M{
+			{"user_id": userId},
+			{"userid": userId},
+		},
+	}
+
+	cursor, err := analysisCollection.Find(ctx, match)
+	if err != nil {
+		log.Println(err)
+		return info
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var doc struct {
+			Id                 primitive.ObjectID `bson:"_id"`
+			Key                string             `bson:"key"`
+			ResolvedOperations []string           `bson:"resolvedoperations"`
+		}
+		if err := cursor.Decode(&doc); err != nil {
+			log.Println(err)
+			continue
+		}
+		info[doc.Key] = analysisInfo{
+			ID:            doc.Id.Hex(),
+			Key:           doc.Key,
+			ResolvedCount: len(doc.ResolvedOperations),
+		}
+	}
+
+	return info
+}
+
+func DeleteAnalysisByID(client *mongo.Client, DatabaseName string, userId string, analysisId string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	analysisCollection := db.Collection("analysis")
+
+	objectID, err := primitive.ObjectIDFromHex(analysisId)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	match := bson.M{
+		"_id": objectID,
+		"$or": []bson.M{
+			{"user_id": userId},
+			{"userid": userId},
+		},
+	}
+	result, err := analysisCollection.DeleteOne(ctx, match)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+	return result.DeletedCount > 0
+}
+
+func DeleteAnalysisByKey(client *mongo.Client, DatabaseName string, userId string, key string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
+	defer cancel()
+	db := client.Database(DatabaseName)
+	analysisCollection := db.Collection("analysis")
+
+	match := bson.M{
+		"key": key,
+		"$or": []bson.M{
+			{"user_id": userId},
+			{"userid": userId},
+		},
+	}
+	result, err := analysisCollection.DeleteOne(ctx, match)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+	return result.DeletedCount > 0
 }
 
 func GetSequencesFromMongodb(client *mongo.Client, DatabaseName string, userId string, startTimestamp int64, endTimestamp int64) []cliModels.Sequences {

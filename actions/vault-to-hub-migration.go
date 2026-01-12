@@ -39,6 +39,7 @@ func VaultToHubMigration(mode string,
 	endTimestamp int64,
 	timezone string,
 	pipeline string,
+	operationCount int,
 	batchSize int,
 	batchDelay int,
 ) {
@@ -261,19 +262,31 @@ func VaultToHubMigration(mode string,
 		for analysisID := range analysisIDSet {
 			analysisIDs = append(analysisIDs, analysisID)
 		}
-		analysisExistsMap := database.AnalysisIDsExistMap(client, mongodbDestinationDatabase, userId, analysisIDs)
-		analysisByKeyExistsMap := database.AnalysisKeysExistMap(client, mongodbDestinationDatabase, userId, sequenceKeys)
+		analysisByIDMap := database.AnalysisInfoByIDs(client, mongodbDestinationDatabase, userId, analysisIDs)
+		analysisByKeyMap := database.AnalysisInfoByKeys(client, mongodbDestinationDatabase, userId, sequenceKeys)
 		missingAnalysisMap := make(map[string]bool)
 		for _, sequence := range sequences {
 			for _, image := range sequence.Images {
 				analysisID := strings.TrimSpace(image.AnalysisID)
 				if analysisID != "" {
-					if analysisExistsMap[analysisID] {
-						continue
+					if info, ok := analysisByIDMap[analysisID]; ok {
+						if operationCount > 0 && info.ResolvedCount < operationCount {
+							database.DeleteAnalysisByID(client, mongodbDestinationDatabase, userId, analysisID)
+						} else {
+							continue
+						}
 					}
 				}
-				if analysisByKeyExistsMap[image.Key] {
-					continue
+				if info, ok := analysisByKeyMap[image.Key]; ok {
+					if operationCount > 0 && info.ResolvedCount < operationCount {
+						if info.ID != "" {
+							database.DeleteAnalysisByID(client, mongodbDestinationDatabase, userId, info.ID)
+						} else {
+							database.DeleteAnalysisByKey(client, mongodbDestinationDatabase, userId, image.Key)
+						}
+					} else {
+						continue
+					}
 				}
 				if missingAnalysisMap[image.Key] {
 					continue
