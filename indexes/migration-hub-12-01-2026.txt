@@ -1,0 +1,23 @@
+users
+[
+  { v: 2, key: { username: 1, amazon_access_key_id: 1 }, name: 'username_1_amazon_access_key_id_1' }
+]
+sequences
+[
+  {
+    v: 2,
+    key: { user_id: 1, start: 1, end: 1, 'images.instanceName': 1 },
+    name: 'user_id_1_start_1_end_1_images.instanceName_1'
+  },
+  { v: 2, key: { user_id: 1, 'images.key': 1 }, name: 'user_id_1_images.key_1' }
+]
+analysis
+[
+  { v: 2, key: { userid: 1, key: 1 }, name: 'userid_1_key_1' },
+  { v: 2, key: { user_id: 1, key: 1 }, name: 'user_id_1_key_1' }
+]
+subscriptions
+[
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' },
+  { v: 2, key: { user_id: 1, ends_at: 1 }, name: 'user_id_1_ends_at_1' }
+]
