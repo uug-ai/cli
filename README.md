@@ -65,6 +65,7 @@ This tool migrates data from a Vault database to a Hub database.
 - `-end-timestamp`: The end timestamp for filtering data (required).
 - `-timezone`: The timezone for converting timestamps (optional, default is `UTC`).
 - `-pipeline`: The pipeline to execute (optional, default is `monitor,sequence`).
+- `-operation-count`: Minimum resolved operations required to keep an existing analysis. If provided, analyses below this count are deleted and reprocessed (analysis-only path). Set to `0` to disable.
 - `-batch-size`: The size of each batch (optional, default is `10`).
 - `-batch-delay`: The delay between batches in milliseconds (optional, default is `1000`).
 - `-mode`: You can choose to run a `dry-run` or `live`.
@@ -85,6 +86,7 @@ go run main.go -action vault-to-hub-migration \
                -end-timestamp <endTimestamp> \
                -timezone <timezone> \
                -pipeline 'monitor,sequence,analysis' \
+               -operation-count 3 \
                -mode dry-run \
                -batch-size 100 \
                -batch-delay 1000
