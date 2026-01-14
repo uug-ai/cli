@@ -33,7 +33,7 @@ func VaultToHubMigration(mode string,
 	mongodbUsername string,
 	mongodbPassword string,
 	queueName string,
-	vaultURLOverride string,
+	vaultUrlOverride string,
 	username string,
 	startTimestamp int64,
 	endTimestamp int64,
@@ -337,11 +337,11 @@ func VaultToHubMigration(mode string,
 	}
 
 	batch := 0
-	vaultURL := strings.TrimSpace(vaultURLOverride)
-	if vaultURL == "" {
-		vaultURL = selectedQueue.VaultUrl
+	vaultUrl := strings.TrimSpace(vaultUrlOverride)
+	if vaultUrl == "" {
+		vaultUrl = selectedQueue.VaultUrl
 	}
-	if vaultURL == "" {
+	if vaultUrl == "" {
 		log.Printf("Warning: queue %s has no vault_url configured; signed URLs cannot be generated", selectedQueue.Name)
 	}
 	for _, media := range delta {
@@ -367,8 +367,8 @@ func VaultToHubMigration(mode string,
 
 		timestampString := strconv.FormatInt(media.Timestamp, 10)
 
-		signedURL := ""
-		if vaultURL != "" {
+		signedUrl := ""
+		if vaultUrl != "" {
 			account := accountByName[media.Account]
 			if account.AccessKey == "" && selectedQueue.AccessKey != "" && selectedQueue.Secret != "" {
 				account = modelsOld.Account{
@@ -376,12 +376,12 @@ func VaultToHubMigration(mode string,
 					SecretAccessKey: selectedQueue.Secret,
 				}
 			}
-			signedURLErr := error(nil)
-			signedURL, signedURLErr = getSignedURLFromVault(vaultURL, account, media.FileName, media.Provider)
-			if signedURLErr != nil {
-				log.Printf("Warning: unable to fetch signed url for %s: %v", media.FileName, signedURLErr)
+			signedUrlErr := error(nil)
+			signedUrl, signedUrlErr = getSignedURLFromVault(vaultUrl, account, media.FileName, media.Provider)
+			if signedUrlErr != nil {
+				log.Printf("Warning: unable to fetch signed url for %s: %v", media.FileName, signedUrlErr)
 			} else {
-				log.Printf("%s", signedURL)
+				log.Printf("%s", signedUrl)
 			}
 		}
 
@@ -395,7 +395,7 @@ func VaultToHubMigration(mode string,
 			FileName:         media.FileName,
 			FileSize:         fileSize,
 			Duration:         duration,
-			SignedURL:        signedURL,
+			SignedURL:        signedUrl,
 			IsFragmented:     media.Metadata.IsFragmented,
 			BytesRanges:      media.Metadata.BytesRanges,
 			BytesRangeOnTime: convertBytesRangeOnTime(media.Metadata.BytesRangeOnTime),
@@ -462,8 +462,8 @@ func VaultToHubMigration(mode string,
 
 			timestampString := strconv.FormatInt(media.Timestamp, 10)
 
-			signedURL := ""
-			if vaultURL != "" {
+			signedUrl := ""
+			if vaultUrl != "" {
 				account := accountByName[media.Account]
 				if account.AccessKey == "" && selectedQueue.AccessKey != "" && selectedQueue.Secret != "" {
 					account = modelsOld.Account{
@@ -471,12 +471,12 @@ func VaultToHubMigration(mode string,
 						SecretAccessKey: selectedQueue.Secret,
 					}
 				}
-				signedURLErr := error(nil)
-				signedURL, signedURLErr = getSignedURLFromVault(vaultURL, account, media.FileName, media.Provider)
-				if signedURLErr != nil {
-					log.Printf("Warning: unable to fetch signed url for %s: %v", media.FileName, signedURLErr)
+				signedUrlErr := error(nil)
+				signedUrl, signedUrlErr = getSignedURLFromVault(vaultUrl, account, media.FileName, media.Provider)
+				if signedUrlErr != nil {
+					log.Printf("Warning: unable to fetch signed url for %s: %v", media.FileName, signedUrlErr)
 				} else {
-					log.Printf("%s", signedURL)
+					log.Printf("%s", signedUrl)
 				}
 			}
 
@@ -490,7 +490,7 @@ func VaultToHubMigration(mode string,
 				FileName:         media.FileName,
 				FileSize:         fileSize,
 				Duration:         duration,
-				SignedURL:        signedURL,
+				SignedURL:        signedUrl,
 				IsFragmented:     media.Metadata.IsFragmented,
 				BytesRanges:      media.Metadata.BytesRanges,
 				BytesRangeOnTime: convertBytesRangeOnTime(media.Metadata.BytesRangeOnTime),
@@ -650,8 +650,8 @@ func buildMonitorStage(user models.User, subscription models.Subscription, plans
 	return stage
 }
 
-func getSignedURLFromVault(vaultURL string, account modelsOld.Account, fileName string, provider string) (string, error) {
-	if vaultURL == "" {
+func getSignedURLFromVault(vaultUrl string, account modelsOld.Account, fileName string, provider string) (string, error) {
+	if vaultUrl == "" {
 		return "", errors.New("vault url missing")
 	}
 	if account.AccessKey == "" || account.SecretAccessKey == "" {
@@ -660,7 +660,7 @@ func getSignedURLFromVault(vaultURL string, account modelsOld.Account, fileName 
 	if provider == "" {
 		return "", errors.New("provider missing")
 	}
-	endpoint := strings.TrimRight(vaultURL, "/")
+	endpoint := strings.TrimRight(vaultUrl, "/")
 	if strings.HasSuffix(endpoint, "/api") {
 		endpoint = endpoint + "/storage"
 	} else {

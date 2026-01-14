@@ -58,7 +58,7 @@ func main() {
 	mongodbUsername := flag.String("mongodb-username", "", "MongoDB Username")
 	mongodbPassword := flag.String("mongodb-password", "", "MongoDB Password")
 	queueName := flag.String("queue", "", "The queue used to transfer the data")
-	vaultURL := flag.String("vault-url", "", "Vault API URL override (e.g. https://vault.example.com/api)")
+	vaultUrl := flag.String("vault-url", "", "Vault API URL override (e.g. https://vault.example.com/api)")
 	username := flag.String("username", "", "Specific username to target")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
@@ -120,7 +120,7 @@ func main() {
 			*mongodbUsername,
 			*mongodbPassword,
 			*queueName,
-			*vaultURL,
+			*vaultUrl,
 			*username,
 			*startTimestamp,
 			*endTimestamp,
