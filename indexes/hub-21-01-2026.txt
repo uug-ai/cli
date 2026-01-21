@@ -1,0 +1,253 @@
+marker_options
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+organisation_users
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+subscriptions_items
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+labels
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  {
+    v: 2,
+    key: { is_private: 1, owner_id: 1 },
+    name: 'is_private_1_owner_id_1'
+  }
+]
+organisation
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+cache
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { key: 1, expiry: 1 }, name: 'key_1_expiry_1' },
+  { v: 2, key: { key: 1 }, name: 'key_1' }
+]
+counting
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  {
+    v: 2,
+    key: { user_id: 1, timestamp: 1 },
+    name: 'user_id_1_timestamp_1'
+  },
+  { v: 2, key: { timestamp: 1 }, name: 'timestamp_1' }
+]
+markers
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { organisationId: 1 }, name: 'organisationId_1' }
+]
+tasks
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+notifications
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' },
+  { v: 2, key: { user: 1 }, name: 'user_1' },
+  {
+    v: 2,
+    key: { userid: 1, timestamp: 1 },
+    name: 'userid_1_timestamp_1'
+  },
+  {
+    v: 2,
+    key: { alert_master_user: 1, media_key: 1 },
+    name: 'alert_master_user_1_media_key_1'
+  },
+  {
+    v: 2,
+    key: { userid: 1, media_key: 1 },
+    name: 'userid_1_media_key_1'
+  },
+  { v: 2, key: { timestamp: 1 }, name: 'timestamp_1' },
+  {
+    v: 2,
+    key: { alert_master_user: 1, timestamp: -1 },
+    name: 'alert_master_user_1_timestamp_-1'
+  }
+]
+sites
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' }
+]
+category_options
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+io
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+settings
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+devices
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { key: 1, user_id: 1 }, name: 'key_1_user_id_1' },
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' }
+]
+sequences
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  {
+    v: 2,
+    key: { user_id: 1, start: 1, end: 1, 'images.instanceName': 1 },
+    name: 'user_id_1_start_1_end_1_images.instanceName_1'
+  },
+  {
+    v: 2,
+    key: { user_id: 1, 'images.key': 1 },
+    name: 'user_id_1_images.key_1'
+  },
+  {
+    v: 2,
+    key: { user_id: 1, end: 1, start: -1, devices: 1 },
+    name: 'user_id_1_end_1_start_-1_devices_1'
+  },
+  { v: 2, key: { start: 1 }, name: 'start_1' },
+  {
+    v: 2,
+    key: { user_id: 1, start: -1, devices: 1, end: 1 },
+    name: 'user_id_1_start_-1_devices_1_end_1'
+  },
+  {
+    v: 2,
+    key: { user_id: 1, start: -1, 'images.properties': 1, end: 1 },
+    name: 'user_id_1_start_-1_images.properties_1_end_1'
+  },
+  {
+    v: 2,
+    key: { user_id: 1, start: 1, devices: 1, end: 1 },
+    name: 'user_id_1_start_1_devices_1_end_1'
+  }
+]
+tag_options
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+marker_option_ranges
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+tag_option_ranges
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+event_option_ranges
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+comments
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+heatmap
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  {
+    v: 2,
+    key: { user_id: 1, timestamp: 1 },
+    name: 'user_id_1_timestamp_1'
+  },
+  { v: 2, key: { timestamp: 1 }, name: 'timestamp_1' }
+]
+analysis
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { userid: 1, key: 1 }, name: 'userid_1_key_1' },
+  { v: 2, key: { userid: 1, start: 1 }, name: 'userid_1_start_1' },
+  { v: 2, key: { start: 1 }, name: 'start_1' },
+  {
+    v: 2,
+    key: {
+      userid: 1,
+      deviceid: 1,
+      timestamp: 1,
+      favourite: 1,
+      'data.classify.properties': 1
+    },
+    name: 'userid_1_deviceid_1_timestamp_1_favourite_1_data.classify.properties_1'
+  }
+]
+event_options
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+subscriptions
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' }
+]
+groups
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' }
+]
+users
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  {
+    v: 2,
+    key: { 'devices.key': 1, amazon_access_key_id: 1 },
+    name: 'devices.key_1_amazon_access_key_id_1'
+  },
+  {
+    v: 2,
+    key: { username: 1, amazon_access_key_id: 1 },
+    name: 'username_1_amazon_access_key_id_1'
+  },
+  {
+    v: 2,
+    key: { amazon_access_key_id: 1, username: 1 },
+    name: 'amazon_access_key_id_1_username_1'
+  },
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' },
+  { v: 2, key: { reachedLimit: 1 }, name: 'reachedLimit_1' },
+  { v: 2, key: { role: 1 }, name: 'role_1' },
+  { v: 2, key: { email: 1 }, name: 'email_1' }
+]
+videowalls
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+roles
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+tokens
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+media
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  {
+    v: 2,
+    key: { deviceId: 1, startTimestamp: 1 },
+    name: 'deviceId_1_startTimestamp_1'
+  },
+  {
+    v: 2,
+    key: { deviceId: 1, userId: 1, startTimestamp: 1 },
+    name: 'deviceId_1_userId_1_startTimestamp_1'
+  },
+  { v: 2, key: { key: 1, user_id: 1 }, name: 'key_1_user_id_1' },
+  {
+    v: 2,
+    key: { startTimestamp: 1, organisationId: 1, deviceId: 1 },
+    name: 'startTimestamp_1_organisationId_1_deviceId_1'
+  },
+  {
+    v: 2,
+    key: { organisationId: 1, deviceId: 1, startTimestamp: -1, _id: -1 },
+    name: 'org_device_start_id'
+  },
+  {
+    v: 2,
+    key: { organisationId: 1, startTimestamp: -1, _id: -1 },
+    name: 'org_start_id'
+  },
+  {
+    v: 2,
+    key: { userId: 1, deviceId: 1, startTimestamp: 1, endTimestamp: 1 },
+    name: 'userId_1_deviceId_1_startTimestamp_1_endTimestamp_1'
+  },
+  {
+    v: 2,
+    key: { userId: 1, startTimestamp: 1 },
+    name: 'userId_1_startTimestamp_1'
+  },
+  {
+    v: 2,
+    key: { userId: 1, videoFile: 1 },
+    name: 'userId_1_videoFile_1'
+  },
+  {
+    v: 2,
+    key: { organisationId: 1, videoFile: 1 },
+    name: 'organisationId_1_videoFile_1'
+  }
+]
+alerts
+[ 
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { master_user_id: 1, enabled: 1 }, name: 'master_user_id_1_enabled_1' }
+]
