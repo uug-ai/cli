@@ -68,12 +68,13 @@ func RunSeedGroups(cfg SeedGroupsConfig) error {
 	deviceColl := client.Database(cfg.DBName).Collection(cfg.DeviceColl)
 
 	var deviceKeys []string
-	cursor, err := deviceColl.Find(ctx, bson.M{"user_id": cfg.UserId})
+	// Prefer the newer schema (`organisationId`) and fall back to legacy (`user_id`).
+	deviceFilter := bson.M{"organisationId": cfg.UserId}
+	cursor, err := deviceColl.Find(ctx, deviceFilter)
 	if err != nil {
-		fmt.Printf("[error] Device find failed: %v\n", err)
-		return fmt.Errorf("find devices: %w", err)
+		fmt.Printf("[error] Device find failed (organisationId): %v\n", err)
+		return fmt.Errorf("find devices by organisationId: %w", err)
 	}
-	defer cursor.Close(ctx)
 	devCount := 0
 	for cursor.Next(ctx) {
 		var device bson.M
@@ -88,6 +89,32 @@ func RunSeedGroups(cfg SeedGroupsConfig) error {
 			fmt.Printf("[warn] Device decode failed: %v\n", err)
 		}
 	}
+	cursor.Close(ctx)
+
+	if len(deviceKeys) == 0 {
+		deviceFilter = bson.M{"user_id": cfg.UserId}
+		cursor, err = deviceColl.Find(ctx, deviceFilter)
+		if err != nil {
+			fmt.Printf("[error] Device find failed (user_id): %v\n", err)
+			return fmt.Errorf("find devices by user_id: %w", err)
+		}
+		defer cursor.Close(ctx)
+
+		for cursor.Next(ctx) {
+			var device bson.M
+			if err := cursor.Decode(&device); err == nil {
+				if key, ok := device["key"].(string); ok && key != "" {
+					deviceKeys = append(deviceKeys, key)
+					devCount++
+				} else {
+					fmt.Printf("[warn] Device missing key field: %+v\n", device)
+				}
+			} else {
+				fmt.Printf("[warn] Device decode failed: %v\n", err)
+			}
+		}
+	}
+
 	if len(deviceKeys) == 0 {
 		fmt.Printf("[error] No devices found for user/organisation %s\n", cfg.UserId)
 		return fmt.Errorf("no devices found for user/organisation %s", cfg.UserId)

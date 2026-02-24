@@ -19,6 +19,7 @@ func promptAction() string {
 		"seed-devices",
 		"seed-groups",
 		"seed-markers",
+		"seed-database",
 	}
 	fmt.Println("Select an action:")
 	for i, c := range choices {
@@ -88,12 +89,14 @@ func main() {
 	groupCollName := flag.String("groups-collection", "", "Groups collection name")
 	markerCollName := flag.String("marker-collection", "", "Marker collection name")
 	markerOptCollName := flag.String("marker-option-collection", "marker_options", "Marker option collection name")
-	tagOptCollName := flag.String("tag-option-collection", "", "Tag option collection name")
-	eventOptCollName := flag.String("event-option-collection", "", "Event type option collection name")
-	markerOptRangesCollName := flag.String("marker-option-ranges-collection", "", "Marker option ranges collection name")
-	tagOptRangesCollName := flag.String("tag-option-ranges-collection", "", "Tag option ranges collection name")
-	eventTypeOptRangesCollName := flag.String("event-option-ranges-collection", "", "Event type option ranges collection name")
+	tagOptCollName := flag.String("tag-option-collection", "marker_tag_options", "Tag option collection name")
+	eventOptCollName := flag.String("event-option-collection", "marker_event_options", "Event type option collection name")
+	markerOptRangesCollName := flag.String("marker-option-ranges-collection", "marker_option_ranges", "Marker option ranges collection name")
+	tagOptRangesCollName := flag.String("tag-option-ranges-collection", "marker_tag_option_ranges", "Tag option ranges collection name")
+	eventTypeOptRangesCollName := flag.String("event-option-ranges-collection", "marker_event_option_ranges", "Event type option ranges collection name")
 	existingUserIDHex := flag.String("existing-user-id", "", "Existing user ID to use as organisationId for markers")
+	linkMedia := flag.Bool("link-media", false, "Link seeded markers to existing media")
+	mediaFetchLimit := flag.Int("media-fetch-limit", 10000, "Maximum media items to preload for marker-media linking")
 	markerBatchSize := flag.Int("marker-batch-size", 100, "Batch size for marker inserts")
 	markerTarget := flag.Int("marker-target", 0, "Total markers to insert (required)")
 	userPrefix := flag.String("user-prefix", "user", "Prefix for random users")
@@ -241,6 +244,7 @@ func main() {
 			*dbName,
 			*deviceCollName,
 			*groupCollName,
+			*mediaCollName,
 			*markerCollName,
 			*markerOptCollName,
 			*tagOptCollName,
@@ -249,8 +253,16 @@ func main() {
 			*tagOptRangesCollName,
 			*eventTypeOptRangesCollName,
 			*existingUserIDHex,
+			*linkMedia,
+			*mediaFetchLimit,
 			*deviceCount,
 			*days,
+		)
+	case "seed-database":
+		fmt.Println("Seeding deterministic full database...")
+		actions.SeedDatabase(
+			*mongodbURI,
+			*dbName,
 		)
 	default:
 		fmt.Println("Invalid action.")

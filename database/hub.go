@@ -568,52 +568,103 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, cloudKey string) ([]i
 		suffix := rand.Intn(100000000)
 
 		key := fmt.Sprintf("camera-key-%d", suffix)
+		nowMs := time.Now().UnixMilli()
+		heartbeat := []models.DeprecatedHeartbeat{{
+			CloudPublicKey: cloudKey,
+			Key:            key,
+			Timestamp:      time.Now().Unix(),
+			Version:        "3.5.0",
+			Release:        "1f9772d",
+			Encrypted:      false,
+			EncryptedData:  []byte{},
+			HubEncryption:  "true",
+			E2EEncryption:  "false",
+			Enterprise:     false,
+			Hash:           "",
+			MACs:           []string{"02:42:ac:12:00:0c"},
+			IPs:            []string{"127.0.0.1/8", "172.18.0.12/16"},
+			CameraName:     fmt.Sprintf("camera-%d", suffix),
+			CameraType:     "IPCamera",
+			Architecture:   "x86_64",
+			Hostname:       fmt.Sprintf("%x", rand.Uint64()),
+			FreeMemory:     fmt.Sprintf("%d", 650000000+rand.Intn(100000000)),
+			TotalMemory:    "16515977216",
+			UsedMemory:     fmt.Sprintf("%d", 15800000000+rand.Intn(100000000)),
+			ProcessMemory:  fmt.Sprintf("%d", 28000000+rand.Intn(100000000)),
+			Kubernetes:     false,
+			Docker:         true,
+			Kios:           false,
+			Raspberrypi:    false,
+			Uptime:         "5 days",
+			BootTime:       "5 days",
+			ONVIF:          "false",
+			ONVIFZoom:      "false",
+			ONVIFPanTilt:   "false",
+			ONVIFPresets:   "false",
+			CameraConnected: []string{
+				"true", "false",
+			}[rand.Intn(2)],
+			HasBackChannel: "false",
+		}}
 
-		doc := bson.M{
-			"_id":      id,
-			"key":      key,
-			"name":     fmt.Sprintf("Camera %d", i+1),
-			"user_id":  userID.Hex(),
-			"status":   "inactive",
-			"isActive": false,
-			"featurePermissions": bson.M{
-				"ptz": 0, "liveview": 0, "remote_config": 0,
+		doc := models.Device{
+			Id:                    id,
+			Key:                   key,
+			Name:                  fmt.Sprintf("Camera %d", i+1),
+			Type:                  "camera",
+			Repository:            "https://github.com/uug-ai/agent",
+			Version:               "3.5.0",
+			Deployment:            "docker",
+			OrganisationId:        userID.Hex(),
+			SiteIds:               []string{},
+			GroupIds:              []string{},
+			UserId:                userID.Hex(), // Legacy compatibility.
+			ConnectionStart:       nowMs,
+			DeviceLastSeen:        nowMs,
+			AgentLastSeen:         nowMs,
+			IdleThreshold:         60000,
+			DisconnectedThreshold: 300000,
+			HealthyThreshold:      120000,
+			Metadata: &models.DeviceMetadata{
+				Architecture: "x86_64",
+				Hostname:     fmt.Sprintf("%x", rand.Uint64()),
+				FreeMemory:   fmt.Sprintf("%d", 650000000+rand.Intn(100000000)),
+				TotalMemory:  "16515977216",
+				UsedMemory:   fmt.Sprintf("%d", 15800000000+rand.Intn(100000000)),
+				ProcessMemory: fmt.Sprintf(
+					"%d", 28000000+rand.Intn(100000000),
+				),
+				Encrypted:     false,
+				EncryptedData: []byte{},
+				HubEncryption: "true",
+				E2EEncryption: "false",
+				IPAddress:     "127.0.0.1",
+				MacAddress:    "02:42:ac:12:00:0c",
+				BootTime:      "5 days",
 			},
-			"analytics": []bson.M{{
-				"cloudpublickey":  cloudKey,
-				"key":             key,
-				"timestamp":       time.Now().Unix(),
-				"version":         "3.5.0",
-				"release":         "1f9772d",
-				"encrypted":       false,
-				"encrypteddata":   primitive.Binary{Subtype: 0x00, Data: []byte{}},
-				"hub_encryption":  "true",
-				"e2e_encryption":  "false",
-				"enterprise":      false,
-				"hash":            "",
-				"mac_list":        []string{"02:42:ac:12:00:0c"},
-				"ip_list":         []string{"127.0.0.1/8", "172.18.0.12/16"},
-				"cameraname":      fmt.Sprintf("camera-%d", suffix),
-				"cameratype":      "IPCamera",
-				"architecture":    "x86_64",
-				"hostname":        fmt.Sprintf("%x", rand.Uint64()),
-				"freeMemory":      fmt.Sprintf("%d", 650000000+rand.Intn(100000000)),
-				"totalMemory":     "16515977216",
-				"usedMemory":      fmt.Sprintf("%d", 15800000000+rand.Intn(100000000)),
-				"processMemory":   fmt.Sprintf("%d", 28000000+rand.Intn(100000000)),
-				"kubernetes":      false,
-				"docker":          true,
-				"kios":            false,
-				"raspberrypi":     false,
-				"uptime":          "5 days ",
-				"boot_time":       "5 days ",
-				"onvif":           "false",
-				"onvif_zoom":      "false",
-				"onvif_pantilt":   "false",
-				"onvif_presets":   "false",
-				"cameraConnected": []string{"true", "false"}[rand.Intn(2)],
-				"hasBackChannel":  "false",
-			}},
+			CameraMetadata: &models.CameraMetadata{
+				Resolution:     "1920x1080",
+				FrameRate:      15,
+				Codec:          "H.264",
+				HasOnvif:       false,
+				HasAudio:       false,
+				HasZoom:        false,
+				HasBackChannel: false,
+				HasPanTilt:     false,
+				HasPresets:     false,
+				HasIO:          false,
+			},
+			FeaturePermissions: &models.DeviceFeaturePermissions{
+				PTZ:          models.PermissionNone,
+				Liveview:     models.PermissionNone,
+				RemoteConfig: models.PermissionNone,
+				IO:           models.PermissionNone,
+				FloorPlans:   models.PermissionNone,
+			},
+			AtRuntimeMetadata: &models.DeviceAtRuntimeMetadata{
+				Status: "disconnected",
+			},
+			DeprecatedAnalytics: &heartbeat,
 		}
 		docs = append(docs, doc)
 		keys = append(keys, key)
@@ -666,30 +717,7 @@ func GenerateBatchMedia(
 		en := st + int64(rand.Intn(21)+5)
 
 		deviceID := deviceIDs[rand.Intn(len(deviceIDs))]
-
-		doc := bson.M{
-			"_id":             primitive.NewObjectID(),
-			"startTimestamp":  st,
-			"endTimestamp":    en,
-			"duration":        en - st,
-			"deviceId":        deviceID,
-			"organisationId":  userObjectID.Hex(),
-			"storageSolution": "kstorage",
-			"videoProvider":   "azure-production",
-			"videoFile":       utils.PickOne(VIDEO_POOL),
-			"analysisId":      fmt.Sprintf("AN-%06d", rand.Intn(5001)),
-			"description":     "synthetic media sample for load test",
-			"detections":      utils.SampleUnique(DETECTION_POOL, rand.Intn(4)+1),
-			"dominantColors":  utils.SampleUnique(COLOR_POOL, rand.Intn(3)+1),
-			"count":           rand.Intn(11) - 5,
-			"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(4)+1),
-			"metadata": bson.M{
-				"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(3)+1),
-				"classifications": []string{"normal_activity"},
-			},
-			"userId": userObjectID.Hex(),
-		}
-		docs = append(docs, doc)
+		docs = append(docs, buildSyntheticMedia(st, en, userObjectID.Hex(), deviceID, ""))
 	}
 	return docs
 }
@@ -728,49 +756,64 @@ func GenerateBatchMediaWithGroups(
 			groupId = idStr
 		}
 
-		// Get devices array and pick a random device key
-		if devArr, ok := group["devices"].(bson.A); ok && len(devArr) > 0 {
-			dev := devArr[rand.Intn(len(devArr))]
-			if key, ok := dev.(string); ok {
-				deviceKey = key
+		// Get devices array and pick a random device key.
+		switch devArr := group["devices"].(type) {
+		case bson.A:
+			if len(devArr) > 0 {
+				dev := devArr[rand.Intn(len(devArr))]
+				if key, ok := dev.(string); ok {
+					deviceKey = key
+				}
+			}
+		case []string:
+			if len(devArr) > 0 {
+				deviceKey = devArr[rand.Intn(len(devArr))]
 			}
 		}
 
-		doc := bson.M{
-			"_id":             primitive.NewObjectID(),
-			"startTimestamp":  st,
-			"endTimestamp":    en,
-			"duration":        en - st,
-			"groupId":         groupId,
-			"deviceId":        deviceKey,
-			"organisationId":  userObjectID.Hex(),
-			"storageSolution": "kstorage",
-			"videoProvider":   "azure-production",
-			"videoFile":       utils.PickOne(VIDEO_POOL),
-			"analysisId":      fmt.Sprintf("AN-%06d", rand.Intn(5001)),
-			"description":     "synthetic media sample for load test",
-			"detections":      utils.SampleUnique(DETECTION_POOL, rand.Intn(4)+1),
-			"dominantColors":  utils.SampleUnique(COLOR_POOL, rand.Intn(3)+1),
-			"count":           rand.Intn(11) - 5,
-			"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(4)+1),
-			"metadata": bson.M{
-				"tags":            utils.SampleUnique(TAG_POOL, rand.Intn(3)+1),
-				"classifications": []string{"normal_activity"},
-			},
-			"userId": userObjectID.Hex(),
-		}
-		docs = append(docs, doc)
+		docs = append(docs, buildSyntheticMedia(st, en, userObjectID.Hex(), deviceKey, groupId))
 	}
 	return docs
+}
+
+func buildSyntheticMedia(startTimestamp, endTimestamp int64, organisationId, deviceKey, groupId string) models.Media {
+	return models.Media{
+		Id:              primitive.NewObjectID(),
+		StartTimestamp:  startTimestamp,
+		EndTimestamp:    endTimestamp,
+		Duration:        int(endTimestamp - startTimestamp),
+		DeviceId:        deviceKey, // legacy compatibility
+		DeviceKey:       deviceKey,
+		GroupId:         groupId,
+		OrganisationId:  organisationId,
+		StorageSolution: "kstorage",
+		VideoProvider:   "azure-production",
+		VideoFile:       utils.PickOne(VIDEO_POOL),
+		Metadata: &models.MediaMetadata{
+			AnalysisId:     fmt.Sprintf("AN-%06d", rand.Intn(5001)),
+			Description:    "synthetic media sample for load test",
+			Detections:     utils.SampleUnique(DETECTION_POOL, rand.Intn(4)+1),
+			DominantColors: utils.SampleUnique(COLOR_POOL, rand.Intn(3)+1),
+			Count:          rand.Intn(11) - 5,
+			Tags:           utils.SampleUnique(TAG_POOL, rand.Intn(4)+1),
+			Classifications: []models.Classification{
+				{
+					Key:       "normal_activity",
+					Centroids: [][2]float64{},
+				},
+			},
+		},
+	}
 }
 
 func CreateMediaIndexes(ctx context.Context, col *mongo.Collection) {
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "startTimestamp", Value: 1}}},
 		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
+		{Keys: bson.D{{Key: "deviceKey", Value: 1}}},
 		{Keys: bson.D{{Key: "organisationId", Value: 1}}},
-		{Keys: bson.D{{Key: "tags", Value: 1}}},
-		{Keys: bson.D{{Key: "detections", Value: 1}}},
+		{Keys: bson.D{{Key: "metadata.tags", Value: 1}}},
+		{Keys: bson.D{{Key: "metadata.detections", Value: 1}}},
 		{Keys: bson.D{{Key: "duration", Value: 1}}},
 	}
 	_, err := col.Indexes().CreateMany(ctx, indexes)

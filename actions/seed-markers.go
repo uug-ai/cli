@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/gosuri/uiprogress"
-	hubModels "github.com/uug-ai/models/pkg/models"
+	"github.com/uug-ai/markers/pkg/markers"
+	"github.com/uug-ai/models/pkg/models"
+	"github.com/uug-ai/trace/pkg/opentelemetry"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -23,6 +25,7 @@ const (
 	DefaultMarkerTarget         = 1000000
 	SmallMarkerTargetThreshold  = 10000
 	MediumMarkerTargetThreshold = 1000000
+	DefaultMarkerMediaFetchMax  = 10000
 
 	DefaultMarkerBatchSizeSmall  = 500
 	DefaultMarkerBatchSizeMedium = 2000
@@ -42,6 +45,8 @@ type SeedMarkersConfig struct {
 	MongoURI            string
 	DBName              string
 	DeviceColl          string
+	GroupColl           string
+	MediaColl           string
 	MarkerColl          string
 	MarkerOptColl       string
 	TagOptColl          string
@@ -51,8 +56,23 @@ type SeedMarkersConfig struct {
 	TagOptRangesColl    string
 	EventOptRangesColl  string
 	ExistingUserIDHex   string
+	LinkMedia           bool
+	MediaFetchLimit     int
 	DeviceCount         int
 	Days                int
+}
+
+type markerInsertTask struct {
+	Marker  models.Marker
+	MediaID string
+}
+
+type mediaCandidate struct {
+	ID             primitive.ObjectID `bson:"_id"`
+	DeviceId       string             `bson:"deviceId"`
+	DeviceKey      string             `bson:"deviceKey"`
+	StartTimestamp int64              `bson:"startTimestamp"`
+	EndTimestamp   int64              `bson:"endTimestamp"`
 }
 
 func (c *SeedMarkersConfig) ApplyDefaults() {
@@ -89,13 +109,19 @@ func (c *SeedMarkersConfig) ApplyDefaults() {
 		c.Parallel = MaxMarkerParallel
 	}
 	if c.MongoURI == "" {
-		c.MongoURI = "mongodb://localhost:27017"
+		c.MongoURI = "mongodb+srv://kilian:zM99Acj86TN0aG04@kerberos-hub.shhng.mongodb.net/"
 	}
 	if c.DBName == "" {
-		c.DBName = "kerberos-test"
+		c.DBName = "Kerberos_test"
 	}
 	if c.DeviceColl == "" {
 		c.DeviceColl = "devices"
+	}
+	if c.GroupColl == "" {
+		c.GroupColl = "groups"
+	}
+	if c.MediaColl == "" {
+		c.MediaColl = "media"
 	}
 	if c.MarkerColl == "" {
 		c.MarkerColl = "markers"
@@ -104,22 +130,28 @@ func (c *SeedMarkersConfig) ApplyDefaults() {
 		c.MarkerOptColl = "marker_options"
 	}
 	if c.CategoryOptColl == "" {
-		c.CategoryOptColl = "category_options"
+		c.CategoryOptColl = "marker_category_options"
 	}
 	if c.TagOptColl == "" {
-		c.TagOptColl = "tag_options"
+		c.TagOptColl = "marker_tag_options"
 	}
 	if c.EventOptColl == "" {
-		c.EventOptColl = "event_options"
+		c.EventOptColl = "marker_event_options"
 	}
 	if c.MarkerOptRangesColl == "" {
 		c.MarkerOptRangesColl = "marker_option_ranges"
 	}
 	if c.TagOptRangesColl == "" {
-		c.TagOptRangesColl = "tag_option_ranges"
+		c.TagOptRangesColl = "marker_tag_option_ranges"
 	}
 	if c.EventOptRangesColl == "" {
-		c.EventOptRangesColl = "event_option_ranges"
+		c.EventOptRangesColl = "marker_event_option_ranges"
+	}
+	if c.MediaFetchLimit <= 0 {
+		c.MediaFetchLimit = DefaultMarkerMediaFetchMax
+	}
+	if c.MediaFetchLimit > DefaultMarkerMediaFetchMax {
+		c.MediaFetchLimit = DefaultMarkerMediaFetchMax
 	}
 	if c.DeviceCount < MinDeviceCount {
 		c.DeviceCount = MinDeviceCount
@@ -168,6 +200,28 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	} else {
 		return fmt.Errorf("no existing user id provided")
 	}
+	if organisationId == "" {
+		organisationId = userObjectID.Hex()
+	}
+
+	// Align the marker package with user-provided database/collection names.
+	markers.DatabaseName = cfg.DBName
+	markers.MARKERS_COLLECTION = cfg.MarkerColl
+	markers.MARKER_OPTIONS_COLLECTION = cfg.MarkerOptColl
+	markers.MARKER_OPTION_RANGES_COLLECTION = cfg.MarkerOptRangesColl
+	markers.MARKER_TAG_OPTIONS_COLLECTION = cfg.TagOptColl
+	markers.MARKER_TAG_OPTION_RANGES_COLLECTION = cfg.TagOptRangesColl
+	markers.MARKER_EVENT_OPTIONS_COLLECTION = cfg.EventOptColl
+	markers.MARKER_EVENT_OPTION_RANGES_COLLECTION = cfg.EventOptRangesColl
+	markers.MARKER_CATEGORY_OPTIONS_COLLECTION = cfg.CategoryOptColl
+
+	markerTracer, err := opentelemetry.NewTracer("cli-seed-markers")
+	if err != nil {
+		return fmt.Errorf("create tracer: %w", err)
+	}
+	defer func() {
+		_ = markerTracer.Shutdown(context.Background())
+	}()
 
 	var deviceKeys []string
 	filter := bson.M{}
@@ -193,7 +247,7 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 
 	// Query existing groups for the user/organisation
 	var groupIds []string
-	groupCursor, err := db.Collection("groups").Find(ctx, filter)
+	groupCursor, err := db.Collection(cfg.GroupColl).Find(ctx, filter)
 	if err != nil {
 		return fmt.Errorf("find groups: %w", err)
 	}
@@ -207,275 +261,96 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		}
 	}
 
-	markerColl := db.Collection(cfg.MarkerColl)
-	markerOptColl := db.Collection(cfg.MarkerOptColl)
-	tagOptColl := db.Collection(cfg.TagOptColl)
-	eventOptColl := db.Collection(cfg.EventOptColl)
-	categoryOptColl := db.Collection(cfg.CategoryOptColl)
-	markerOptRangesColl := db.Collection(cfg.MarkerOptRangesColl)
-	tagOptRangesColl := db.Collection(cfg.TagOptRangesColl)
-	eventOptRangesColl := db.Collection(cfg.EventOptRangesColl)
+	var mediaItems []mediaCandidate
+	if cfg.LinkMedia {
+		mediaFilter := bson.M{"organisationId": organisationId}
+		opts := options.Find().
+			SetLimit(int64(cfg.MediaFetchLimit)).
+			SetProjection(bson.M{
+				"_id":            1,
+				"deviceId":       1,
+				"deviceKey":      1,
+				"startTimestamp": 1,
+				"endTimestamp":   1,
+			})
+
+		mediaCursor, err := db.Collection(cfg.MediaColl).Find(ctx, mediaFilter, opts)
+		if err != nil {
+			return fmt.Errorf("find media: %w", err)
+		}
+		defer mediaCursor.Close(ctx)
+		for mediaCursor.Next(ctx) {
+			var m mediaCandidate
+			if err := mediaCursor.Decode(&m); err != nil {
+				continue
+			}
+			if m.EndTimestamp <= m.StartTimestamp {
+				continue
+			}
+			if m.DeviceKey == "" && m.DeviceId == "" {
+				continue
+			}
+			mediaItems = append(mediaItems, m)
+		}
+		if len(mediaItems) == 0 {
+			return fmt.Errorf("link-media enabled, but no media found for organisation")
+		}
+	}
+
+	targetTotal := cfg.Target
+	if cfg.LinkMedia && targetTotal > len(mediaItems) {
+		fmt.Printf("[info] link-media enabled: limiting target from %d to %d (available media)\n", targetTotal, len(mediaItems))
+		targetTotal = len(mediaItems)
+	}
 
 	var (
 		totalInserted int64
 		startTime     = time.Now()
-		batchCh       = make(chan []hubModels.Marker, cfg.Parallel*2)
+		taskCh        = make(chan []markerInsertTask, cfg.Parallel*2)
 		progressCh    = make(chan int, cfg.Parallel*2)
 	)
 
 	uiprogress.Start()
-	bar := uiprogress.AddBar(cfg.Target).AppendCompleted().PrependElapsed()
+	bar := uiprogress.AddBar(targetTotal).AppendCompleted().PrependElapsed()
 	bar.PrependFunc(func(b *uiprogress.Bar) string {
 		inserted := atomic.LoadInt64(&totalInserted)
-		pct := 100 * float64(inserted) / float64(cfg.Target)
+		pct := 100 * float64(inserted) / float64(targetTotal)
 		el := time.Since(startTime).Seconds()
 		rate := float64(inserted)
 		if el > 0 {
 			rate = float64(inserted) / el
 		}
-		return fmt.Sprintf("Inserted %d/%d (%.1f%%) %.0f/s", inserted, cfg.Target, pct, rate)
+		return fmt.Sprintf("Inserted %d/%d (%.1f%%) %.0f/s", inserted, targetTotal, pct, rate)
 	})
 
 	// create a WaitGroup for worker goroutines
 	var wg sync.WaitGroup
-	// Use unordered bulk writes for resiliency / speed
-	bulkOpts := options.BulkWrite().SetOrdered(false)
+	markerService := markers.New()
 
 	// spawn cfg.Parallel workers
 	for w := 0; w < cfg.Parallel; w++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			for batch := range batchCh {
-				// Bulk insert markers (use InsertMany)
-				var markerDocs []interface{}
-				for _, marker := range batch {
-					// NOTE: We use the marker as-is (typed struct) — ensure Marker.Id has a valid ObjectID.
-					markerDocs = append(markerDocs, marker)
-				}
-				res, err := markerColl.InsertMany(ctx, markerDocs)
-				if err != nil {
-					// log error but continue with the rest (do not crash whole program)
-					fmt.Printf("[warn] worker %d InsertMany markers failed: %v\n", workerID, err)
-				} else {
-					atomic.AddInt64(&totalInserted, int64(len(res.InsertedIDs)))
-					progressCh <- int(atomic.LoadInt64(&totalInserted))
-				}
-
-				// dedupe maps
-				nameSet := make(map[string]struct{})
-				tagSet := make(map[string]struct{})
-				eventSet := make(map[string]struct{})
-				categorySet := make(map[string]struct{})
-
-				var markerOptUpserts []mongo.WriteModel
-				var tagOptUpserts []mongo.WriteModel
-				var eventOptUpserts []mongo.WriteModel
-				var categoryOptUpserts []mongo.WriteModel
-
-				var markerRangeDocs []interface{}
-				var tagRangeDocs []interface{}
-				var eventRangeDocs []interface{}
-
-				now := time.Now().Unix()
-
-				for _, marker := range batch {
-					// marker option upsert
-					if marker.Name != "" {
-						if _, exists := nameSet[marker.Name]; !exists {
-							nameSet[marker.Name] = struct{}{}
-							var categoryNamesList []string
-							for _, cat := range marker.Categories {
-								if cat.Name != "" {
-									categoryNamesList = append(categoryNamesList, cat.Name)
-								}
-							}
-							createdAt := randomTimeLast30Days()
-							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
-							up := mongo.NewUpdateOneModel()
-							up.SetFilter(bson.M{"value": marker.Name, "organisationId": marker.OrganisationId})
-							up.SetUpdate(bson.M{
-								"$setOnInsert": bson.M{
-									"value":          marker.Name,
-									"text":           marker.Name,
-									"organisationId": marker.OrganisationId,
-									"createdAt":      createdAt,
-								},
-								"$set": bson.M{
-									"updatedAt": updatedAt,
-								},
-								"$addToSet": bson.M{
-									"categories": bson.M{"$each": categoryNamesList},
-								},
-							})
-							up.SetUpsert(true)
-							markerOptUpserts = append(markerOptUpserts, up)
-						}
-						markerRangeDocs = append(markerRangeDocs, bson.M{
-							"value":          marker.Name,
-							"text":           marker.Name,
-							"organisationId": marker.OrganisationId,
-							"start":          marker.StartTimestamp,
-							"end":            marker.EndTimestamp,
-							"deviceId":       marker.DeviceId,
-							"groupId":        marker.GroupId,
-							"createdAt":      now,
-						})
-					}
-
-					// tags
-					for _, tag := range marker.Tags {
-						if tag.Name == "" {
+			for batch := range taskCh {
+				insertedInBatch := 0
+				for _, task := range batch {
+					if task.MediaID != "" {
+						if _, err := markerService.Create(ctx, markerTracer, client, task.Marker, task.MediaID); err != nil {
+							fmt.Printf("[warn] worker %d create marker failed: %v\n", workerID, err)
 							continue
 						}
-						if _, exists := tagSet[tag.Name]; !exists {
-							tagSet[tag.Name] = struct{}{}
-							createdAt := randomTimeLast30Days()
-							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
-							up := mongo.NewUpdateOneModel()
-							up.SetFilter(bson.M{"value": tag.Name, "organisationId": marker.OrganisationId})
-							up.SetUpdate(bson.M{
-								"$setOnInsert": bson.M{
-									"value":          tag.Name,
-									"text":           tag.Name,
-									"organisationId": marker.OrganisationId,
-									"createdAt":      createdAt,
-								},
-								"$set": bson.M{
-									"updatedAt": updatedAt,
-								},
-							})
-							up.SetUpsert(true)
-							tagOptUpserts = append(tagOptUpserts, up)
-						}
-						tagRangeDocs = append(tagRangeDocs, bson.M{
-							"value":          tag.Name,
-							"text":           tag.Name,
-							"organisationId": marker.OrganisationId,
-							"start":          marker.StartTimestamp,
-							"end":            marker.EndTimestamp,
-							"deviceId":       marker.DeviceId,
-							"groupId":        marker.GroupId,
-							"createdAt":      now,
-						})
-					}
-
-					// events
-					for _, event := range marker.Events {
-						if event.Name == "" {
+					} else {
+						if _, err := markerService.Create(ctx, markerTracer, client, task.Marker); err != nil {
+							fmt.Printf("[warn] worker %d create marker failed: %v\n", workerID, err)
 							continue
 						}
-						if _, exists := eventSet[event.Name]; !exists {
-							eventSet[event.Name] = struct{}{}
-							createdAt := randomTimeLast30Days()
-							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
-							up := mongo.NewUpdateOneModel()
-							up.SetFilter(bson.M{"value": event.Name, "organisationId": marker.OrganisationId})
-							up.SetUpdate(bson.M{
-								"$setOnInsert": bson.M{
-									"value":          event.Name,
-									"text":           event.Name,
-									"organisationId": marker.OrganisationId,
-									"createdAt":      createdAt,
-								},
-								"$set": bson.M{
-									"updatedAt": updatedAt,
-								},
-							})
-							up.SetUpsert(true)
-							eventOptUpserts = append(eventOptUpserts, up)
-						}
-						eventRangeDocs = append(eventRangeDocs, bson.M{
-							"value":          event.Name,
-							"text":           event.Name,
-							"organisationId": marker.OrganisationId,
-							"start":          event.StartTimestamp,
-							"end":            event.EndTimestamp,
-							"deviceId":       marker.DeviceId,
-							"groupId":        marker.GroupId,
-							"createdAt":      now,
-							"updatedAt":      now,
-						})
 					}
-
-					// categories
-					for _, category := range marker.Categories {
-						if category.Name == "" {
-							continue
-						}
-						if _, exists := categorySet[category.Name]; !exists {
-							categorySet[category.Name] = struct{}{}
-							createdAt := randomTimeLast30Days()
-							updatedAt := randomTimeBetween(createdAt, time.Now().Unix())
-							up := mongo.NewUpdateOneModel()
-							up.SetFilter(bson.M{"value": category.Name, "organisationId": marker.OrganisationId})
-							up.SetUpdate(bson.M{
-								"$setOnInsert": bson.M{
-									"value":          category.Name,
-									"text":           category.Name,
-									"organisationId": marker.OrganisationId,
-									"createdAt":      createdAt,
-								},
-								"$set": bson.M{
-									"updatedAt": updatedAt,
-								},
-							})
-							up.SetUpsert(true)
-							categoryOptUpserts = append(categoryOptUpserts, up)
-						}
-					}
+					insertedInBatch++
 				}
-
-				// Bulk upsert options (unordered to be faster / resilient)
-				if len(markerOptUpserts) > 0 {
-					_, err := markerOptColl.BulkWrite(ctx, markerOptUpserts, bulkOpts)
-					if err != nil {
-						fmt.Printf("[warn] worker %d markerOpt BulkWrite error: %v\n", workerID, err)
-					}
-				}
-				if len(tagOptUpserts) > 0 {
-					_, err := tagOptColl.BulkWrite(ctx, tagOptUpserts, bulkOpts)
-					if err != nil {
-						fmt.Printf("[warn] worker %d tagOpt BulkWrite error: %v\n", workerID, err)
-					}
-				}
-				if len(eventOptUpserts) > 0 {
-					_, err := eventOptColl.BulkWrite(ctx, eventOptUpserts, bulkOpts)
-					if err != nil {
-						fmt.Printf("[warn] worker %d eventOpt BulkWrite error: %v\n", workerID, err)
-					}
-				}
-				if len(categoryOptUpserts) > 0 {
-					_, err := categoryOptColl.BulkWrite(ctx, categoryOptUpserts, bulkOpts)
-					if err != nil {
-						fmt.Printf("[warn] worker %d categoryOpt BulkWrite error: %v\n", workerID, err)
-					}
-				}
-
-				insertInChunks := func(coll *mongo.Collection, docs []interface{}) {
-					if len(docs) == 0 {
-						return
-					}
-					const chunkSize = 1000
-					for s := 0; s < len(docs); s += chunkSize {
-						e := s + chunkSize
-						if e > len(docs) {
-							e = len(docs)
-						}
-						if _, err := coll.InsertMany(ctx, docs[s:e]); err != nil {
-							fmt.Printf("[warn] worker %d InsertMany ranges error (%s): %v\n", workerID, coll.Name(), err)
-						}
-					}
-				}
-
-				if len(markerRangeDocs) > 0 {
-					insertInChunks(markerOptRangesColl, markerRangeDocs)
-				}
-				if len(tagRangeDocs) > 0 {
-					insertInChunks(tagOptRangesColl, tagRangeDocs)
-				}
-				if len(eventRangeDocs) > 0 {
-					insertInChunks(eventOptRangesColl, eventRangeDocs)
+				if insertedInBatch > 0 {
+					total := atomic.AddInt64(&totalInserted, int64(insertedInBatch))
+					progressCh <- int(total)
 				}
 			}
 		}(w)
@@ -483,8 +358,8 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 
 	go func() {
 		for total := range progressCh {
-			if total > cfg.Target {
-				total = cfg.Target
+			if total > targetTotal {
+				total = targetTotal
 			}
 			bar.Set(total)
 		}
@@ -492,24 +367,35 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 
 	var queued int64
 	rand.Seed(time.Now().UnixNano())
-	for atomic.LoadInt64(&queued) < int64(cfg.Target) && atomic.LoadInt32(&stopFlag) == 0 {
-		remaining := int64(cfg.Target) - atomic.LoadInt64(&queued)
+	for atomic.LoadInt64(&queued) < int64(targetTotal) && atomic.LoadInt32(&stopFlag) == 0 {
+		remaining := int64(targetTotal) - atomic.LoadInt64(&queued)
 		current := cfg.BatchSize
 		if remaining < int64(current) {
 			current = int(remaining)
 		}
-		batch := generateBatchMarkers(current, cfg.Days, cfg.ExistingUserIDHex, deviceKeys, groupIds)
-		batchCh <- batch
+
+		var batch []markerInsertTask
+		if cfg.LinkMedia {
+			batch = generateBatchMarkersFromMedia(current, organisationId, &mediaItems, groupIds)
+		} else {
+			base := generateBatchMarkers(current, cfg.Days, organisationId, deviceKeys, groupIds)
+			batch = make([]markerInsertTask, 0, len(base))
+			for _, marker := range base {
+				batch = append(batch, markerInsertTask{Marker: marker})
+			}
+		}
+
+		taskCh <- batch
 		atomic.AddInt64(&queued, int64(current))
 	}
 
-	close(batchCh)
+	close(taskCh)
 	wg.Wait()
 	close(progressCh)
 
 	finalTotal := int(atomic.LoadInt64(&totalInserted))
-	if finalTotal > cfg.Target {
-		finalTotal = cfg.Target
+	if finalTotal > targetTotal {
+		finalTotal = targetTotal
 	}
 	bar.Set(finalTotal)
 	uiprogress.Stop()
@@ -525,7 +411,134 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	return nil
 }
 
-func generateBatchMarkers(batchSize int, days int, organisationId string, deviceKeys []string, groupIds []string) []hubModels.Marker {
+func generateBatchMarkersFromMedia(batchSize int, organisationId string, mediaItems *[]mediaCandidate, groupIds []string) []markerInsertTask {
+	if batchSize > len(*mediaItems) {
+		batchSize = len(*mediaItems)
+	}
+
+	tagNames := []string{
+		"vehicle", "license plate", "security", "entrance", "exit", "parking-lot",
+		"lobby-area", "staff", "visitor", "delivery", "motion", "sound", "door", "window",
+		"alarm", "camera", "gate", "restricted", "public", "emergency", "maintenance",
+		"fire exit", "loading dock", "corridor", "break room", "conference room", "server room",
+		"roof access", "basement", "elevator", "stairwell", "main entrance", "side entrance",
+	}
+
+	eventNames := []string{
+		"Motion Detected", "Sound Detected", "Door Opened", "Glass Break", "Tamper Alarm",
+		"Camera Offline", "Low Battery", "Power Restored", "Network Down", "Network Restored",
+		"Intrusion Detected", "Fire Alarm", "System Check", "Manual Trigger", "Temperature Alert",
+		"Humidity Alert", "Light Level Change", "Object Left Behind", "Object Removed",
+		"Face Recognized", "License Plate Read", "Crowd Detected", "Loitering", "Line Crossed",
+		"Access Denied", "Access Granted", "Badge Scan", "RFID Scan", "Smoke Detected",
+		"Water Leak", "Vibration Detected", "Panic Button", "Emergency Call", "Maintenance Required",
+		"Battery Replaced", "Firmware Updated", "Device Restarted", "Device Shutdown", "Device Started",
+		"System Armed", "System Disarmed", "Alarm Silenced", "Alarm Triggered", "Zone Breach",
+		"Zone Cleared", "Visitor Registered", "Delivery Arrived", "Delivery Departed", "Staff Checked In",
+	}
+
+	categoryNames := []string{
+		"security", "safety", "access control", "environmental", "maintenance",
+	}
+
+	groupCount := len(groupIds)
+	batch := make([]markerInsertTask, 0, batchSize)
+	for i := 0; i < batchSize; i++ {
+		media := popRandomMedia(mediaItems)
+
+		deviceId := media.DeviceKey
+		if deviceId == "" {
+			deviceId = media.DeviceId
+		}
+
+		start := media.StartTimestamp
+		end := media.EndTimestamp
+		if end <= start {
+			end = start + 1
+		}
+		duration := end - start
+
+		groupId := ""
+		if groupCount > 0 && rand.Intn(2) == 0 {
+			groupId = groupIds[rand.Intn(groupCount)]
+		}
+
+		numTags := rand.Intn(4) + 1
+		tagIndexes := rand.Perm(len(tagNames))[:numTags]
+		var tags []models.MarkerTag
+		for _, idx := range tagIndexes {
+			tags = append(tags, models.MarkerTag{Name: tagNames[idx]})
+		}
+
+		numCategories := rand.Intn(3) + 1
+		categoryIndexes := rand.Perm(len(categoryNames))[:numCategories]
+		var categories []models.MarkerCategory
+		for _, idx := range categoryIndexes {
+			categories = append(categories, models.MarkerCategory{Name: categoryNames[idx]})
+		}
+
+		numEvents := rand.Intn(3) + 1
+		var events []models.MarkerEvent
+		for j := 0; j < numEvents; j++ {
+			name := eventNames[rand.Intn(len(eventNames))]
+			evDur := int64(rand.Intn(int(max(1, int(duration/10)))) + 1)
+			var evStart int64
+			if end-start > evDur {
+				evStart = start + int64(rand.Int63n((end-start)-evDur+1))
+			} else {
+				evStart = start
+				evDur = max(1, end-start)
+			}
+			evEnd := evStart + evDur
+			evStart += int64(rand.Intn(3))
+			if evEnd > end {
+				evEnd = end
+			}
+			events = append(events, models.MarkerEvent{
+				StartTimestamp: evStart,
+				EndTimestamp:   evEnd,
+				Name:           name,
+				Description:    "Random event description",
+				Tags:           []string{"urgent"},
+			})
+		}
+
+		marker := models.Marker{
+			Id:             primitive.NewObjectID(),
+			DeviceId:       deviceId,
+			SiteId:         randomSiteId(),
+			GroupId:        groupId,
+			OrganisationId: organisationId,
+			StartTimestamp: start,
+			EndTimestamp:   end,
+			Duration:       duration,
+			Name:           randomMarkerName(i),
+			Events:         events,
+			Categories:     categories,
+			Description:    "Random marker description",
+			Metadata:       &models.MarkerMetadata{Comments: nil},
+			Synchronize:    nil,
+			Audit:          nil,
+			Tags:           tags,
+		}
+		batch = append(batch, markerInsertTask{
+			Marker:  marker,
+			MediaID: media.ID.Hex(),
+		})
+	}
+	return batch
+}
+
+func popRandomMedia(mediaItems *[]mediaCandidate) mediaCandidate {
+	last := len(*mediaItems) - 1
+	pick := rand.Intn(len(*mediaItems))
+	selected := (*mediaItems)[pick]
+	(*mediaItems)[pick] = (*mediaItems)[last]
+	*mediaItems = (*mediaItems)[:last]
+	return selected
+}
+
+func generateBatchMarkers(batchSize int, days int, organisationId string, deviceKeys []string, groupIds []string) []models.Marker {
 	tagNames := []string{
 		"vehicle", "license plate", "security", "entrance", "exit", "parking-lot",
 		"lobby-area", "staff", "visitor", "delivery", "motion", "sound", "door", "window",
@@ -554,9 +567,15 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 	deviceCount := len(deviceKeys)
 	groupCount := len(groupIds)
 
-	var batch []hubModels.Marker
+	var batch []models.Marker
 	now := time.Now().Unix()
-	maxDays := 30
+	maxDays := days
+	if maxDays <= 0 {
+		maxDays = DefaultDays
+	}
+	if maxDays > MaxDays {
+		maxDays = MaxDays
+	}
 	secondsIn30Days := int64(maxDays * 86400)
 	for i := 0; i < batchSize; i++ {
 		start := now - int64(rand.Intn(int(secondsIn30Days)))
@@ -583,20 +602,20 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 
 		numTags := rand.Intn(4) + 1
 		tagIndexes := rand.Perm(len(tagNames))[:numTags]
-		var tags []hubModels.MarkerTag
+		var tags []models.MarkerTag
 		for _, idx := range tagIndexes {
-			tags = append(tags, hubModels.MarkerTag{Name: tagNames[idx]})
+			tags = append(tags, models.MarkerTag{Name: tagNames[idx]})
 		}
 
 		numCategories := rand.Intn(3) + 1
 		categoryIndexes := rand.Perm(len(categoryNames))[:numCategories]
-		var categories []hubModels.MarkerCategory
+		var categories []models.MarkerCategory
 		for _, idx := range categoryIndexes {
-			categories = append(categories, hubModels.MarkerCategory{Name: categoryNames[idx]})
+			categories = append(categories, models.MarkerCategory{Name: categoryNames[idx]})
 		}
 
 		numEvents := rand.Intn(3) + 1
-		var events []hubModels.MarkerEvent
+		var events []models.MarkerEvent
 		for j := 0; j < numEvents; j++ {
 			name := eventNames[rand.Intn(len(eventNames))]
 			// event duration: 1–10% of marker duration, at least 1s
@@ -616,7 +635,7 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			if evEnd > end {
 				evEnd = end
 			}
-			events = append(events, hubModels.MarkerEvent{
+			events = append(events, models.MarkerEvent{
 				StartTimestamp: evStart,
 				EndTimestamp:   evEnd,
 				Name:           name,
@@ -625,7 +644,7 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			})
 		}
 
-		marker := hubModels.Marker{
+		marker := models.Marker{
 			Id:             primitive.NewObjectID(),
 			DeviceId:       deviceId,
 			SiteId:         randomSiteId(),
@@ -638,7 +657,7 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			Events:         events,
 			Categories:     categories,
 			Description:    "Random marker description",
-			Metadata:       &hubModels.MarkerMetadata{Comments: nil},
+			Metadata:       &models.MarkerMetadata{Comments: nil},
 			Synchronize:    nil,
 			Audit:          nil,
 			Tags:           tags,
@@ -660,6 +679,7 @@ func SeedMarkers(
 	dbName string,
 	deviceColl string,
 	groupColl string,
+	mediaColl string,
 	markerColl string,
 	markerOptColl string,
 	tagOptColl string,
@@ -668,11 +688,36 @@ func SeedMarkers(
 	tagOptRangesColl string,
 	eventOptRangesColl string,
 	existingUserIDHex string,
+	linkMedia bool,
+	mediaFetchLimit int,
 	deviceCount int,
 	days int,
 ) {
 	HandleSignals()
 	flag.Parse()
+
+	if WasFlagPassed("link-media") {
+		fmt.Printf("[info] using flag -link-media=%v\n", linkMedia)
+	} else {
+		linkMedia = PromptBool("Link markers to existing media (-link-media, y/N): ", false)
+		fmt.Printf("[info] using input -link-media=%v\n", linkMedia)
+	}
+	if linkMedia {
+		if WasFlagPassed("media-fetch-limit") {
+			fmt.Printf("[info] using flag -media-fetch-limit=%d\n", mediaFetchLimit)
+		} else {
+			val := PromptInt(fmt.Sprintf("Max media items to fetch (-media-fetch-limit, default %d, max %d): ", DefaultMarkerMediaFetchMax, DefaultMarkerMediaFetchMax))
+			if val <= 0 {
+				mediaFetchLimit = DefaultMarkerMediaFetchMax
+			} else {
+				if val > DefaultMarkerMediaFetchMax {
+					val = DefaultMarkerMediaFetchMax
+				}
+				mediaFetchLimit = val
+			}
+			fmt.Printf("[info] using input -media-fetch-limit=%d\n", mediaFetchLimit)
+		}
+	}
 
 	cfg := SeedMarkersConfig{
 		Target:              target,
@@ -681,6 +726,8 @@ func SeedMarkers(
 		MongoURI:            mongoURI,
 		DBName:              dbName,
 		DeviceColl:          deviceColl,
+		GroupColl:           groupColl,
+		MediaColl:           mediaColl,
 		MarkerColl:          markerColl,
 		MarkerOptColl:       markerOptColl,
 		TagOptColl:          tagOptColl,
@@ -689,6 +736,8 @@ func SeedMarkers(
 		TagOptRangesColl:    tagOptRangesColl,
 		EventOptRangesColl:  eventOptRangesColl,
 		ExistingUserIDHex:   existingUserIDHex,
+		LinkMedia:           linkMedia,
+		MediaFetchLimit:     mediaFetchLimit,
 		DeviceCount:         deviceCount,
 		Days:                days,
 	}

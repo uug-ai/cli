@@ -217,7 +217,7 @@ func ReprocessMedia(mode string,
 		monitorStage := pipeline.NewMonitorStage()
 		monitorStage.User = user
 		monitorStage.Subscription = subscription
-		monitorStage.Plans = plans
+		monitorStage.Plans = toPipelinePlans(plans)
 		monitorStage.HighUpload = user.HighUpload
 
 		event := pipeline.PipelineEvent{
@@ -305,6 +305,65 @@ func defaultPlanSettings() map[string]interface{} {
 	}
 }
 
+func numberToInt(value interface{}) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int8:
+		return int(v)
+	case int16:
+		return int(v)
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case uint:
+		return int(v)
+	case uint8:
+		return int(v)
+	case uint16:
+		return int(v)
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
+	case float32:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func toPipelinePlan(value interface{}) (pipeline.Plan, bool) {
+	if typed, ok := value.(pipeline.Plan); ok {
+		return typed, true
+	}
+	raw, ok := value.(map[string]interface{})
+	if !ok {
+		return pipeline.Plan{}, false
+	}
+	return pipeline.Plan{
+		Level:         numberToInt(raw["level"]),
+		UploadLimit:   numberToInt(raw["uploadLimit"]),
+		VideoLimit:    numberToInt(raw["videoLimit"]),
+		Usage:         numberToInt(raw["usage"]),
+		AnalysisLimit: numberToInt(raw["analysisLimit"]),
+		DayLimit:      numberToInt(raw["dayLimit"]),
+	}, true
+}
+
+func toPipelinePlans(raw map[string]interface{}) map[string]pipeline.Plan {
+	plans := make(map[string]pipeline.Plan, len(raw))
+	for key, value := range raw {
+		if plan, ok := toPipelinePlan(value); ok {
+			plans[key] = plan
+		}
+	}
+	return plans
+}
+
 func loadMonitorContext(client *mongo.Client, dbName, userId string) (pipeline.User, pipeline.Subscription, map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), database.TIMEOUT)
 	defer cancel()
@@ -335,8 +394,12 @@ func loadMonitorContext(client *mongo.Client, dbName, userId string) (pipeline.U
 	if err != nil && err != mongo.ErrNoDocuments {
 		return user, subscription, plans, err
 	}
-	if subscription.Plan == "" {
-		subscription.Plan = "enterprise"
+	if subscription.StripePlan == "" {
+		if user.Plan != "" {
+			subscription.StripePlan = user.Plan
+		} else {
+			subscription.StripePlan = "enterprise"
+		}
 		subscription.UserId = subUserID
 	}
 
@@ -349,13 +412,13 @@ func loadMonitorContext(client *mongo.Client, dbName, userId string) (pipeline.U
 	}
 
 	if len(user.Activity) == 0 {
-		user.Activity = []map[string]interface{}{
+		user.Activity = []pipeline.Activity{
 			{
-				"day":      time.Now().Format("02-01-2006"),
-				"requests": float64(0),
-				"videos":   float64(0),
-				"images":   float64(0),
-				"usage":    float64(0),
+				Day:      time.Now().Format("02-01-2006"),
+				Requests: 0,
+				Videos:   0,
+				Images:   0,
+				Usage:    0,
 			},
 		}
 	}

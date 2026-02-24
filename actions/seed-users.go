@@ -55,7 +55,7 @@ func (c *SeedUsersConfig) ApplyDefaults() {
 		c.MongoURI = "mongodb://localhost:27017"
 	}
 	if c.DBName == "" {
-		c.DBName = "Kerberos"
+		c.DBName = "Kerberos_test"
 	}
 	if c.UserColl == "" {
 		c.UserColl = "users"

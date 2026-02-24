@@ -1,13 +1,14 @@
 {
     "name": "go:1.24-bookworm",
+    "initializeCommand": "mkdir -p ${localWorkspaceFolder}/../models",
     "runArgs": [
         "--name=uugai-cli",
         "--network=host"
     ],
     "dockerFile": "Dockerfile",
     "mounts": [
-		"source=${localWorkspaceFolder}/../models,target=/workspaces/models,type=bind"
-	],
+        "source=${localWorkspaceFolder}/../models,target=/workspaces/models,type=bind"
+    ],
     "customizations": {
         "vscode": {
             "extensions": [

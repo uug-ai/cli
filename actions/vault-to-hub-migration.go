@@ -638,14 +638,73 @@ func generateTraceID() string {
 	return hex.EncodeToString(bytes)
 }
 
+func monitorNumberToInt(value interface{}) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int8:
+		return int(v)
+	case int16:
+		return int(v)
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case uint:
+		return int(v)
+	case uint8:
+		return int(v)
+	case uint16:
+		return int(v)
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
+	case float32:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func toMonitorPlan(value interface{}) (models.Plan, bool) {
+	if typed, ok := value.(models.Plan); ok {
+		return typed, true
+	}
+	raw, ok := value.(map[string]interface{})
+	if !ok {
+		return models.Plan{}, false
+	}
+	return models.Plan{
+		Level:         monitorNumberToInt(raw["level"]),
+		UploadLimit:   monitorNumberToInt(raw["uploadLimit"]),
+		VideoLimit:    monitorNumberToInt(raw["videoLimit"]),
+		Usage:         monitorNumberToInt(raw["usage"]),
+		AnalysisLimit: monitorNumberToInt(raw["analysisLimit"]),
+		DayLimit:      monitorNumberToInt(raw["dayLimit"]),
+	}, true
+}
+
+func toMonitorPlans(raw map[string]interface{}) map[string]models.Plan {
+	plans := make(map[string]models.Plan, len(raw))
+	for key, value := range raw {
+		if plan, ok := toMonitorPlan(value); ok {
+			plans[key] = plan
+		}
+	}
+	return plans
+}
+
 func buildMonitorStage(user models.User, subscription models.Subscription, plans map[string]interface{}) models.MonitorStage {
 	stage := models.NewMonitorStage()
 	stage.User = user
 	stage.Subscription = subscription
 	if plans != nil {
-		stage.Plans = plans
+		stage.Plans = toMonitorPlans(plans)
 	} else {
-		stage.Plans = map[string]interface{}{}
+		stage.Plans = map[string]models.Plan{}
 	}
 	return stage
 }
