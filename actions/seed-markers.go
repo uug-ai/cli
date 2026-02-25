@@ -109,7 +109,7 @@ func (c *SeedMarkersConfig) ApplyDefaults() {
 		c.Parallel = MaxMarkerParallel
 	}
 	if c.MongoURI == "" {
-		c.MongoURI = "mongodb+srv://kilian:zM99Acj86TN0aG04@kerberos-hub.shhng.mongodb.net/"
+		c.MongoURI = "mongodb://localhost:27017"
 	}
 	if c.DBName == "" {
 		c.DBName = "Kerberos_test"
