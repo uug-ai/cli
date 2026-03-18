@@ -12,6 +12,7 @@ func promptAction() string {
 	choices := []string{
 		"vault-to-hub-migration",
 		"reprocess-media",
+		"migrate-legacy-media",
 		"generate-default-labels",
 		"check-indexes",
 		"seed-media",
@@ -61,6 +62,7 @@ func main() {
 	queueName := flag.String("queue", "", "The queue used to transfer the data")
 	vaultUrl := flag.String("vault-url", "", "Vault API URL override (e.g. https://vault.example.com/api)")
 	username := flag.String("username", "", "Specific username to target")
+	organisationId := flag.String("organisation-id", "", "Specific organisation/user ID to target")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
 	timezone := flag.String("timezone", "", "Timezone")
@@ -151,6 +153,22 @@ func main() {
 			*timezone,
 			*batchSize,
 			*batchDelay,
+		)
+	case "migrate-legacy-media":
+		fmt.Println("Running legacy media migration dry-run...")
+		actions.MigrateLegacyMedia(*mode,
+			*mongodbURI,
+			*mongodbHost,
+			*mongodbPort,
+			*mongodbSourceDatabase,
+			*mongodbDestinationDatabase,
+			*mongodbDatabaseCredentials,
+			*mongodbUsername,
+			*mongodbPassword,
+			*username,
+			*organisationId,
+			*startTimestamp,
+			*endTimestamp,
 		)
 	case "generate-default-labels":
 		fmt.Println("Generating default labels...")
