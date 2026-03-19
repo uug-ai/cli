@@ -13,6 +13,7 @@ func promptAction() string {
 		"vault-to-hub-migration",
 		"reprocess-media",
 		"migrate-legacy-media",
+		"audit-legacy-compat",
 		"generate-default-labels",
 		"check-indexes",
 		"seed-media",
@@ -105,6 +106,7 @@ func main() {
 	// useExistingDevices := flag.Bool("use-existing-devices", false, "Use existing devices instead of creating new ones")
 	collections := flag.String("collections", "", "Comma separated list of collections to migrate (default all)")
 	indexVersion := flag.String("index-version", "", "Path to the indexes specification file")
+	domains := flag.String("domains", "", "Comma separated list of compatibility domains (default: media,analysis,users,devices,groups,sites,settings)")
 
 	flag.Parse()
 
@@ -169,6 +171,23 @@ func main() {
 			*organisationId,
 			*startTimestamp,
 			*endTimestamp,
+		)
+	case "audit-legacy-compat":
+		fmt.Println("Running legacy compatibility audit...")
+		actions.AuditLegacyCompatibility(*mode,
+			*mongodbURI,
+			*mongodbHost,
+			*mongodbPort,
+			*mongodbSourceDatabase,
+			*mongodbDestinationDatabase,
+			*mongodbDatabaseCredentials,
+			*mongodbUsername,
+			*mongodbPassword,
+			*username,
+			*organisationId,
+			*startTimestamp,
+			*endTimestamp,
+			*domains,
 		)
 	case "generate-default-labels":
 		fmt.Println("Generating default labels...")

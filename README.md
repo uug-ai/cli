@@ -4,6 +4,7 @@ This repository contains CLI tools for performing specific automations.
 
 - `vault-to-hub-migration`: Migrating data from a Vault database to a Hub database.
 - `reprocess-media`: Re-queue hub media for analysis when analysis is missing.
+- `audit-legacy-compat`: Auditing legacy data shape compatibility across domains.
 - `generate-default-labels`: Adding labels to existing users.
 
 
@@ -166,6 +167,41 @@ go run main.go -action vault-to-hub-migration \
       2024/12/12 09:38:26   | xxxxxxxx/1733989379_6-967003_gb-frontdoor_200-200-400-400_162_769.mp4                 | 2107887         | 1733989400      | lQtymLrehWpHkTavfcNTFgwfDMoSfg      |
       2024/12/12 09:38:26   +---------------------------------------------------------------------------------------+-----------------+-----------------+-------------------------------------+
 
+
+### Audit legacy compatibility
+
+This tool performs a read-only compatibility audit over legacy data, and reports missing required/recommended fields by domain.
+
+#### Command Line Arguments
+
+- `-action`: The action to take (required). For compatibility audit, use `audit-legacy-compat`.
+- `-mongodb-uri`: The MongoDB URI (optional if host and port are provided).
+- `-mongodb-host`: The MongoDB host (optional if URI is provided).
+- `-mongodb-port`: The MongoDB port (optional if URI is provided).
+- `-mongodb-source-database`: The source database name (required if destination database is not set).
+- `-mongodb-destination-database`: The destination database name (required if source database is not set).
+- `-mongodb-database-credentials`: The database credentials (optional).
+- `-mongodb-username`: The MongoDB username (optional).
+- `-mongodb-password`: The MongoDB password (optional).
+- `-username`: Optional username used to resolve organisation scope.
+- `-organisation-id`: Optional organisation/user scope ID.
+- `-start-timestamp`: Optional start timestamp for time-scoped collections.
+- `-end-timestamp`: Optional end timestamp for time-scoped collections.
+- `-domains`: Optional comma-separated domain list. Default: `media,analysis,users,devices,groups,sites,settings`.
+- `-mode`: Accepted for consistency (`dry-run`/`live`), this action is read-only.
+
+#### Example
+
+```sh
+go run main.go -action audit-legacy-compat \
+               -mode dry-run \
+               -mongodb-uri "mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>" \
+               -mongodb-destination-database=<database> \
+               -organisation-id <organisationId> \
+               -start-timestamp <startTimestamp> \
+               -end-timestamp <endTimestamp> \
+               -domains media,analysis,users
+```
 
 ### Generate default labels
 
