@@ -19,7 +19,7 @@ spec:
 
           # Recommended safety flags:
           '-mode', 'dry-run', # switch to live only after reviewing dry-run output
-          '-organisation-id', '<organisationId>', # IMPORTANT: keep scope explicit to avoid cross-org migration
+          '-organisation-id', '<organisationId>', # optional, leave empty to scan all orgs, or specify to limit scope
           #'-username', '<username>', # optional alternative to resolve organisation scope
           '-start-timestamp', '1735689600', # recommended: run in time windows (example: 2025-01-01 UTC)
           '-end-timestamp', '1738367999',   # example: 2025-01-31 23:59:59 UTC
