@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ type analysisSnapshot struct {
 	Key                string
 	HasThumby          bool
 	HasSprite          bool
+	Width              int64
+	Height             int64
 	HasDominantColor   bool
 	ThumbyFilename     string
 	ThumbyProvider     string
@@ -166,6 +169,9 @@ func MigrateLegacyMedia(mode string,
 			"metadata.analysisId":     0,
 			"metadata.dominantColors": 0,
 			"metadata.classifications": 0,
+			"metadata.width":          0,
+			"metadata.height":         0,
+			"metadata.resolution":     0,
 			"classificationSummary":   0,
 			"markerNames":             0,
 			"countingSummary":         0,
@@ -270,19 +276,41 @@ func MigrateLegacyMedia(mode string,
 			analysisMatch["$or"] = []bson.M{{"userid": orgID}, {"user_id": orgID}}
 		}
 
-		analysisProjection := bson.M{
-			"_id": 1,
-			"key": 1,
-			"data.thumby.filename": 1,
-			"data.thumby.provider": 1,
+			analysisProjection := bson.M{
+				"_id": 1,
+				"key": 1,
+				"data.thumby.filename": 1,
+				"data.thumby.provider": 1,
 			"data.sprite.filename": 1,
 			"data.sprite.provider": 1,
 			"data.sprite.interval": 1,
 			"data.dominantcolor.hexs": 1,
-			"data.classify.details.classified": 1,
-			"data.classify.details.trajectCentroids": 1,
+				"data.classify.details.classified": 1,
+				"data.classify.details.trajectCentroids": 1,
+				"data.classify.details.traject": 1,
+				"data.classify.details.x": 1,
+				"data.classify.details.y": 1,
+				"data.classify.details.frameWidth": 1,
+				"data.classify.details.frameHeight": 1,
+				"data.classify.properties": 1,
+				"data.details.classified": 1,
+				"data.details.objectName": 1,
+				"data.details.trajectCentroids": 1,
+				"data.details.traject": 1,
+				"data.details.x": 1,
+				"data.details.y": 1,
+				"data.details.frameWidth": 1,
+				"data.details.frameHeight": 1,
+				"data.properties": 1,
+				"data.counting.detail.videoWidth": 1,
+				"data.counting.detail.videoHeight": 1,
+			"data.thumby.width": 1,
+			"data.thumby.height": 1,
+			"data.sprite.width": 1,
+			"data.sprite.height": 1,
 			"data.counting.records.type": 1,
 			"data.counting.records.count": 1,
+			"data.counting.records.duration": 1,
 		}
 		ac, err := analysisCollection.Find(ctx, analysisMatch, options.Find().SetProjection(analysisProjection))
 		if err == nil {
@@ -305,11 +333,14 @@ func MigrateLegacyMedia(mode string,
 				classificationSummary := deriveClassificationSummary(classifications)
 				markerNames := markerNamesFromSummary(classificationSummary)
 				countingSummary, countTotal := deriveCountingSummaryFromAnalysis(dataMap)
+				width, height := deriveMediaDimensionsFromAnalysis(dataMap)
 				analysisByKey[key] = analysisSnapshot{
 					ID:                    objectIDToHex(doc["_id"]),
 					Key:                   key,
 					HasThumby:             asString(th["filename"]) != "",
 					HasSprite:             asString(sp["filename"]) != "",
+					Width:                 width,
+					Height:                height,
 					HasDominantColor:      len(hexs) > 0,
 					ThumbyFilename:        asString(th["filename"]),
 					ThumbyProvider:        asString(th["provider"]),
@@ -344,7 +375,11 @@ func MigrateLegacyMedia(mode string,
 		metaAnalysisID := asString(metadata["analysisId"])
 		metaSpriteInterval := asInt64(metadata["spriteInterval"])
 		metaDominantColorsLen := int64(len(asSlice(metadata["dominantColors"])))
-		metaClassificationsLen := int64(len(asSlice(metadata["classifications"])))
+		metaClassifications := asSlice(metadata["classifications"])
+		metaClassificationsLen := int64(len(metaClassifications))
+		metaWidth := asInt64(metadata["width"])
+		metaHeight := asInt64(metadata["height"])
+		metaResolution := asString(metadata["resolution"])
 		metaCount := asInt64(metadata["count"])
 
 		thumbnailFile := asString(doc["thumbnailFile"])
@@ -407,7 +442,16 @@ func MigrateLegacyMedia(mode string,
 						if len(analysis.Classifications) > 0 {
 							metadataFields["classifications"] = analysis.Classifications
 						}
-						if analysis.CountTotal > 0 {
+						if analysis.Width > 0 {
+							metadataFields["width"] = analysis.Width
+						}
+						if analysis.Height > 0 {
+							metadataFields["height"] = analysis.Height
+						}
+						if analysis.Width > 0 && analysis.Height > 0 {
+							metadataFields["resolution"] = fmt.Sprintf("%dx%d", analysis.Width, analysis.Height)
+						}
+						if analysis.CountTotal != 0 {
 							metadataFields["count"] = analysis.CountTotal
 						}
 						if len(metadataFields) > 0 {
@@ -500,8 +544,20 @@ func MigrateLegacyMedia(mode string,
 			report.Needs["metadata.dominantColors"]++
 			needPatch = true
 		}
-		if metaClassificationsLen == 0 && len(analysis.Classifications) > 0 {
+		if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications)) && len(analysis.Classifications) > 0 {
 			report.Needs["metadata.classifications"]++
+			needPatch = true
+		}
+		if metaWidth <= 0 && analysis.Width > 0 {
+			report.Needs["metadata.width"]++
+			needPatch = true
+		}
+		if metaHeight <= 0 && analysis.Height > 0 {
+			report.Needs["metadata.height"]++
+			needPatch = true
+		}
+		if metaResolution == "" && analysis.Width > 0 && analysis.Height > 0 {
+			report.Needs["metadata.resolution"]++
 			needPatch = true
 		}
 		if classificationSummaryLen == 0 && len(analysis.ClassificationSummary) > 0 {
@@ -516,7 +572,7 @@ func MigrateLegacyMedia(mode string,
 			report.Needs["countingSummary"]++
 			needPatch = true
 		}
-		if metaCount <= 0 && analysis.CountTotal > 0 {
+		if metaCount == 0 && analysis.CountTotal != 0 {
 			report.Needs["metadata.count"]++
 			needPatch = true
 		}
@@ -586,9 +642,67 @@ func asInt64(v any) int64 {
 		return int64(t)
 	case float32:
 		return int64(t)
+	case string:
+		value := strings.TrimSpace(t)
+		if value == "" {
+			return 0
+		}
+		if parsedInt, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return parsedInt
+		}
+		if parsedFloat, err := strconv.ParseFloat(value, 64); err == nil {
+			return int64(parsedFloat)
+		}
+		return 0
 	default:
 		return 0
 	}
+}
+
+func deriveMediaDimensionsFromAnalysis(dataMap bson.M) (int64, int64) {
+	classify := asMap(dataMap["classify"])
+	details := asSlice(classify["details"])
+	if len(details) == 0 {
+		details = asSlice(dataMap["details"])
+	}
+	for _, raw := range details {
+		detail := asMap(raw)
+		width := asInt64(detail["frameWidth"])
+		height := asInt64(detail["frameHeight"])
+		if width > 0 && height > 0 {
+			return width, height
+		}
+	}
+
+	counting := asMap(dataMap["counting"])
+	countingDetails := asSlice(counting["detail"])
+	if len(countingDetails) == 0 {
+		countingDetails = asSlice(counting["details"])
+	}
+	for _, raw := range countingDetails {
+		detail := asMap(raw)
+		width := asInt64(detail["videoWidth"])
+		height := asInt64(detail["videoHeight"])
+		if width > 0 && height > 0 {
+			return width, height
+		}
+	}
+
+	thumby := asMap(dataMap["thumby"])
+	width := asInt64(thumby["width"])
+	height := asInt64(thumby["height"])
+	if width > 0 && height > 0 {
+		return width, height
+	}
+
+	sprite := asMap(dataMap["sprite"])
+	width = asInt64(sprite["width"])
+	height = asInt64(sprite["height"])
+	if width > 0 && height > 0 {
+		return width, height
+	}
+
+	return 0, 0
 }
 
 func asMap(v any) bson.M {
@@ -599,6 +713,12 @@ func asMap(v any) bson.M {
 		m := bson.M{}
 		for k, val := range t {
 			m[k] = val
+		}
+		return m
+	case primitive.D:
+		m := bson.M{}
+		for _, elem := range t {
+			m[elem.Key] = elem.Value
 		}
 		return m
 	default:
@@ -623,6 +743,12 @@ func asSlice(v any) []any {
 		}
 		return res
 	case []bson.M:
+		res := make([]any, 0, len(t))
+		for _, item := range t {
+			res = append(res, item)
+		}
+		return res
+	case []primitive.D:
 		res := make([]any, 0, len(t))
 		for _, item := range t {
 			res = append(res, item)
@@ -734,7 +860,11 @@ func buildPatchSetFields(doc bson.M, analysis analysisSnapshot, fallbackOrganisa
 	metaAnalysisID := asString(metadata["analysisId"])
 	metaSpriteInterval := asInt64(metadata["spriteInterval"])
 	metaDominantColorsLen := len(asSlice(metadata["dominantColors"]))
-	metaClassificationsLen := len(asSlice(metadata["classifications"]))
+	metaClassifications := asSlice(metadata["classifications"])
+	metaClassificationsLen := len(metaClassifications)
+	metaWidth := asInt64(metadata["width"])
+	metaHeight := asInt64(metadata["height"])
+	metaResolution := asString(metadata["resolution"])
 	metaCount := asInt64(metadata["count"])
 
 	if thumbnailFile == "" {
@@ -762,8 +892,17 @@ func buildPatchSetFields(doc bson.M, analysis analysisSnapshot, fallbackOrganisa
 	if metaDominantColorsLen == 0 && len(analysis.DominantColors) > 0 {
 		setFields["metadata.dominantColors"] = analysis.DominantColors
 	}
-	if metaClassificationsLen == 0 && len(analysis.Classifications) > 0 {
+	if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications)) && len(analysis.Classifications) > 0 {
 		setFields["metadata.classifications"] = analysis.Classifications
+	}
+	if metaWidth <= 0 && analysis.Width > 0 {
+		setFields["metadata.width"] = analysis.Width
+	}
+	if metaHeight <= 0 && analysis.Height > 0 {
+		setFields["metadata.height"] = analysis.Height
+	}
+	if metaResolution == "" && analysis.Width > 0 && analysis.Height > 0 {
+		setFields["metadata.resolution"] = fmt.Sprintf("%dx%d", analysis.Width, analysis.Height)
 	}
 	if classificationSummaryLen == 0 && len(analysis.ClassificationSummary) > 0 {
 		setFields["classificationSummary"] = analysis.ClassificationSummary
@@ -774,7 +913,7 @@ func buildPatchSetFields(doc bson.M, analysis analysisSnapshot, fallbackOrganisa
 	if countingSummaryLen == 0 && len(analysis.CountingSummary) > 0 {
 		setFields["countingSummary"] = analysis.CountingSummary
 	}
-	if metaCount <= 0 && analysis.CountTotal > 0 {
+	if metaCount == 0 && analysis.CountTotal != 0 {
 		setFields["metadata.count"] = analysis.CountTotal
 	}
 
@@ -784,17 +923,41 @@ func buildPatchSetFields(doc bson.M, analysis analysisSnapshot, fallbackOrganisa
 func deriveClassificationsFromAnalysis(dataMap bson.M) []bson.M {
 	classify := asMap(dataMap["classify"])
 	details := asSlice(classify["details"])
+	if len(details) == 0 {
+		details = asSlice(dataMap["details"])
+	}
 	properties := toStringSlice(asSlice(classify["properties"]))
+	if len(properties) == 0 {
+		properties = toStringSlice(asSlice(dataMap["properties"]))
+	}
+	if len(properties) == 0 {
+		if classified := asString(dataMap["classified"]); classified != "" {
+			properties = append(properties, classified)
+		}
+	}
 
 	classifications := make([]bson.M, 0, len(details))
 	for _, item := range details {
 		detail := asMap(item)
 		key := asString(detail["classified"])
 		if key == "" {
+			key = asString(detail["objectName"])
+		}
+		if key == "" {
 			continue
 		}
 
 		centroids := toCentroids(detail["trajectCentroids"])
+		if len(centroids) == 0 {
+			centroids = toCentroidsFromTraject(detail["traject"])
+		}
+		if len(centroids) == 0 {
+			x, okX := toFloat64(detail["x"])
+			y, okY := toFloat64(detail["y"])
+			if okX && okY {
+				centroids = [][]float64{{x, y}}
+			}
+		}
 		classifications = append(classifications, bson.M{
 			"key":       key,
 			"centroids": centroids,
@@ -869,6 +1032,7 @@ func deriveCountingSummaryFromAnalysis(dataMap bson.M) ([]bson.M, int64) {
 	}
 
 	countByType := map[string]int64{}
+	durationByType := map[string]float64{}
 	var total int64
 	for _, raw := range records {
 		record := asMap(raw)
@@ -876,12 +1040,35 @@ func deriveCountingSummaryFromAnalysis(dataMap bson.M) ([]bson.M, int64) {
 		if recordType == "" {
 			continue
 		}
-		value := asInt64(record["count"])
-		if value <= 0 {
-			value = 1
+		rawValue := asInt64(record["count"])
+		total += rawValue
+
+		normalizedType := strings.ToLower(strings.TrimSpace(recordType))
+		duration := 0.0
+		if d, ok := toFloat64(record["duration"]); ok {
+			duration = d
 		}
-		countByType[recordType] += value
-		total += value
+
+		switch normalizedType {
+		case "counting_line":
+			if rawValue == 0 {
+				continue
+			}
+			mappedKey := "countingIn"
+			mappedCount := rawValue
+			if rawValue < 0 {
+				mappedKey = "countingOut"
+				mappedCount = -rawValue
+			}
+			countByType[mappedKey] += mappedCount
+			durationByType[mappedKey] += duration
+		case "counting_region":
+			countByType["countingRegion"] += rawValue
+			durationByType["countingRegion"] += duration
+		default:
+			countByType[recordType] += rawValue
+			durationByType[recordType] += duration
+		}
 	}
 
 	keys := make([]string, 0, len(countByType))
@@ -892,10 +1079,14 @@ func deriveCountingSummaryFromAnalysis(dataMap bson.M) ([]bson.M, int64) {
 
 	summary := make([]bson.M, 0, len(keys))
 	for _, key := range keys {
-		summary = append(summary, bson.M{
+		entry := bson.M{
 			"key":   key,
 			"count": countByType[key],
-		})
+		}
+		if durationByType[key] > 0 {
+			entry["duration"] = durationByType[key]
+		}
+		summary = append(summary, entry)
 	}
 
 	return summary, total
@@ -923,6 +1114,38 @@ func toCentroids(v any) [][]float64 {
 	return centroids
 }
 
+func toCentroidsFromTraject(v any) [][]float64 {
+	rawTraject := asSlice(v)
+	if len(rawTraject) == 0 {
+		return nil
+	}
+
+	centroids := make([][]float64, 0, len(rawTraject))
+	for _, raw := range rawTraject {
+		point := asSlice(raw)
+		if len(point) >= 4 {
+			x1, ok1 := toFloat64(point[0])
+			y1, ok2 := toFloat64(point[1])
+			x2, ok3 := toFloat64(point[2])
+			y2, ok4 := toFloat64(point[3])
+			if ok1 && ok2 && ok3 && ok4 {
+				centroids = append(centroids, []float64{(x1 + x2) / 2, (y1 + y2) / 2})
+				continue
+			}
+		}
+
+		if len(point) >= 2 {
+			x, okX := toFloat64(point[0])
+			y, okY := toFloat64(point[1])
+			if okX && okY {
+				centroids = append(centroids, []float64{x, y})
+			}
+		}
+	}
+
+	return centroids
+}
+
 func toFloat64(v any) (float64, bool) {
 	switch t := v.(type) {
 	case float64:
@@ -935,6 +1158,16 @@ func toFloat64(v any) (float64, bool) {
 		return float64(t), true
 	case int64:
 		return float64(t), true
+	case string:
+		value := strings.TrimSpace(t)
+		if value == "" {
+			return 0, false
+		}
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
 	default:
 		return 0, false
 	}
@@ -961,4 +1194,18 @@ func toStringSlice(values []any) []string {
 		}
 	}
 	return out
+}
+
+func hasAnyNonEmptyCentroids(classifications []any) bool {
+	for _, raw := range classifications {
+		classification := asMap(raw)
+		if classification == nil {
+			continue
+		}
+		centroids := asSlice(classification["centroids"])
+		if len(centroids) > 0 {
+			return true
+		}
+	}
+	return false
 }
