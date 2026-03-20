@@ -5,6 +5,7 @@ This repository contains CLI tools for performing specific automations.
 - `vault-to-hub-migration`: Migrating data from a Vault database to a Hub database.
 - `reprocess-media`: Re-queue hub media for analysis when analysis is missing.
 - `audit-legacy-compat`: Auditing legacy data shape compatibility across domains.
+- `migrate-legacy-media`: Backfilling legacy media documents to current media shape.
 - `generate-default-labels`: Adding labels to existing users.
 
 
@@ -18,6 +19,10 @@ kubectl apply -f jobs/vault-to-hub-migration-job.yaml
 
 ```sh
 kubectl apply -f jobs/generate-default-labels-job.yaml
+```
+
+```sh
+kubectl apply -f jobs/migrate-legacy-media-job.yaml
 ```
 
 ## Installation and contributing
@@ -201,6 +206,46 @@ go run main.go -action audit-legacy-compat \
                -start-timestamp <startTimestamp> \
                -end-timestamp <endTimestamp> \
                -domains media,analysis,users
+```
+
+### Migrate legacy media
+
+This tool backfills missing fields on legacy media documents and can insert missing media docs from analysis-shaped records.
+
+#### Command Line Arguments
+
+- `-action`: The action to take (required). For this migration, use `migrate-legacy-media`.
+- `-mongodb-uri`: The MongoDB URI (optional if host and port are provided).
+- `-mongodb-host`: The MongoDB host (optional if URI is provided).
+- `-mongodb-port`: The MongoDB port (optional if URI is provided).
+- `-mongodb-source-database`: Source database name (optional if destination database is set).
+- `-mongodb-destination-database`: Destination database name (optional if source database is set).
+- `-mongodb-database-credentials`: The database credentials (optional).
+- `-mongodb-username`: The MongoDB username (optional).
+- `-mongodb-password`: The MongoDB password (optional).
+- `-organisation-id`: Recommended. Scope migration to one organisation.
+- `-username`: Optional alternative to resolve organisation scope.
+- `-start-timestamp`: Recommended. Use bounded windows for safer runs.
+- `-end-timestamp`: Recommended. Use bounded windows for safer runs.
+- `-mode`: `dry-run` (recommended first) or `live`.
+
+#### Recommended run strategy
+
+1. Run `dry-run` first with `-organisation-id` and a bounded timestamp window.
+2. Review the report (`Needs`, `Cases`, examples).
+3. Run `live` with the same scope.
+4. Repeat per time window until complete.
+
+#### Example
+
+```sh
+go run main.go -action migrate-legacy-media \
+               -mode dry-run \
+               -mongodb-uri "mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>" \
+               -mongodb-destination-database=<database> \
+               -organisation-id <organisationId> \
+               -start-timestamp <startTimestamp> \
+               -end-timestamp <endTimestamp>
 ```
 
 ### Generate default labels
