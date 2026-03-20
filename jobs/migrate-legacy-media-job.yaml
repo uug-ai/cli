@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: uugai-cli-migrate-legacy-media
+spec:
+  template:
+    spec:
+      containers:
+      - name: init-container
+        image: ghcr.io/uug-ai/cli:v1.2.11
+        command: ['/main', '-action', 'migrate-legacy-media',
+          '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
+          #'-mongodb-host', '<host>',
+          #'-mongodb-port', '27017',
+          #'-mongodb-username', '<username>',
+          #'-mongodb-password', '<password>',
+          #'-mongodb-database-credentials', 'admin',
+          '-mongodb-destination-database', 'Kerberos', # or use -mongodb-source-database if needed
+
+          # Recommended safety flags:
+          '-mode', 'dry-run', # switch to live only after reviewing dry-run output
+          '-organisation-id', '<organisationId>', # optional, leave empty to scan all orgs, or specify to limit scope
+          #'-username', '<username>', # optional alternative to resolve organisation scope
+          '-start-timestamp', '1735689600', # recommended: run in time windows (example: 2025-01-01 UTC)
+          '-end-timestamp', '1738367999',   # example: 2025-01-31 23:59:59 UTC
+        ]
+
+      restartPolicy: Never

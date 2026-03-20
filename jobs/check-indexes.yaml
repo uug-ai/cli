@@ -17,6 +17,3 @@ spec:
         ]
             
       restartPolicy: Never
-      volumes:
-      - name: hub-import
-        emptyDir: {}

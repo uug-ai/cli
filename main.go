@@ -12,6 +12,8 @@ func promptAction() string {
 	choices := []string{
 		"vault-to-hub-migration",
 		"reprocess-media",
+		"migrate-legacy-media",
+		"audit-legacy-compat",
 		"generate-default-labels",
 		"check-indexes",
 		"seed-media",
@@ -61,6 +63,7 @@ func main() {
 	queueName := flag.String("queue", "", "The queue used to transfer the data")
 	vaultUrl := flag.String("vault-url", "", "Vault API URL override (e.g. https://vault.example.com/api)")
 	username := flag.String("username", "", "Specific username to target")
+	organisationId := flag.String("organisation-id", "", "Specific organisation/user ID to target")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
 	timezone := flag.String("timezone", "", "Timezone")
@@ -103,6 +106,7 @@ func main() {
 	// useExistingDevices := flag.Bool("use-existing-devices", false, "Use existing devices instead of creating new ones")
 	collections := flag.String("collections", "", "Comma separated list of collections to migrate (default all)")
 	indexVersion := flag.String("index-version", "", "Path to the indexes specification file")
+	domains := flag.String("domains", "", "Comma separated list of compatibility domains (default: media,analysis,users,devices,groups,sites,settings)")
 
 	flag.Parse()
 
@@ -151,6 +155,39 @@ func main() {
 			*timezone,
 			*batchSize,
 			*batchDelay,
+		)
+	case "migrate-legacy-media":
+		fmt.Println("Running legacy media migration dry-run...")
+		actions.MigrateLegacyMedia(*mode,
+			*mongodbURI,
+			*mongodbHost,
+			*mongodbPort,
+			*mongodbSourceDatabase,
+			*mongodbDestinationDatabase,
+			*mongodbDatabaseCredentials,
+			*mongodbUsername,
+			*mongodbPassword,
+			*username,
+			*organisationId,
+			*startTimestamp,
+			*endTimestamp,
+		)
+	case "audit-legacy-compat":
+		fmt.Println("Running legacy compatibility audit...")
+		actions.AuditLegacyCompatibility(*mode,
+			*mongodbURI,
+			*mongodbHost,
+			*mongodbPort,
+			*mongodbSourceDatabase,
+			*mongodbDestinationDatabase,
+			*mongodbDatabaseCredentials,
+			*mongodbUsername,
+			*mongodbPassword,
+			*username,
+			*organisationId,
+			*startTimestamp,
+			*endTimestamp,
+			*domains,
 		)
 	case "generate-default-labels":
 		fmt.Println("Generating default labels...")
