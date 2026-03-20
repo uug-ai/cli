@@ -544,7 +544,7 @@ func MigrateLegacyMedia(mode string,
 			report.Needs["metadata.dominantColors"]++
 			needPatch = true
 		}
-		if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications)) && len(analysis.Classifications) > 0 {
+		if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications) || hasCentroidsOutsideNormalizedRange(metaClassifications)) && len(analysis.Classifications) > 0 {
 			report.Needs["metadata.classifications"]++
 			needPatch = true
 		}
@@ -892,7 +892,7 @@ func buildPatchSetFields(doc bson.M, analysis analysisSnapshot, fallbackOrganisa
 	if metaDominantColorsLen == 0 && len(analysis.DominantColors) > 0 {
 		setFields["metadata.dominantColors"] = analysis.DominantColors
 	}
-	if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications)) && len(analysis.Classifications) > 0 {
+	if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications) || hasCentroidsOutsideNormalizedRange(metaClassifications)) && len(analysis.Classifications) > 0 {
 		setFields["metadata.classifications"] = analysis.Classifications
 	}
 	if metaWidth <= 0 && analysis.Width > 0 {
@@ -947,14 +947,19 @@ func deriveClassificationsFromAnalysis(dataMap bson.M) []bson.M {
 			continue
 		}
 
+		frameWidth := asInt64(detail["frameWidth"])
+		frameHeight := asInt64(detail["frameHeight"])
+
 		centroids := toCentroids(detail["trajectCentroids"])
+		centroids = normalizeCentroidsIfNeeded(centroids, frameWidth, frameHeight)
 		if len(centroids) == 0 {
-			centroids = toCentroidsFromTraject(detail["traject"])
+			centroids = toCentroidsFromTraject(detail["traject"], frameWidth, frameHeight)
 		}
 		if len(centroids) == 0 {
 			x, okX := toFloat64(detail["x"])
 			y, okY := toFloat64(detail["y"])
 			if okX && okY {
+				x, y = normalizePointIfNeeded(x, y, frameWidth, frameHeight)
 				centroids = [][]float64{{x, y}}
 			}
 		}
@@ -1114,7 +1119,7 @@ func toCentroids(v any) [][]float64 {
 	return centroids
 }
 
-func toCentroidsFromTraject(v any) [][]float64 {
+func toCentroidsFromTraject(v any, frameWidth int64, frameHeight int64) [][]float64 {
 	rawTraject := asSlice(v)
 	if len(rawTraject) == 0 {
 		return nil
@@ -1129,7 +1134,8 @@ func toCentroidsFromTraject(v any) [][]float64 {
 			x2, ok3 := toFloat64(point[2])
 			y2, ok4 := toFloat64(point[3])
 			if ok1 && ok2 && ok3 && ok4 {
-				centroids = append(centroids, []float64{(x1 + x2) / 2, (y1 + y2) / 2})
+				x, y := normalizePointIfNeeded((x1+x2)/2, (y1+y2)/2, frameWidth, frameHeight)
+				centroids = append(centroids, []float64{x, y})
 				continue
 			}
 		}
@@ -1138,12 +1144,54 @@ func toCentroidsFromTraject(v any) [][]float64 {
 			x, okX := toFloat64(point[0])
 			y, okY := toFloat64(point[1])
 			if okX && okY {
+				x, y = normalizePointIfNeeded(x, y, frameWidth, frameHeight)
 				centroids = append(centroids, []float64{x, y})
 			}
 		}
 	}
 
 	return centroids
+}
+
+func normalizeCentroidsIfNeeded(centroids [][]float64, frameWidth int64, frameHeight int64) [][]float64 {
+	if len(centroids) == 0 {
+		return centroids
+	}
+
+	out := make([][]float64, 0, len(centroids))
+	for _, point := range centroids {
+		if len(point) < 2 {
+			continue
+		}
+		x, y := normalizePointIfNeeded(point[0], point[1], frameWidth, frameHeight)
+		out = append(out, []float64{x, y})
+	}
+	return out
+}
+
+func normalizePointIfNeeded(x float64, y float64, frameWidth int64, frameHeight int64) (float64, float64) {
+	if frameWidth <= 0 || frameHeight <= 0 {
+		return x, y
+	}
+
+	// Region filters use 0..100 coordinate space.
+	if (x >= 0 && x <= 100) && (y >= 0 && y <= 100) {
+		return x, y
+	}
+
+	nx := (x * 100.0) / float64(frameWidth)
+	ny := (y * 100.0) / float64(frameHeight)
+	return clamp(nx, 0, 100), clamp(ny, 0, 100)
+}
+
+func clamp(v float64, min float64, max float64) float64 {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
 
 func toFloat64(v any) (float64, bool) {
@@ -1205,6 +1253,31 @@ func hasAnyNonEmptyCentroids(classifications []any) bool {
 		centroids := asSlice(classification["centroids"])
 		if len(centroids) > 0 {
 			return true
+		}
+	}
+	return false
+}
+
+func hasCentroidsOutsideNormalizedRange(classifications []any) bool {
+	for _, raw := range classifications {
+		classification := asMap(raw)
+		if classification == nil {
+			continue
+		}
+		centroids := asSlice(classification["centroids"])
+		for _, rawPoint := range centroids {
+			point := asSlice(rawPoint)
+			if len(point) < 2 {
+				continue
+			}
+			x, okX := toFloat64(point[0])
+			y, okY := toFloat64(point[1])
+			if !okX || !okY {
+				continue
+			}
+			if x < 0 || x > 100 || y < 0 || y > 100 {
+				return true
+			}
 		}
 	}
 	return false
