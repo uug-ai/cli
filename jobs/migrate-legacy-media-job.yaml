@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: init-container
-        image: ghcr.io/uug-ai/cli:v1.2.11
+        image: ghcr.io/uug-ai/cli:v1.2.12
         command: ['/main', '-action', 'migrate-legacy-media',
           '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
           #'-mongodb-host', '<host>',
