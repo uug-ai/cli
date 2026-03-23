@@ -70,6 +70,7 @@ func MigrateLegacyMedia(mode string,
 	startTimestamp int64,
 	endTimestamp int64,
 	migrationTimeoutMinutes int,
+	skipMatchedCount bool,
 	generateDefaultMarkerOptions bool,
 ) {
 	dbName := strings.TrimSpace(mongodbDestinationDatabase)
@@ -163,12 +164,13 @@ func MigrateLegacyMedia(mode string,
 		StartTS:      startTimestamp,
 		EndTS:        endTimestamp,
 		Cases: map[string]int64{
-			"new_shape_compliant":          0,
-			"legacy_media_missing_fields":  0,
-			"analysis_shaped_in_media":     0,
-			"invalid_media_missing_key":    0,
+			"new_shape_compliant":             0,
+			"legacy_media_missing_fields":     0,
+			"analysis_shaped_in_media":        0,
+			"invalid_media_missing_key":       0,
+			"missing_matching_analysis":       0,
 			"candidate_insert_from_analysis": 0,
-			"candidate_patch_existing":     0,
+			"candidate_patch_existing":        0,
 			"already_enriched_with_analysis": 0,
 		},
 		Needs: map[string]int64{
@@ -248,9 +250,15 @@ func MigrateLegacyMedia(mode string,
 		"metadata": 1,
 	}
 
-	count, err := mediaCollection.CountDocuments(ctx, match)
-	if err == nil {
-		report.MatchedFilter = count
+	if !skipMatchedCount {
+		count, err := mediaCollection.CountDocuments(ctx, match)
+		if err == nil {
+			report.MatchedFilter = count
+		} else {
+			log.Printf("Warning: CountDocuments failed: %v\n", err)
+		}
+	} else {
+		report.MatchedFilter = -1
 	}
 
 	cursor, err := mediaCollection.Find(ctx, match, options.Find().SetProjection(projection).SetBatchSize(2000))
@@ -279,6 +287,9 @@ func MigrateLegacyMedia(mode string,
 			if len(insertModels) > 0 {
 				result, err := mediaCollection.BulkWrite(ctx, insertModels, options.BulkWrite().SetOrdered(false))
 				if err != nil {
+					if result != nil {
+						report.Writes["insert_applied"] += result.UpsertedCount
+					}
 					report.Writes["errors"]++
 					log.Printf("Warning: insert bulk write error: %v\n", err)
 				} else if result != nil {
@@ -288,6 +299,9 @@ func MigrateLegacyMedia(mode string,
 			if len(patchModels) > 0 {
 				result, err := mediaCollection.BulkWrite(ctx, patchModels, options.BulkWrite().SetOrdered(false))
 				if err != nil {
+					if result != nil {
+						report.Writes["patch_applied"] += result.ModifiedCount
+					}
 					report.Writes["errors"]++
 					log.Printf("Warning: patch bulk write error: %v\n", err)
 				} else if result != nil {
@@ -607,7 +621,13 @@ func processLegacyMediaDoc(
 		return
 	}
 
-	analysis := analysisByKey[videoFile]
+	analysis, hasAnalysis := analysisByKey[videoFile]
+	if !hasAnalysis {
+		report.Cases["missing_matching_analysis"]++
+		if _, ok := report.Examples["missing_matching_analysis"]; !ok {
+			report.Examples["missing_matching_analysis"] = videoFile
+		}
+	}
 	collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.ClassificationSummary))
 	collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.Classifications))
 
