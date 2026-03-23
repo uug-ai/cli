@@ -997,6 +997,9 @@ func generateDefaultClassificationMarkerOptions(
 		"options_attempted":    0,
 		"options_upserted":     0,
 		"options_modified":     0,
+		"category_options_attempted": 0,
+		"category_options_upserted":  0,
+		"category_options_modified":  0,
 		"errors":               0,
 	}
 
@@ -1045,13 +1048,40 @@ func generateDefaultClassificationMarkerOptions(
 	}
 
 	markerOptionsColl := hubDB.Collection("marker_options")
+	markerCategoryOptionsColl := hubDB.Collection("marker_category_options")
 	if !liveMode {
 		stats["options_attempted"] = int64(len(allClassificationOptions) * len(targetUserIDs))
+		stats["category_options_attempted"] = int64(len(targetUserIDs))
 		return stats
 	}
 
 	now := time.Now().Unix()
 	for _, userID := range targetUserIDs {
+		categoryFilter := bson.M{
+			"organisationId": userID,
+			"value":          "classification",
+		}
+		categoryUpdate := bson.M{
+			"$setOnInsert": bson.M{
+				"organisationId": userID,
+				"text":           "classification",
+				"value":          "classification",
+				"createdAt":      now,
+				"updatedAt":      now,
+			},
+		}
+		stats["category_options_attempted"]++
+		categoryResult, categoryErr := markerCategoryOptionsColl.UpdateOne(ctx, categoryFilter, categoryUpdate, options.Update().SetUpsert(true))
+		if categoryErr != nil {
+			stats["errors"]++
+			continue
+		}
+		if categoryResult.UpsertedCount > 0 {
+			stats["category_options_upserted"]++
+		} else if categoryResult.ModifiedCount > 0 {
+			stats["category_options_modified"]++
+		}
+
 		for _, option := range allClassificationOptions {
 			filter := bson.M{
 				"organisationId": userID,
