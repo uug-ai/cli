@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -19,6 +20,7 @@ import (
 
 type migrateLegacyMediaReport struct {
 	Mode          string            `json:"mode"`
+	Version       int               `json:"version"`
 	Database      string            `json:"database"`
 	Organisation  string            `json:"organisationId,omitempty"`
 	Username      string            `json:"username,omitempty"`
@@ -32,6 +34,7 @@ type migrateLegacyMediaReport struct {
 	Examples      map[string]string `json:"examples,omitempty"`
 	Writes        map[string]int64  `json:"writes,omitempty"`
 	MarkerOptions map[string]int64  `json:"markerOptions,omitempty"`
+	Indexes       map[string]int64  `json:"indexes,omitempty"`
 }
 
 type analysisSnapshot struct {
@@ -71,8 +74,12 @@ func MigrateLegacyMedia(mode string,
 	endTimestamp int64,
 	migrationTimeoutMinutes int,
 	skipMatchedCount bool,
+	migrationVersion int,
+	checkMigrationIndexes bool,
+	applyMigrationIndexes bool,
 	generateDefaultMarkerOptions bool,
 ) {
+	const latestMigrationVersion = 1
 	dbName := strings.TrimSpace(mongodbDestinationDatabase)
 	if dbName == "" {
 		dbName = strings.TrimSpace(mongodbSourceDatabase)
@@ -93,6 +100,13 @@ func MigrateLegacyMedia(mode string,
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode != "dry-run" && mode != "live" {
 		log.Printf("Action migrate-legacy-media expects mode dry-run or live; got mode=%q\n", mode)
+		return
+	}
+	if migrationVersion <= 0 {
+		migrationVersion = latestMigrationVersion
+	}
+	if migrationVersion > latestMigrationVersion {
+		log.Printf("Unsupported migration version %d (latest supported is %d)\n", migrationVersion, latestMigrationVersion)
 		return
 	}
 	liveMode := mode == "live"
@@ -158,6 +172,7 @@ func MigrateLegacyMedia(mode string,
 
 	report := migrateLegacyMediaReport{
 		Mode:         mode,
+		Version:      migrationVersion,
 		Database:     dbName,
 		Organisation: orgID,
 		Username:     strings.TrimSpace(username),
@@ -214,9 +229,27 @@ func MigrateLegacyMedia(mode string,
 			"errors":          0,
 			"skipped":         0,
 		},
+		Indexes: map[string]int64{
+			"checked":  0,
+			"existing": 0,
+			"missing":  0,
+			"created":  0,
+			"errors":   0,
+		},
 	}
 	if generateDefaultMarkerOptions {
 		report.MarkerOptions["enabled"] = 1
+	}
+	if checkMigrationIndexes || applyMigrationIndexes {
+		stats, examples := checkOrApplyLegacyMigrationIndexes(ctx, hubDB, applyMigrationIndexes)
+		for k, v := range stats {
+			report.Indexes[k] += v
+		}
+		for k, v := range examples {
+			if _, ok := report.Examples[k]; !ok {
+				report.Examples[k] = v
+			}
+		}
 	}
 
 	projection := bson.M{
@@ -230,7 +263,6 @@ func MigrateLegacyMedia(mode string,
 		"userid": 1,
 		"user_id": 1,
 		"deviceid": 1,
-		"data": 1,
 		"deviceId": 1,
 		"deviceKey": 1,
 		"organisationId": 1,
@@ -272,16 +304,18 @@ func MigrateLegacyMedia(mode string,
 	classificationOptionSet := make(map[string]string)
 	batchItems := make([]bson.M, 0, mediaBatchSize)
 	batchKeysSet := make(map[string]struct{}, mediaBatchSize)
+	batchAnalysisCandidates := make([]any, 0, mediaBatchSize)
 
-	flushBatch := func() {
+		flushBatch := func() {
 		if len(batchItems) == 0 {
 			return
 		}
 		analysisByKey := fetchAnalysisSnapshotsByKeys(ctx, analysisCollection, orgID, batchKeysSet)
+		analysisShapedIDs := fetchAnalysisShapedIDsForBatch(ctx, mediaCollection, batchAnalysisCandidates)
 		patchModels := make([]mongo.WriteModel, 0, len(batchItems))
 		insertModels := make([]mongo.WriteModel, 0, len(batchItems))
 		for _, doc := range batchItems {
-			processLegacyMediaDoc(doc, analysisByKey, liveMode, orgID, &report, classificationOptionSet, &patchModels, &insertModels)
+			processLegacyMediaDocByVersion(migrationVersion, doc, analysisByKey, analysisShapedIDs, liveMode, orgID, &report, classificationOptionSet, &patchModels, &insertModels)
 		}
 		if liveMode {
 			if len(insertModels) > 0 {
@@ -290,7 +324,7 @@ func MigrateLegacyMedia(mode string,
 					if result != nil {
 						report.Writes["insert_applied"] += result.UpsertedCount
 					}
-					report.Writes["errors"]++
+					report.Writes["errors"] += bulkWriteErrorCount(err)
 					log.Printf("Warning: insert bulk write error: %v\n", err)
 				} else if result != nil {
 					report.Writes["insert_applied"] += result.UpsertedCount
@@ -302,7 +336,7 @@ func MigrateLegacyMedia(mode string,
 					if result != nil {
 						report.Writes["patch_applied"] += result.ModifiedCount
 					}
-					report.Writes["errors"]++
+					report.Writes["errors"] += bulkWriteErrorCount(err)
 					log.Printf("Warning: patch bulk write error: %v\n", err)
 				} else if result != nil {
 					report.Writes["patch_applied"] += result.ModifiedCount
@@ -311,6 +345,7 @@ func MigrateLegacyMedia(mode string,
 		}
 		batchItems = batchItems[:0]
 		batchKeysSet = make(map[string]struct{}, mediaBatchSize)
+		batchAnalysisCandidates = batchAnalysisCandidates[:0]
 	}
 
 	for cursor.Next(ctx) {
@@ -329,6 +364,9 @@ func MigrateLegacyMedia(mode string,
 		key := asString(doc["key"])
 		if key != "" {
 			batchKeysSet[key] = struct{}{}
+		}
+		if key != "" && videoFile == "" && doc["_id"] != nil {
+			batchAnalysisCandidates = append(batchAnalysisCandidates, doc["_id"])
 		}
 
 		if report.Scanned%5000 == 0 {
@@ -480,9 +518,52 @@ func fetchAnalysisSnapshotsByKeys(
 	return analysisByKey
 }
 
+func fetchAnalysisShapedIDsForBatch(
+	ctx context.Context,
+	mediaCollection *mongo.Collection,
+	candidateIDs []any,
+) map[string]struct{} {
+	shaped := make(map[string]struct{}, len(candidateIDs))
+	if len(candidateIDs) == 0 {
+		return shaped
+	}
+
+	filter := bson.M{
+		"_id":  bson.M{"$in": candidateIDs},
+		"data": bson.M{"$exists": true},
+	}
+	projection := bson.M{"_id": 1, "data": 1}
+	cursor, err := mediaCollection.Find(ctx, filter, options.Find().SetProjection(projection).SetBatchSize(1000))
+	if err != nil {
+		log.Printf("Warning: failed querying analysis-shaped candidates: %v\n", err)
+		return shaped
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
+			continue
+		}
+		if asMap(doc["data"]) == nil {
+			continue
+		}
+		id := objectIDToHex(doc["_id"])
+		if id == "" {
+			continue
+		}
+		shaped[id] = struct{}{}
+	}
+	if err := cursor.Err(); err != nil {
+		log.Printf("Warning: analysis-shaped candidate cursor error: %v\n", err)
+	}
+	return shaped
+}
+
 func processLegacyMediaDoc(
 	doc bson.M,
 	analysisByKey map[string]analysisSnapshot,
+	analysisShapedIDs map[string]struct{},
 	liveMode bool,
 	orgID string,
 	report *migrateLegacyMediaReport,
@@ -520,7 +601,8 @@ func processLegacyMediaDoc(
 	markerNamesLen := int64(len(asSlice(doc["markerNames"])))
 	countingSummaryLen := int64(len(asSlice(doc["countingSummary"])))
 
-	isAnalysisShaped := key != "" && videoFile == "" && asMap(doc["data"]) != nil
+	_, isAnalysisShaped := analysisShapedIDs[objectIDToHex(doc["_id"])]
+	isAnalysisShaped = key != "" && videoFile == "" && isAnalysisShaped
 	if isAnalysisShaped {
 		report.Cases["analysis_shaped_in_media"]++
 		if _, ok := report.Examples["analysis_shaped_in_media"]; !ok {
@@ -738,6 +820,166 @@ func processLegacyMediaDoc(
 	if metaAnalysisID != "" && metaSpriteInterval > 0 {
 		report.Cases["already_enriched_with_analysis"]++
 	}
+}
+
+func processLegacyMediaDocByVersion(
+	version int,
+	doc bson.M,
+	analysisByKey map[string]analysisSnapshot,
+	analysisShapedIDs map[string]struct{},
+	liveMode bool,
+	orgID string,
+	report *migrateLegacyMediaReport,
+	classificationOptionSet map[string]string,
+	patchModels *[]mongo.WriteModel,
+	insertModels *[]mongo.WriteModel,
+) {
+	switch version {
+	case 1:
+		processLegacyMediaDoc(doc, analysisByKey, analysisShapedIDs, liveMode, orgID, report, classificationOptionSet, patchModels, insertModels)
+	default:
+		// Guardrail for future versions: migration version is validated at action entry.
+		processLegacyMediaDoc(doc, analysisByKey, analysisShapedIDs, liveMode, orgID, report, classificationOptionSet, patchModels, insertModels)
+	}
+}
+
+func bulkWriteErrorCount(err error) int64 {
+	if err == nil {
+		return 0
+	}
+	var bwe mongo.BulkWriteException
+	if errors.As(err, &bwe) && len(bwe.WriteErrors) > 0 {
+		return int64(len(bwe.WriteErrors))
+	}
+	return 1
+}
+
+func checkOrApplyLegacyMigrationIndexes(
+	ctx context.Context,
+	hubDB *mongo.Database,
+	apply bool,
+) (map[string]int64, map[string]string) {
+	stats := map[string]int64{
+		"checked":  0,
+		"existing": 0,
+		"missing":  0,
+		"created":  0,
+		"errors":   0,
+	}
+	examples := map[string]string{}
+
+	type indexSpec struct {
+		collection string
+		name       string
+		model      mongo.IndexModel
+	}
+
+	specs := []indexSpec{
+		{
+			collection: "media",
+			name:       "organisationId_1_startTimestamp_1_endTimestamp_1",
+			model: mongo.IndexModel{
+				Keys:    bson.D{{Key: "organisationId", Value: 1}, {Key: "startTimestamp", Value: 1}, {Key: "endTimestamp", Value: 1}},
+				Options: options.Index().SetName("organisationId_1_startTimestamp_1_endTimestamp_1"),
+			},
+		},
+		{
+			collection: "analysis",
+			name:       "key_1_userid_1",
+			model: mongo.IndexModel{
+				Keys:    bson.D{{Key: "key", Value: 1}, {Key: "userid", Value: 1}},
+				Options: options.Index().SetName("key_1_userid_1"),
+			},
+		},
+		{
+			collection: "analysis",
+			name:       "key_1_user_id_1",
+			model: mongo.IndexModel{
+				Keys:    bson.D{{Key: "key", Value: 1}, {Key: "user_id", Value: 1}},
+				Options: options.Index().SetName("key_1_user_id_1"),
+			},
+		},
+		{
+			collection: "marker_options",
+			name:       "organisationId_1_value_1",
+			model: mongo.IndexModel{
+				Keys:    bson.D{{Key: "organisationId", Value: 1}, {Key: "value", Value: 1}},
+				Options: options.Index().SetName("organisationId_1_value_1").SetUnique(true),
+			},
+		},
+		{
+			collection: "marker_options",
+			name:       "organisationId_1_updatedAt_-1__id_-1",
+			model: mongo.IndexModel{
+				Keys:    bson.D{{Key: "organisationId", Value: 1}, {Key: "updatedAt", Value: -1}, {Key: "_id", Value: -1}},
+				Options: options.Index().SetName("organisationId_1_updatedAt_-1__id_-1"),
+			},
+		},
+	}
+
+	cache := make(map[string]map[string]struct{})
+	for _, spec := range specs {
+		stats["checked"]++
+		names, ok := cache[spec.collection]
+		if !ok {
+			indexNames, err := listCollectionIndexNames(ctx, hubDB.Collection(spec.collection))
+			if err != nil {
+				stats["errors"]++
+				if _, exists := examples["index_list_error"]; !exists {
+					examples["index_list_error"] = spec.collection
+				}
+				continue
+			}
+			names = indexNames
+			cache[spec.collection] = names
+		}
+
+		if _, exists := names[spec.name]; exists {
+			stats["existing"]++
+			continue
+		}
+		stats["missing"]++
+		if !apply {
+			continue
+		}
+
+		_, err := hubDB.Collection(spec.collection).Indexes().CreateOne(ctx, spec.model)
+		if err != nil {
+			stats["errors"]++
+			if _, exists := examples["index_create_error"]; !exists {
+				examples["index_create_error"] = spec.collection + ":" + spec.name
+			}
+			continue
+		}
+		stats["created"]++
+		names[spec.name] = struct{}{}
+	}
+
+	return stats, examples
+}
+
+func listCollectionIndexNames(ctx context.Context, coll *mongo.Collection) (map[string]struct{}, error) {
+	names := map[string]struct{}{}
+	cursor, err := coll.Indexes().List(ctx)
+	if err != nil {
+		return names, err
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var idx bson.M
+		if err := cursor.Decode(&idx); err != nil {
+			continue
+		}
+		name := asString(idx["name"])
+		if name != "" {
+			names[name] = struct{}{}
+		}
+	}
+	if err := cursor.Err(); err != nil {
+		return names, err
+	}
+	return names, nil
 }
 
 func generateDefaultClassificationMarkerOptions(

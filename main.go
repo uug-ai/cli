@@ -68,6 +68,9 @@ func main() {
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
 	migrationTimeoutMinutes := flag.Int("migration-timeout-minutes", 60, "Timeout in minutes for migrate-legacy-media and related long scans (0 disables timeout)")
 	skipMatchedCount := flag.Bool("skip-matched-count", true, "Skip initial CountDocuments in migrate-legacy-media for better performance on large datasets")
+	migrationVersion := flag.Int("migration-version", 1, "Migration step version for migrate-legacy-media (defaults to latest supported)")
+	checkMigrationIndexes := flag.Bool("check-migration-indexes", false, "Check required indexes for migrate-legacy-media and report their status")
+	applyMigrationIndexes := flag.Bool("apply-migration-indexes", false, "Create missing required indexes for migrate-legacy-media")
 	generateDefaultMarkerOptions := flag.Bool("generate-default-marker-options", false, "When running migrate-legacy-media, generate default classification marker_options for users in the organisation scope")
 	timezone := flag.String("timezone", "", "Timezone")
 	mode := flag.String("mode", "dry-run", "Mode")
@@ -176,6 +179,9 @@ func main() {
 			*endTimestamp,
 			*migrationTimeoutMinutes,
 			*skipMatchedCount,
+			*migrationVersion,
+			*checkMigrationIndexes,
+			*applyMigrationIndexes,
 			*generateDefaultMarkerOptions,
 		)
 	case "audit-legacy-compat":
