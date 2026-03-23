@@ -66,6 +66,7 @@ func main() {
 	organisationId := flag.String("organisation-id", "", "Specific organisation/user ID to target")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
+	migrationTimeoutMinutes := flag.Int("migration-timeout-minutes", 60, "Timeout in minutes for migrate-legacy-media and related long scans (0 disables timeout)")
 	generateDefaultMarkerOptions := flag.Bool("generate-default-marker-options", false, "When running migrate-legacy-media, generate default classification marker_options for users in the organisation scope")
 	timezone := flag.String("timezone", "", "Timezone")
 	mode := flag.String("mode", "dry-run", "Mode")
@@ -158,7 +159,7 @@ func main() {
 			*batchDelay,
 		)
 	case "migrate-legacy-media":
-		fmt.Println("Running legacy media migration dry-run...")
+		fmt.Printf("Running legacy media migration (%s)...\n", *mode)
 		actions.MigrateLegacyMedia(*mode,
 			*mongodbURI,
 			*mongodbHost,
@@ -172,6 +173,7 @@ func main() {
 			*organisationId,
 			*startTimestamp,
 			*endTimestamp,
+			*migrationTimeoutMinutes,
 			*generateDefaultMarkerOptions,
 		)
 	case "audit-legacy-compat":

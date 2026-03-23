@@ -227,6 +227,7 @@ This tool backfills missing fields on legacy media documents and can insert miss
 - `-username`: Optional alternative to resolve organisation scope.
 - `-start-timestamp`: Recommended. Use bounded windows for safer runs.
 - `-end-timestamp`: Recommended. Use bounded windows for safer runs.
+- `-migration-timeout-minutes`: Optional timeout for this action (default `60`). Set to `0` to disable timeout for very large datasets.
 - `-mode`: `dry-run` (recommended first) or `live`.
 - `-generate-default-marker-options`: Optional. When set, generate default `marker_options` with category `classification`. If `-organisation-id` is provided, it targets that single org/user id. If omitted, it targets all users in `users`. This always seeds a built-in default classification list, then adds any extra discovered classifications from scoped media/analysis data.
 
@@ -245,6 +246,7 @@ go run main.go -action migrate-legacy-media \
                -mongodb-uri "mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>" \
                -mongodb-destination-database=<database> \
                -organisation-id <organisationId> \
+               -migration-timeout-minutes 60 \
                -generate-default-marker-options \
                -start-timestamp <startTimestamp> \
                -end-timestamp <endTimestamp>

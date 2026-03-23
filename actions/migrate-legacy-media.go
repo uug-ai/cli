@@ -69,6 +69,7 @@ func MigrateLegacyMedia(mode string,
 	organisationId string,
 	startTimestamp int64,
 	endTimestamp int64,
+	migrationTimeoutMinutes int,
 	generateDefaultMarkerOptions bool,
 ) {
 	dbName := strings.TrimSpace(mongodbDestinationDatabase)
@@ -77,6 +78,10 @@ func MigrateLegacyMedia(mode string,
 	}
 	if dbName == "" {
 		log.Println("Please provide a database name through -mongodb-destination-database or -mongodb-source-database")
+		return
+	}
+	if strings.HasPrefix(dbName, "-") {
+		log.Printf("Invalid database name %q. This usually means a missing value after -mongodb-destination-database or -mongodb-source-database.\n", dbName)
 		return
 	}
 
@@ -100,7 +105,14 @@ func MigrateLegacyMedia(mode string,
 	client := db.Client
 	defer client.Disconnect(context.Background())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if migrationTimeoutMinutes <= 0 {
+		ctx, cancel = context.WithCancel(context.Background())
+		log.Println("Running migrate-legacy-media with no context timeout")
+	} else {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(migrationTimeoutMinutes)*time.Minute)
+	}
 	defer cancel()
 
 	hubDB := client.Database(dbName)
@@ -241,19 +253,51 @@ func MigrateLegacyMedia(mode string,
 		report.MatchedFilter = count
 	}
 
-	cursor, err := mediaCollection.Find(ctx, match, options.Find().SetProjection(projection))
+	cursor, err := mediaCollection.Find(ctx, match, options.Find().SetProjection(projection).SetBatchSize(2000))
 	if err != nil {
 		log.Printf("Error querying media collection: %v\n", err)
 		return
 	}
 	defer cursor.Close(ctx)
 
-	type mediaSnapshot struct {
-		doc bson.M
-	}
+	const mediaBatchSize = 5000
+	classificationOptionSet := make(map[string]string)
+	batchItems := make([]bson.M, 0, mediaBatchSize)
+	batchKeysSet := make(map[string]struct{}, mediaBatchSize)
 
-	items := make([]mediaSnapshot, 0, 4096)
-	keysSet := make(map[string]struct{})
+	flushBatch := func() {
+		if len(batchItems) == 0 {
+			return
+		}
+		analysisByKey := fetchAnalysisSnapshotsByKeys(ctx, analysisCollection, orgID, batchKeysSet)
+		patchModels := make([]mongo.WriteModel, 0, len(batchItems))
+		insertModels := make([]mongo.WriteModel, 0, len(batchItems))
+		for _, doc := range batchItems {
+			processLegacyMediaDoc(doc, analysisByKey, liveMode, orgID, &report, classificationOptionSet, &patchModels, &insertModels)
+		}
+		if liveMode {
+			if len(insertModels) > 0 {
+				result, err := mediaCollection.BulkWrite(ctx, insertModels, options.BulkWrite().SetOrdered(false))
+				if err != nil {
+					report.Writes["errors"]++
+					log.Printf("Warning: insert bulk write error: %v\n", err)
+				} else if result != nil {
+					report.Writes["insert_applied"] += result.UpsertedCount
+				}
+			}
+			if len(patchModels) > 0 {
+				result, err := mediaCollection.BulkWrite(ctx, patchModels, options.BulkWrite().SetOrdered(false))
+				if err != nil {
+					report.Writes["errors"]++
+					log.Printf("Warning: patch bulk write error: %v\n", err)
+				} else if result != nil {
+					report.Writes["patch_applied"] += result.ModifiedCount
+				}
+			}
+		}
+		batchItems = batchItems[:0]
+		batchKeysSet = make(map[string]struct{}, mediaBatchSize)
+	}
 
 	for cursor.Next(ctx) {
 		var doc bson.M
@@ -262,371 +306,29 @@ func MigrateLegacyMedia(mode string,
 			continue
 		}
 		report.Scanned++
-		items = append(items, mediaSnapshot{doc: doc})
+		batchItems = append(batchItems, doc)
 
 		videoFile := asString(doc["videoFile"])
 		if videoFile != "" {
-			keysSet[videoFile] = struct{}{}
+			batchKeysSet[videoFile] = struct{}{}
 		}
 		key := asString(doc["key"])
 		if key != "" {
-			keysSet[key] = struct{}{}
+			batchKeysSet[key] = struct{}{}
 		}
 
 		if report.Scanned%5000 == 0 {
 			log.Printf("Scanned %d media docs...\n", report.Scanned)
+		}
+		if len(batchItems) >= mediaBatchSize {
+			flushBatch()
 		}
 	}
 	if err := cursor.Err(); err != nil {
 		log.Printf("Cursor error while reading media: %v\n", err)
 		return
 	}
-
-	analysisByKey := make(map[string]analysisSnapshot)
-	if len(keysSet) > 0 {
-		keys := make([]string, 0, len(keysSet))
-		for k := range keysSet {
-			keys = append(keys, k)
-		}
-
-		analysisMatch := bson.M{"key": bson.M{"$in": keys}}
-		if orgID != "" {
-			analysisMatch["$or"] = []bson.M{{"userid": orgID}, {"user_id": orgID}}
-		}
-
-			analysisProjection := bson.M{
-				"_id": 1,
-				"key": 1,
-				"data.thumby.filename": 1,
-				"data.thumby.provider": 1,
-			"data.sprite.filename": 1,
-			"data.sprite.provider": 1,
-			"data.sprite.interval": 1,
-			"data.dominantcolor.hexs": 1,
-				"data.classify.details.classified": 1,
-				"data.classify.details.trajectCentroids": 1,
-				"data.classify.details.traject": 1,
-				"data.classify.details.x": 1,
-				"data.classify.details.y": 1,
-				"data.classify.details.frameWidth": 1,
-				"data.classify.details.frameHeight": 1,
-				"data.classify.properties": 1,
-				"data.details.classified": 1,
-				"data.details.objectName": 1,
-				"data.details.trajectCentroids": 1,
-				"data.details.traject": 1,
-				"data.details.x": 1,
-				"data.details.y": 1,
-				"data.details.frameWidth": 1,
-				"data.details.frameHeight": 1,
-				"data.properties": 1,
-				"data.counting.detail.videoWidth": 1,
-				"data.counting.detail.videoHeight": 1,
-			"data.thumby.width": 1,
-			"data.thumby.height": 1,
-			"data.sprite.width": 1,
-			"data.sprite.height": 1,
-			"data.counting.records.type": 1,
-			"data.counting.records.count": 1,
-			"data.counting.records.duration": 1,
-		}
-		ac, err := analysisCollection.Find(ctx, analysisMatch, options.Find().SetProjection(analysisProjection))
-		if err == nil {
-			defer ac.Close(ctx)
-			for ac.Next(ctx) {
-				var doc bson.M
-				if err := ac.Decode(&doc); err != nil {
-					continue
-				}
-				key := asString(doc["key"])
-				if key == "" {
-					continue
-				}
-				dataMap := asMap(doc["data"])
-				th := asMap(dataMap["thumby"])
-				sp := asMap(dataMap["sprite"])
-				dc := asMap(dataMap["dominantcolor"])
-				hexs := asSlice(dc["hexs"])
-				classifications := deriveClassificationsFromAnalysis(dataMap)
-				classificationSummary := deriveClassificationSummary(classifications)
-				markerNames := markerNamesFromSummary(classificationSummary)
-				countingSummary, countTotal := deriveCountingSummaryFromAnalysis(dataMap)
-				width, height := deriveMediaDimensionsFromAnalysis(dataMap)
-				analysisByKey[key] = analysisSnapshot{
-					ID:                    objectIDToHex(doc["_id"]),
-					Key:                   key,
-					HasThumby:             asString(th["filename"]) != "",
-					HasSprite:             asString(sp["filename"]) != "",
-					Width:                 width,
-					Height:                height,
-					HasDominantColor:      len(hexs) > 0,
-					ThumbyFilename:        asString(th["filename"]),
-					ThumbyProvider:        asString(th["provider"]),
-					SpriteFilename:        asString(sp["filename"]),
-					SpriteProvider:        asString(sp["provider"]),
-					SpriteInterval:        asInt64(sp["interval"]),
-					DominantColorCount:    int64(len(hexs)),
-					DominantColors:        toStringSlice(hexs),
-					Classifications:       classifications,
-					ClassificationSummary: classificationSummary,
-					MarkerNames:           markerNames,
-					CountingSummary:       countingSummary,
-					CountTotal:            countTotal,
-				}
-			}
-		}
-	}
-
-	classificationOptionSet := make(map[string]string)
-	for _, item := range items {
-		doc := item.doc
-
-		videoFile := asString(doc["videoFile"])
-		key := asString(doc["key"])
-		organisation := asString(doc["organisationId"])
-		deviceID := asString(doc["deviceId"])
-		deviceKey := asString(doc["deviceKey"])
-		startTS := asInt64(doc["startTimestamp"])
-		endTS := asInt64(doc["endTimestamp"])
-		duration := asInt64(doc["duration"])
-
-		metadata := asMap(doc["metadata"])
-		collectClassificationOptionNames(classificationOptionSet, asSlice(doc["classificationSummary"]))
-		collectClassificationOptionNames(classificationOptionSet, asSlice(metadata["classifications"]))
-		metaAnalysisID := asString(metadata["analysisId"])
-		metaSpriteInterval := asInt64(metadata["spriteInterval"])
-		metaDominantColorsLen := int64(len(asSlice(metadata["dominantColors"])))
-		metaClassifications := asSlice(metadata["classifications"])
-		metaClassificationsLen := int64(len(metaClassifications))
-		metaWidth := asInt64(metadata["width"])
-		metaHeight := asInt64(metadata["height"])
-		metaResolution := asString(metadata["resolution"])
-		metaCount := asInt64(metadata["count"])
-
-		thumbnailFile := asString(doc["thumbnailFile"])
-		thumbnailProvider := asString(doc["thumbnailProvider"])
-		spriteFile := asString(doc["spriteFile"])
-		spriteProvider := asString(doc["spriteProvider"])
-		classificationSummaryLen := int64(len(asSlice(doc["classificationSummary"])))
-		markerNamesLen := int64(len(asSlice(doc["markerNames"])))
-		countingSummaryLen := int64(len(asSlice(doc["countingSummary"])))
-
-		isAnalysisShaped := key != "" && videoFile == "" && asMap(doc["data"]) != nil
-		if isAnalysisShaped {
-			report.Cases["analysis_shaped_in_media"]++
-			if _, ok := report.Examples["analysis_shaped_in_media"]; !ok {
-				report.Examples["analysis_shaped_in_media"] = key
-			}
-			if key != "" {
-				report.Cases["candidate_insert_from_analysis"]++
-				if liveMode {
-					report.Writes["insert_attempted"]++
-					insertOrganisation := resolveOrganisationForDoc(doc, orgID)
-					insertStart, insertEnd, insertDuration := deriveTimesFromAnalysisShapedDoc(doc)
-					insertDevice := asString(doc["deviceid"])
-					insertSetOnInsert := bson.M{
-						"organisationId": insertOrganisation,
-						"videoFile":      key,
-						"storageSolution": asString(doc["provider"]),
-						"videoProvider":   asString(doc["source"]),
-						"deviceId":        insertDevice,
-						"deviceKey":       insertDevice,
-						"startTimestamp":  insertStart,
-						"endTimestamp":    insertEnd,
-						"duration":        insertDuration,
-					}
-
-					if analysis, ok := analysisByKey[key]; ok {
-						if analysis.ThumbyFilename != "" {
-							insertSetOnInsert["thumbnailFile"] = analysis.ThumbyFilename
-						}
-						if analysis.ThumbyProvider != "" {
-							insertSetOnInsert["thumbnailProvider"] = analysis.ThumbyProvider
-						}
-						if analysis.SpriteFilename != "" {
-							insertSetOnInsert["spriteFile"] = analysis.SpriteFilename
-						}
-						if analysis.SpriteProvider != "" {
-							insertSetOnInsert["spriteProvider"] = analysis.SpriteProvider
-						}
-
-						metadataFields := bson.M{}
-						if analysis.ID != "" {
-							metadataFields["analysisId"] = analysis.ID
-						}
-						if analysis.SpriteInterval > 0 {
-							metadataFields["spriteInterval"] = analysis.SpriteInterval
-						}
-						if len(analysis.DominantColors) > 0 {
-							metadataFields["dominantColors"] = analysis.DominantColors
-						}
-						if len(analysis.Classifications) > 0 {
-							metadataFields["classifications"] = analysis.Classifications
-						}
-						if analysis.Width > 0 {
-							metadataFields["width"] = analysis.Width
-						}
-						if analysis.Height > 0 {
-							metadataFields["height"] = analysis.Height
-						}
-						if analysis.Width > 0 && analysis.Height > 0 {
-							metadataFields["resolution"] = fmt.Sprintf("%dx%d", analysis.Width, analysis.Height)
-						}
-						if analysis.CountTotal != 0 {
-							metadataFields["count"] = analysis.CountTotal
-						}
-						if len(metadataFields) > 0 {
-							insertSetOnInsert["metadata"] = metadataFields
-						}
-						if len(analysis.ClassificationSummary) > 0 {
-							insertSetOnInsert["classificationSummary"] = analysis.ClassificationSummary
-						}
-						if len(analysis.MarkerNames) > 0 {
-							insertSetOnInsert["markerNames"] = analysis.MarkerNames
-						}
-						if len(analysis.CountingSummary) > 0 {
-							insertSetOnInsert["countingSummary"] = analysis.CountingSummary
-						}
-					}
-
-					filter := bson.M{"videoFile": key}
-					if insertOrganisation != "" {
-						filter["organisationId"] = insertOrganisation
-					}
-					result, err := mediaCollection.UpdateOne(ctx, filter, bson.M{"$setOnInsert": insertSetOnInsert}, options.Update().SetUpsert(true))
-					if err != nil {
-						report.Writes["errors"]++
-					} else if result.UpsertedCount > 0 {
-						report.Writes["insert_applied"]++
-					}
-				}
-			}
-			continue
-		}
-
-		if videoFile == "" {
-			report.Cases["invalid_media_missing_key"]++
-			report.UnknownShapes++
-			if _, ok := report.Examples["invalid_media_missing_key"]; !ok {
-				report.Examples["invalid_media_missing_key"] = objectIDToHex(doc["_id"])
-			}
-			continue
-		}
-
-		analysis := analysisByKey[videoFile]
-		collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.ClassificationSummary))
-		collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.Classifications))
-
-		needPatch := false
-		if organisation == "" {
-			report.Needs["organisationId"]++
-			needPatch = true
-		}
-		if deviceKey == "" && deviceID != "" {
-			report.Needs["deviceKey"]++
-			needPatch = true
-		}
-		if startTS <= 0 {
-			report.Needs["startTimestamp"]++
-			needPatch = true
-		}
-		if endTS <= 0 {
-			report.Needs["endTimestamp"]++
-			needPatch = true
-		}
-		if duration <= 0 {
-			report.Needs["duration"]++
-			needPatch = true
-		}
-
-		if thumbnailFile == "" && analysis.HasThumby {
-			report.Needs["thumbnailFile"]++
-			needPatch = true
-		}
-		if thumbnailProvider == "" && analysis.ThumbyProvider != "" {
-			report.Needs["thumbnailProvider"]++
-			needPatch = true
-		}
-		if spriteFile == "" && analysis.HasSprite {
-			report.Needs["spriteFile"]++
-			needPatch = true
-		}
-		if spriteProvider == "" && analysis.SpriteProvider != "" {
-			report.Needs["spriteProvider"]++
-			needPatch = true
-		}
-		if metaSpriteInterval <= 0 && analysis.SpriteInterval > 0 {
-			report.Needs["metadata.spriteInterval"]++
-			needPatch = true
-		}
-		if metaAnalysisID == "" && analysis.ID != "" {
-			report.Needs["metadata.analysisId"]++
-			needPatch = true
-		}
-		if metaDominantColorsLen == 0 && analysis.DominantColorCount > 0 {
-			report.Needs["metadata.dominantColors"]++
-			needPatch = true
-		}
-		if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications) || hasCentroidsOutsideNormalizedRange(metaClassifications)) && len(analysis.Classifications) > 0 {
-			report.Needs["metadata.classifications"]++
-			needPatch = true
-		}
-		if metaWidth <= 0 && analysis.Width > 0 {
-			report.Needs["metadata.width"]++
-			needPatch = true
-		}
-		if metaHeight <= 0 && analysis.Height > 0 {
-			report.Needs["metadata.height"]++
-			needPatch = true
-		}
-		if metaResolution == "" && analysis.Width > 0 && analysis.Height > 0 {
-			report.Needs["metadata.resolution"]++
-			needPatch = true
-		}
-		if classificationSummaryLen == 0 && len(analysis.ClassificationSummary) > 0 {
-			report.Needs["classificationSummary"]++
-			needPatch = true
-		}
-		if markerNamesLen == 0 && len(analysis.MarkerNames) > 0 {
-			report.Needs["markerNames"]++
-			needPatch = true
-		}
-		if countingSummaryLen == 0 && len(analysis.CountingSummary) > 0 {
-			report.Needs["countingSummary"]++
-			needPatch = true
-		}
-		if metaCount == 0 && analysis.CountTotal != 0 {
-			report.Needs["metadata.count"]++
-			needPatch = true
-		}
-
-		isCompliant := organisation != "" && deviceKey != "" && startTS > 0 && endTS > 0 && duration > 0
-		if isCompliant && !needPatch {
-			report.Cases["new_shape_compliant"]++
-		} else {
-			report.Cases["legacy_media_missing_fields"]++
-			report.Cases["candidate_patch_existing"]++
-			if _, ok := report.Examples["legacy_media_missing_fields"]; !ok {
-				report.Examples["legacy_media_missing_fields"] = videoFile
-			}
-			if liveMode && needPatch {
-				setFields := buildPatchSetFields(doc, analysis, orgID)
-				if len(setFields) > 0 {
-					report.Writes["patch_attempted"]++
-					result, err := mediaCollection.UpdateOne(ctx, bson.M{"_id": doc["_id"]}, bson.M{"$set": setFields})
-					if err != nil {
-						report.Writes["errors"]++
-					} else if result.ModifiedCount > 0 {
-						report.Writes["patch_applied"]++
-					}
-				}
-			}
-		}
-
-		if metaAnalysisID != "" && metaSpriteInterval > 0 {
-			report.Cases["already_enriched_with_analysis"]++
-		}
-	}
+	flushBatch()
 
 	if generateDefaultMarkerOptions {
 		classificationNames := sortedClassificationNames(classificationOptionSet)
@@ -650,6 +352,372 @@ func MigrateLegacyMedia(mode string,
 	}
 	fmt.Println("====================================")
 	fmt.Println(string(out))
+}
+
+func fetchAnalysisSnapshotsByKeys(
+	ctx context.Context,
+	analysisCollection *mongo.Collection,
+	orgID string,
+	keysSet map[string]struct{},
+) map[string]analysisSnapshot {
+	analysisByKey := make(map[string]analysisSnapshot)
+	if len(keysSet) == 0 {
+		return analysisByKey
+	}
+
+	keys := make([]string, 0, len(keysSet))
+	for key := range keysSet {
+		keys = append(keys, key)
+	}
+
+	analysisMatch := bson.M{"key": bson.M{"$in": keys}}
+	if orgID != "" {
+		analysisMatch["$or"] = []bson.M{{"userid": orgID}, {"user_id": orgID}}
+	}
+
+	analysisProjection := bson.M{
+		"_id":                               1,
+		"key":                               1,
+		"data.thumby.filename":              1,
+		"data.thumby.provider":              1,
+		"data.sprite.filename":              1,
+		"data.sprite.provider":              1,
+		"data.sprite.interval":              1,
+		"data.dominantcolor.hexs":           1,
+		"data.classify.details.classified":  1,
+		"data.classify.details.trajectCentroids": 1,
+		"data.classify.details.traject":          1,
+		"data.classify.details.x":                1,
+		"data.classify.details.y":                1,
+		"data.classify.details.frameWidth":       1,
+		"data.classify.details.frameHeight":      1,
+		"data.classify.properties":               1,
+		"data.details.classified":                1,
+		"data.details.objectName":                1,
+		"data.details.trajectCentroids":          1,
+		"data.details.traject":                   1,
+		"data.details.x":                         1,
+		"data.details.y":                         1,
+		"data.details.frameWidth":                1,
+		"data.details.frameHeight":               1,
+		"data.properties":                        1,
+		"data.counting.detail.videoWidth":        1,
+		"data.counting.detail.videoHeight":       1,
+		"data.thumby.width":                      1,
+		"data.thumby.height":                     1,
+		"data.sprite.width":                      1,
+		"data.sprite.height":                     1,
+		"data.counting.records.type":             1,
+		"data.counting.records.count":            1,
+		"data.counting.records.duration":         1,
+	}
+
+	cursor, err := analysisCollection.Find(ctx, analysisMatch, options.Find().SetProjection(analysisProjection).SetBatchSize(2000))
+	if err != nil {
+		log.Printf("Warning: failed querying analysis batch: %v\n", err)
+		return analysisByKey
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
+			continue
+		}
+		key := asString(doc["key"])
+		if key == "" {
+			continue
+		}
+		dataMap := asMap(doc["data"])
+		th := asMap(dataMap["thumby"])
+		sp := asMap(dataMap["sprite"])
+		dc := asMap(dataMap["dominantcolor"])
+		hexs := asSlice(dc["hexs"])
+		classifications := deriveClassificationsFromAnalysis(dataMap)
+		classificationSummary := deriveClassificationSummary(classifications)
+		markerNames := markerNamesFromSummary(classificationSummary)
+		countingSummary, countTotal := deriveCountingSummaryFromAnalysis(dataMap)
+		width, height := deriveMediaDimensionsFromAnalysis(dataMap)
+		analysisByKey[key] = analysisSnapshot{
+			ID:                    objectIDToHex(doc["_id"]),
+			Key:                   key,
+			HasThumby:             asString(th["filename"]) != "",
+			HasSprite:             asString(sp["filename"]) != "",
+			Width:                 width,
+			Height:                height,
+			HasDominantColor:      len(hexs) > 0,
+			ThumbyFilename:        asString(th["filename"]),
+			ThumbyProvider:        asString(th["provider"]),
+			SpriteFilename:        asString(sp["filename"]),
+			SpriteProvider:        asString(sp["provider"]),
+			SpriteInterval:        asInt64(sp["interval"]),
+			DominantColorCount:    int64(len(hexs)),
+			DominantColors:        toStringSlice(hexs),
+			Classifications:       classifications,
+			ClassificationSummary: classificationSummary,
+			MarkerNames:           markerNames,
+			CountingSummary:       countingSummary,
+			CountTotal:            countTotal,
+		}
+	}
+	if err := cursor.Err(); err != nil {
+		log.Printf("Warning: analysis batch cursor error: %v\n", err)
+	}
+	return analysisByKey
+}
+
+func processLegacyMediaDoc(
+	doc bson.M,
+	analysisByKey map[string]analysisSnapshot,
+	liveMode bool,
+	orgID string,
+	report *migrateLegacyMediaReport,
+	classificationOptionSet map[string]string,
+	patchModels *[]mongo.WriteModel,
+	insertModels *[]mongo.WriteModel,
+) {
+	videoFile := asString(doc["videoFile"])
+	key := asString(doc["key"])
+	organisation := asString(doc["organisationId"])
+	deviceID := asString(doc["deviceId"])
+	deviceKey := asString(doc["deviceKey"])
+	startTS := asInt64(doc["startTimestamp"])
+	endTS := asInt64(doc["endTimestamp"])
+	duration := asInt64(doc["duration"])
+
+	metadata := asMap(doc["metadata"])
+	collectClassificationOptionNames(classificationOptionSet, asSlice(doc["classificationSummary"]))
+	collectClassificationOptionNames(classificationOptionSet, asSlice(metadata["classifications"]))
+	metaAnalysisID := asString(metadata["analysisId"])
+	metaSpriteInterval := asInt64(metadata["spriteInterval"])
+	metaDominantColorsLen := int64(len(asSlice(metadata["dominantColors"])))
+	metaClassifications := asSlice(metadata["classifications"])
+	metaClassificationsLen := int64(len(metaClassifications))
+	metaWidth := asInt64(metadata["width"])
+	metaHeight := asInt64(metadata["height"])
+	metaResolution := asString(metadata["resolution"])
+	metaCount := asInt64(metadata["count"])
+
+	thumbnailFile := asString(doc["thumbnailFile"])
+	thumbnailProvider := asString(doc["thumbnailProvider"])
+	spriteFile := asString(doc["spriteFile"])
+	spriteProvider := asString(doc["spriteProvider"])
+	classificationSummaryLen := int64(len(asSlice(doc["classificationSummary"])))
+	markerNamesLen := int64(len(asSlice(doc["markerNames"])))
+	countingSummaryLen := int64(len(asSlice(doc["countingSummary"])))
+
+	isAnalysisShaped := key != "" && videoFile == "" && asMap(doc["data"]) != nil
+	if isAnalysisShaped {
+		report.Cases["analysis_shaped_in_media"]++
+		if _, ok := report.Examples["analysis_shaped_in_media"]; !ok {
+			report.Examples["analysis_shaped_in_media"] = key
+		}
+		if key != "" {
+			report.Cases["candidate_insert_from_analysis"]++
+			if liveMode {
+				report.Writes["insert_attempted"]++
+				insertOrganisation := resolveOrganisationForDoc(doc, orgID)
+				insertStart, insertEnd, insertDuration := deriveTimesFromAnalysisShapedDoc(doc)
+				insertDevice := asString(doc["deviceid"])
+				insertSetOnInsert := bson.M{
+					"organisationId":  insertOrganisation,
+					"videoFile":       key,
+					"storageSolution": asString(doc["provider"]),
+					"videoProvider":   asString(doc["source"]),
+					"deviceId":        insertDevice,
+					"deviceKey":       insertDevice,
+					"startTimestamp":  insertStart,
+					"endTimestamp":    insertEnd,
+					"duration":        insertDuration,
+				}
+
+				if analysis, ok := analysisByKey[key]; ok {
+					if analysis.ThumbyFilename != "" {
+						insertSetOnInsert["thumbnailFile"] = analysis.ThumbyFilename
+					}
+					if analysis.ThumbyProvider != "" {
+						insertSetOnInsert["thumbnailProvider"] = analysis.ThumbyProvider
+					}
+					if analysis.SpriteFilename != "" {
+						insertSetOnInsert["spriteFile"] = analysis.SpriteFilename
+					}
+					if analysis.SpriteProvider != "" {
+						insertSetOnInsert["spriteProvider"] = analysis.SpriteProvider
+					}
+
+					metadataFields := bson.M{}
+					if analysis.ID != "" {
+						metadataFields["analysisId"] = analysis.ID
+					}
+					if analysis.SpriteInterval > 0 {
+						metadataFields["spriteInterval"] = analysis.SpriteInterval
+					}
+					if len(analysis.DominantColors) > 0 {
+						metadataFields["dominantColors"] = analysis.DominantColors
+					}
+					if len(analysis.Classifications) > 0 {
+						metadataFields["classifications"] = analysis.Classifications
+					}
+					if analysis.Width > 0 {
+						metadataFields["width"] = analysis.Width
+					}
+					if analysis.Height > 0 {
+						metadataFields["height"] = analysis.Height
+					}
+					if analysis.Width > 0 && analysis.Height > 0 {
+						metadataFields["resolution"] = fmt.Sprintf("%dx%d", analysis.Width, analysis.Height)
+					}
+					if analysis.CountTotal != 0 {
+						metadataFields["count"] = analysis.CountTotal
+					}
+					if len(metadataFields) > 0 {
+						insertSetOnInsert["metadata"] = metadataFields
+					}
+					if len(analysis.ClassificationSummary) > 0 {
+						insertSetOnInsert["classificationSummary"] = analysis.ClassificationSummary
+					}
+					if len(analysis.MarkerNames) > 0 {
+						insertSetOnInsert["markerNames"] = analysis.MarkerNames
+					}
+					if len(analysis.CountingSummary) > 0 {
+						insertSetOnInsert["countingSummary"] = analysis.CountingSummary
+					}
+				}
+
+				filter := bson.M{"videoFile": key}
+				if insertOrganisation != "" {
+					filter["organisationId"] = insertOrganisation
+				}
+				model := mongo.NewUpdateOneModel().
+					SetFilter(filter).
+					SetUpdate(bson.M{"$setOnInsert": insertSetOnInsert}).
+					SetUpsert(true)
+				*insertModels = append(*insertModels, model)
+			}
+		}
+		return
+	}
+
+	if videoFile == "" {
+		report.Cases["invalid_media_missing_key"]++
+		report.UnknownShapes++
+		if _, ok := report.Examples["invalid_media_missing_key"]; !ok {
+			report.Examples["invalid_media_missing_key"] = objectIDToHex(doc["_id"])
+		}
+		return
+	}
+
+	analysis := analysisByKey[videoFile]
+	collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.ClassificationSummary))
+	collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.Classifications))
+
+	needPatch := false
+	if organisation == "" {
+		report.Needs["organisationId"]++
+		needPatch = true
+	}
+	if deviceKey == "" && deviceID != "" {
+		report.Needs["deviceKey"]++
+		needPatch = true
+	}
+	if startTS <= 0 {
+		report.Needs["startTimestamp"]++
+		needPatch = true
+	}
+	if endTS <= 0 {
+		report.Needs["endTimestamp"]++
+		needPatch = true
+	}
+	if duration <= 0 {
+		report.Needs["duration"]++
+		needPatch = true
+	}
+
+	if thumbnailFile == "" && analysis.HasThumby {
+		report.Needs["thumbnailFile"]++
+		needPatch = true
+	}
+	if thumbnailProvider == "" && analysis.ThumbyProvider != "" {
+		report.Needs["thumbnailProvider"]++
+		needPatch = true
+	}
+	if spriteFile == "" && analysis.HasSprite {
+		report.Needs["spriteFile"]++
+		needPatch = true
+	}
+	if spriteProvider == "" && analysis.SpriteProvider != "" {
+		report.Needs["spriteProvider"]++
+		needPatch = true
+	}
+	if metaSpriteInterval <= 0 && analysis.SpriteInterval > 0 {
+		report.Needs["metadata.spriteInterval"]++
+		needPatch = true
+	}
+	if metaAnalysisID == "" && analysis.ID != "" {
+		report.Needs["metadata.analysisId"]++
+		needPatch = true
+	}
+	if metaDominantColorsLen == 0 && analysis.DominantColorCount > 0 {
+		report.Needs["metadata.dominantColors"]++
+		needPatch = true
+	}
+	if (metaClassificationsLen == 0 || !hasAnyNonEmptyCentroids(metaClassifications) || hasCentroidsOutsideNormalizedRange(metaClassifications)) && len(analysis.Classifications) > 0 {
+		report.Needs["metadata.classifications"]++
+		needPatch = true
+	}
+	if metaWidth <= 0 && analysis.Width > 0 {
+		report.Needs["metadata.width"]++
+		needPatch = true
+	}
+	if metaHeight <= 0 && analysis.Height > 0 {
+		report.Needs["metadata.height"]++
+		needPatch = true
+	}
+	if metaResolution == "" && analysis.Width > 0 && analysis.Height > 0 {
+		report.Needs["metadata.resolution"]++
+		needPatch = true
+	}
+	if classificationSummaryLen == 0 && len(analysis.ClassificationSummary) > 0 {
+		report.Needs["classificationSummary"]++
+		needPatch = true
+	}
+	if markerNamesLen == 0 && len(analysis.MarkerNames) > 0 {
+		report.Needs["markerNames"]++
+		needPatch = true
+	}
+	if countingSummaryLen == 0 && len(analysis.CountingSummary) > 0 {
+		report.Needs["countingSummary"]++
+		needPatch = true
+	}
+	if metaCount == 0 && analysis.CountTotal != 0 {
+		report.Needs["metadata.count"]++
+		needPatch = true
+	}
+
+	isCompliant := organisation != "" && deviceKey != "" && startTS > 0 && endTS > 0 && duration > 0
+	if isCompliant && !needPatch {
+		report.Cases["new_shape_compliant"]++
+	} else {
+		report.Cases["legacy_media_missing_fields"]++
+		report.Cases["candidate_patch_existing"]++
+		if _, ok := report.Examples["legacy_media_missing_fields"]; !ok {
+			report.Examples["legacy_media_missing_fields"] = videoFile
+		}
+		if liveMode && needPatch {
+			setFields := buildPatchSetFields(doc, analysis, orgID)
+			if len(setFields) > 0 {
+				report.Writes["patch_attempted"]++
+				model := mongo.NewUpdateOneModel().
+					SetFilter(bson.M{"_id": doc["_id"]}).
+					SetUpdate(bson.M{"$set": setFields})
+				*patchModels = append(*patchModels, model)
+			}
+		}
+	}
+
+	if metaAnalysisID != "" && metaSpriteInterval > 0 {
+		report.Cases["already_enriched_with_analysis"]++
+	}
 }
 
 func generateDefaultClassificationMarkerOptions(
