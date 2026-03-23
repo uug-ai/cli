@@ -66,6 +66,7 @@ func main() {
 	organisationId := flag.String("organisation-id", "", "Specific organisation/user ID to target")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
+	generateDefaultMarkerOptions := flag.Bool("generate-default-marker-options", false, "When running migrate-legacy-media, generate default classification marker_options for users in the organisation scope")
 	timezone := flag.String("timezone", "", "Timezone")
 	mode := flag.String("mode", "dry-run", "Mode")
 	pipeline := flag.String("pipeline", "monitor,sequence", "Provide the pipeline to execute")
@@ -171,6 +172,7 @@ func main() {
 			*organisationId,
 			*startTimestamp,
 			*endTimestamp,
+			*generateDefaultMarkerOptions,
 		)
 	case "audit-legacy-compat":
 		fmt.Println("Running legacy compatibility audit...")

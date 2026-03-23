@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/uug-ai/cli/database"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -29,6 +31,7 @@ type migrateLegacyMediaReport struct {
 	UnknownShapes int64             `json:"unknownShapes"`
 	Examples      map[string]string `json:"examples,omitempty"`
 	Writes        map[string]int64  `json:"writes,omitempty"`
+	MarkerOptions map[string]int64  `json:"markerOptions,omitempty"`
 }
 
 type analysisSnapshot struct {
@@ -66,6 +69,7 @@ func MigrateLegacyMedia(mode string,
 	organisationId string,
 	startTimestamp int64,
 	endTimestamp int64,
+	generateDefaultMarkerOptions bool,
 ) {
 	dbName := strings.TrimSpace(mongodbDestinationDatabase)
 	if dbName == "" {
@@ -185,6 +189,20 @@ func MigrateLegacyMedia(mode string,
 			"insert_applied":   0,
 			"errors":           0,
 		},
+		MarkerOptions: map[string]int64{
+			"enabled":         0,
+			"classification_count": 0,
+			"users_scanned":   0,
+			"users_targeted":  0,
+			"options_attempted": 0,
+			"options_upserted": 0,
+			"options_modified": 0,
+			"errors":          0,
+			"skipped":         0,
+		},
+	}
+	if generateDefaultMarkerOptions {
+		report.MarkerOptions["enabled"] = 1
 	}
 
 	projection := bson.M{
@@ -359,6 +377,7 @@ func MigrateLegacyMedia(mode string,
 		}
 	}
 
+	classificationOptionSet := make(map[string]string)
 	for _, item := range items {
 		doc := item.doc
 
@@ -372,6 +391,8 @@ func MigrateLegacyMedia(mode string,
 		duration := asInt64(doc["duration"])
 
 		metadata := asMap(doc["metadata"])
+		collectClassificationOptionNames(classificationOptionSet, asSlice(doc["classificationSummary"]))
+		collectClassificationOptionNames(classificationOptionSet, asSlice(metadata["classifications"]))
 		metaAnalysisID := asString(metadata["analysisId"])
 		metaSpriteInterval := asInt64(metadata["spriteInterval"])
 		metaDominantColorsLen := int64(len(asSlice(metadata["dominantColors"])))
@@ -493,6 +514,8 @@ func MigrateLegacyMedia(mode string,
 		}
 
 		analysis := analysisByKey[videoFile]
+		collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.ClassificationSummary))
+		collectClassificationOptionNames(classificationOptionSet, toAnySliceFromBsonMaps(analysis.Classifications))
 
 		needPatch := false
 		if organisation == "" {
@@ -605,6 +628,14 @@ func MigrateLegacyMedia(mode string,
 		}
 	}
 
+	if generateDefaultMarkerOptions {
+		classificationNames := sortedClassificationNames(classificationOptionSet)
+		stats := generateDefaultClassificationMarkerOptions(ctx, hubDB, orgID, classificationNames, liveMode)
+		for k, v := range stats {
+			report.MarkerOptions[k] += v
+		}
+	}
+
 	out, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		log.Printf("Failed to marshal migration report: %v\n", err)
@@ -619,6 +650,209 @@ func MigrateLegacyMedia(mode string,
 	}
 	fmt.Println("====================================")
 	fmt.Println(string(out))
+}
+
+func generateDefaultClassificationMarkerOptions(
+	ctx context.Context,
+	hubDB *mongo.Database,
+	orgID string,
+	classificationNames []string,
+	liveMode bool,
+) map[string]int64 {
+	allClassificationOptions := mergeClassificationOptions(classificationNames)
+	stats := map[string]int64{
+		"classification_count": int64(len(allClassificationOptions)),
+		"users_scanned":        0,
+		"users_targeted":       0,
+		"options_attempted":    0,
+		"options_upserted":     0,
+		"options_modified":     0,
+		"errors":               0,
+	}
+
+	targetUserIDs := make([]string, 0, 1024)
+	seenUserIDs := make(map[string]struct{})
+	if strings.TrimSpace(orgID) != "" {
+		resolved := strings.TrimSpace(orgID)
+		targetUserIDs = append(targetUserIDs, resolved)
+		seenUserIDs[resolved] = struct{}{}
+		stats["users_scanned"] = 1
+		stats["users_targeted"] = 1
+	} else {
+		usersColl := hubDB.Collection("users")
+		userProjection := bson.M{"_id": 1}
+		cursor, err := usersColl.Find(ctx, bson.M{}, options.Find().SetProjection(userProjection))
+		if err != nil {
+			log.Printf("Failed to query users for marker_options generation: %v\n", err)
+			stats["errors"]++
+			return stats
+		}
+		defer cursor.Close(ctx)
+
+		for cursor.Next(ctx) {
+			var user bson.M
+			if err := cursor.Decode(&user); err != nil {
+				stats["errors"]++
+				continue
+			}
+			stats["users_scanned"]++
+
+			userID := objectIDToHex(user["_id"])
+			if userID == "" {
+				continue
+			}
+			if _, exists := seenUserIDs[userID]; exists {
+				continue
+			}
+			seenUserIDs[userID] = struct{}{}
+			targetUserIDs = append(targetUserIDs, userID)
+		}
+		if err := cursor.Err(); err != nil {
+			log.Printf("Cursor error while scanning users for marker_options generation: %v\n", err)
+			stats["errors"]++
+		}
+		stats["users_targeted"] = int64(len(targetUserIDs))
+	}
+
+	markerOptionsColl := hubDB.Collection("marker_options")
+	if !liveMode {
+		stats["options_attempted"] = int64(len(allClassificationOptions) * len(targetUserIDs))
+		return stats
+	}
+
+	now := time.Now().Unix()
+	for _, userID := range targetUserIDs {
+		for _, option := range allClassificationOptions {
+			filter := bson.M{
+				"organisationId": userID,
+				"value":          option.Value,
+			}
+			update := bson.M{
+				"$setOnInsert": bson.M{
+					"organisationId": userID,
+					"text":           option.Text,
+					"value":          option.Value,
+					"createdAt":      now,
+					"updatedAt":      now,
+				},
+				"$addToSet": bson.M{
+					"categories": "classification",
+				},
+			}
+
+			stats["options_attempted"]++
+			result, err := markerOptionsColl.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+			if err != nil {
+				stats["errors"]++
+				continue
+			}
+			if result.UpsertedCount > 0 {
+				stats["options_upserted"]++
+			} else if result.ModifiedCount > 0 {
+				stats["options_modified"]++
+			}
+		}
+	}
+
+	return stats
+}
+
+func collectClassificationOptionNames(target map[string]string, rawEntries []any) {
+	for _, raw := range rawEntries {
+		entry := asMap(raw)
+		if entry == nil {
+			continue
+		}
+		name := asString(entry["key"])
+		if name == "" {
+			name = asString(entry["name"])
+		}
+		if name == "" {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		if normalized == "" {
+			continue
+		}
+		if _, exists := target[normalized]; !exists {
+			target[normalized] = name
+		}
+	}
+}
+
+func sortedClassificationNames(entries map[string]string) []string {
+	names := make([]string, 0, len(entries))
+	for _, name := range entries {
+		if strings.TrimSpace(name) != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+type markerClassificationOption struct {
+	Value string
+	Text  string
+}
+
+func mergeClassificationOptions(discovered []string) []markerClassificationOption {
+	defaults := []markerClassificationOption{
+		{Value: "animal", Text: "animal"},
+		{Value: "pedestrian", Text: "pedestrian"},
+		{Value: "cyclist", Text: "cyclist"},
+		{Value: "motorbike", Text: "motorbike"},
+		{Value: "lorry", Text: "lorry"},
+		{Value: "car", Text: "car"},
+		{Value: "handbag", Text: "handbag"},
+		{Value: "suitecase", Text: "suitecase"},
+		{Value: "cell phone", Text: "cell phone"},
+		{Value: "backpack", Text: "backpack"},
+	}
+
+	merged := make([]markerClassificationOption, 0, len(defaults)+len(discovered))
+	seen := make(map[string]struct{}, len(defaults)+len(discovered))
+
+	for _, option := range defaults {
+		normalized := strings.ToLower(strings.TrimSpace(option.Value))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		merged = append(merged, option)
+	}
+
+	for _, name := range discovered {
+		value := strings.TrimSpace(name)
+		if value == "" {
+			continue
+		}
+		normalized := strings.ToLower(value)
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		merged = append(merged, markerClassificationOption{
+			Value: value,
+			Text:  value,
+		})
+	}
+
+	return merged
+}
+
+func toAnySliceFromBsonMaps(items []bson.M) []any {
+	if len(items) == 0 {
+		return nil
+	}
+	res := make([]any, 0, len(items))
+	for _, item := range items {
+		res = append(res, item)
+	}
+	return res
 }
 
 func asString(v any) string {
