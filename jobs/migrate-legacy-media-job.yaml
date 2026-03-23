@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: init-container
-        image: ghcr.io/uug-ai/cli:v1.2.13
+        image: ghcr.io/uug-ai/cli:v1.2.14
         command: ['/main', '-action', 'migrate-legacy-media',
           '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',
           #'-mongodb-host', '<host>',
@@ -15,15 +15,27 @@ spec:
           #'-mongodb-username', '<username>',
           #'-mongodb-password', '<password>',
           #'-mongodb-database-credentials', 'admin',
-          '-mongodb-destination-database', 'Kerberos', # or use -mongodb-source-database if needed
+          '-mongodb-destination-database', 'Kerberos',
 
-          # Recommended safety flags:
-          '-mode', 'dry-run', # switch to live only after reviewing dry-run output
-          '-organisation-id', '<organisationId>', # optional, leave empty to scan all orgs, or specify to limit scope
-          '-generate-default-marker-options', # optional, backfill classification marker_options for users in org scope
-          #'-username', '<username>', # optional alternative to resolve organisation scope
-          '-start-timestamp', '1735689600', # recommended: run in time windows (example: 2025-01-01 UTC)
-          '-end-timestamp', '1738367999',   # example: 2025-01-31 23:59:59 UTC
+          # Run full migration for all media and all users:
+          '-mode', 'live',
+          '-generate-default-marker-options',
+          # '-migration-timeout-minutes', '0', # disable timeout for long full-dataset runs
+
+          # Optional scope filters (leave commented to process everything):
+          #'-organisation-id', '<organisationId>',
+          #'-username', '<username>', # alternative way to resolve organisation scope
+          #'-start-timestamp', '1735689600', # run in time windows if desired (UTC seconds)
+          #'-end-timestamp', '1738367999',
+
+          # Optional performance/index controls:
+          #'-check-migration-indexes',
+          #'-apply-migration-indexes',
+          #'-skip-matched-count', 'true',
+          #'-migration-version', '1',
+
+          # Optional safety mode for preview:
+          #'-mode', 'dry-run',
         ]
 
       restartPolicy: Never
