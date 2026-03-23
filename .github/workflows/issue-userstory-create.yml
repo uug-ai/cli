@@ -31,21 +31,12 @@ on:
 
 jobs:
   create-issue:
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-    steps:
-      - name: Create Issue with User Story
-        uses: cedricve/llm-create-issue-user-story@main
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          azure_openai_api_key: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          azure_openai_endpoint: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          azure_openai_version: ${{ secrets.AZURE_OPENAI_VERSION }}
-          openai_model: 'gpt-4o'
-          issue_title: ${{ github.event.inputs.issue_title }}
-          issue_description: ${{ github.event.inputs.issue_description }}
-          complexity: ${{ github.event.inputs.complexity }}
-          duration: ${{ github.event.inputs.duration }}
-          labels: 'user-story,feature'
-          assignees: ${{ github.actor }}
+    uses: uug-ai/workflows/.github/workflows/issue-userstory-create.yml@main
+    with:
+      issue_title: ${{ github.event.inputs.issue_title }}
+      issue_description: ${{ github.event.inputs.issue_description }}
+      complexity: ${{ github.event.inputs.complexity }}
+      duration: ${{ github.event.inputs.duration }}
+      labels: 'user-story,feature'
+      assignees: ${{ github.actor }}
+    secrets: inherit
