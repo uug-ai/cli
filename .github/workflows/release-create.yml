@@ -16,6 +16,4 @@ jobs:
           {"architecture":"amd64","runner":"ubuntu-24.04"},
           {"architecture":"arm64","runner":"sh-ubuntu-24.04-arm"}
         ]
-      create_gitops_pr: true
-      gitops_key: kerberospipeline.thumbnail.tag
     secrets: inherit
