@@ -571,6 +571,7 @@ func parseKeyFields(doc string) bson.D {
 
 		var parsed interface{} = int32(1)
 		if val != "" {
+			val = unwrapNumericConstructor(val)
 			switch val {
 			case "1", "+1":
 				parsed = int32(1)
@@ -610,6 +611,35 @@ func parseInt(s string) (int, error) {
 		n = n*10 + int(r-'0')
 	}
 	return n * sign, nil
+}
+
+// unwrapNumericConstructor strips mongosh/EJSON numeric wrappers such as
+// Long('1'), NumberLong("1"), NumberInt(1), NumberDecimal('1'), Double(1),
+// and the EJSON form { "$numberLong": "1" } from a key value, returning
+// the inner literal. Non-numeric wrappers (e.g. "text", "2dsphere") are
+// returned unchanged so they can still be used as index plugin names.
+func unwrapNumericConstructor(val string) string {
+	v := strings.TrimSpace(val)
+	// EJSON: { "$numberLong": "1" } / { "$numberInt": "1" } / { "$numberDouble": "1" }
+	if strings.HasPrefix(v, "{") && strings.Contains(v, "$number") {
+		if i := strings.Index(v, ":"); i != -1 {
+			inner := strings.TrimSpace(v[i+1:])
+			inner = strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(inner, "}")), ",")
+			return strings.Trim(strings.TrimSpace(inner), "'\"")
+		}
+	}
+	// Constructor form: Name(<inner>)
+	open := strings.Index(v, "(")
+	if open <= 0 || !strings.HasSuffix(v, ")") {
+		return v
+	}
+	name := strings.ToLower(strings.TrimSpace(v[:open]))
+	switch name {
+	case "long", "numberlong", "numberint", "int", "numberdecimal", "decimal", "double", "numberdouble":
+		inner := strings.TrimSpace(v[open+1 : len(v)-1])
+		return strings.Trim(inner, "'\"")
+	}
+	return v
 }
 
 // CLI entry wrapper to match SeedMedia signature, if you prefer calling like others.
