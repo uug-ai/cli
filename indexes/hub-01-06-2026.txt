@@ -99,7 +99,7 @@ marker_option_ranges
   { v: 2, key: { _id: 1 }, name: '_id_' },
   { v: 2, key: { organisationId: 1, createdAt: 1 }, name: 'organisationId_1_createdAt_1' },
   { v: 2, key: { createdAt: 1 }, name: 'createdAt_1' },
-  { v: 2, key: { organisationId: {"high":0,"low":1,"unsigned":false}, start: {"high":0,"low":1,"unsigned":false}, deviceKey: {"high":0,"low":1,"unsigned":false}, end: {"high":0,"low":1,"unsigned":false} }, name: 'organisationId_1_start_1_deviceKey_1_end_1' },
+  { v: 2, key: { organisationId: 1, start: 1, deviceKey: 1, end: 1 }, name: 'organisationId_1_start_1_deviceKey_1_end_1' },
   { v: 2, key: { organisationId: 1, start: 1, deviceId: 1, end: 1 }, name: 'organisationId_1_start_1_deviceId_1_end_1' },
   { v: 2, key: { organisationId: 1, deviceId: 1, start: 1, end: 1 }, name: 'org_device_start_end' },
   { v: 2, key: { organisationId: 1, deviceKey: 1, start: 1, end: 1 }, name: 'org_deviceKey_start_end' }

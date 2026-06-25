@@ -528,6 +528,7 @@ func parseKeyFields(doc string) bson.D {
 		parts   []string
 		cur     strings.Builder
 		inQuote rune
+		depth   int
 	)
 
 	for _, r := range doc {
@@ -539,8 +540,18 @@ func parseKeyFields(doc string) bson.D {
 				inQuote = 0
 			}
 			cur.WriteRune(r)
-		case ',':
+		case '{', '[':
 			if inQuote == 0 {
+				depth++
+			}
+			cur.WriteRune(r)
+		case '}', ']':
+			if inQuote == 0 && depth > 0 {
+				depth--
+			}
+			cur.WriteRune(r)
+		case ',':
+			if inQuote == 0 && depth == 0 {
 				segment := strings.TrimSpace(cur.String())
 				if segment != "" {
 					parts = append(parts, segment)
@@ -620,6 +631,22 @@ func parseInt(s string) (int, error) {
 // returned unchanged so they can still be used as index plugin names.
 func unwrapNumericConstructor(val string) string {
 	v := strings.TrimSpace(val)
+	// Serialized BSON Long object: {"high":0,"low":1,"unsigned":false}
+	// (produced when a Long(1) direction is JSON.stringify'd). Use the low word
+	// as the effective direction value.
+	if strings.HasPrefix(v, "{") && strings.Contains(v, "\"low\"") {
+		if i := strings.Index(v, "\"low\""); i != -1 {
+			rest := v[i+len("\"low\""):]
+			if c := strings.Index(rest, ":"); c != -1 {
+				rest = rest[c+1:]
+				// read until the next comma or closing brace
+				end := strings.IndexAny(rest, ",}")
+				if end != -1 {
+					return strings.Trim(strings.TrimSpace(rest[:end]), "'\"")
+				}
+			}
+		}
+	}
 	// EJSON: { "$numberLong": "1" } / { "$numberInt": "1" } / { "$numberDouble": "1" }
 	if strings.HasPrefix(v, "{") && strings.Contains(v, "$number") {
 		if i := strings.Index(v, ":"); i != -1 {
