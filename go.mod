@@ -7,8 +7,9 @@ require (
 	github.com/confluentinc/confluent-kafka-go/v2 v2.12.0
 	github.com/gosuri/uiprogress v0.0.1
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/uug-ai/markers v1.1.0
-	github.com/uug-ai/models v1.4.19
+	github.com/uug-ai/markers v1.2.4
+	github.com/uug-ai/models v1.4.26
+	github.com/uug-ai/trace v1.1.0
 	go.mongodb.org/mongo-driver v1.17.6
 	golang.org/x/crypto v0.46.0
 	gopkg.in/mgo.v2 v2.0.0-20190816093944-a6b53ec6cb22
@@ -32,7 +33,6 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
-	github.com/uug-ai/trace v1.1.0 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
