@@ -6,6 +6,7 @@ This repository contains CLI tools for performing specific automations.
 - `reprocess-media`: Re-queue hub media for analysis when analysis is missing.
 - `audit-legacy-compat`: Auditing legacy data shape compatibility across domains.
 - `migrate-legacy-media`: Backfilling legacy media documents to current media shape.
+- `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
 
 
@@ -48,6 +49,29 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
    ```
 
 ## Usage
+
+### Organisation ownership backfill
+
+This action currently implements the read-only Phase 4 preflight. It inventories
+canonical tenant presence, BSON type and ObjectID-hex validity, legacy candidate
+coverage, and current indexes for the registered `sites`, `groups`, `devices`,
+and `alerts` adapters. Live writes, scoped tenant resolution, checkpoint resume,
+and index creation deliberately remain disabled until their compare-and-set and
+reconciliation paths are implemented.
+
+```sh
+go run . -action organisations-backfill \
+         -mode dry-run \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collection sites \
+         -adapter-version v1 \
+         -report-file organisations-backfill-sites.json
+```
+
+Use `-all` instead of `-collection` to inspect every ready adapter. The command
+exits `0` when preflight passes, `2` for invalid canonical tenant data, `1` for
+operational failures, and `64` for unsafe or invalid arguments.
 
 ### Vault to Hub Migration
 

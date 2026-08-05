@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/uug-ai/cli/actions"
@@ -12,6 +13,7 @@ func promptAction() string {
 	choices := []string{
 		"vault-to-hub-migration",
 		"reprocess-media",
+		"organisations-backfill",
 		"migrate-legacy-media",
 		"audit-legacy-compat",
 		"generate-default-labels",
@@ -66,11 +68,11 @@ func main() {
 	organisationId := flag.String("organisation-id", "", "Specific organisation/user ID to target")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
-	migrationTimeoutMinutes := flag.Int("migration-timeout-minutes", 60, "Timeout in minutes for migrate-legacy-media and related long scans (0 disables timeout)")
+	migrationTimeoutMinutes := flag.Int("migration-timeout-minutes", 60, "Timeout in minutes for migration scans (0 disables timeout)")
 	skipMatchedCount := flag.Bool("skip-matched-count", true, "Skip initial CountDocuments in migrate-legacy-media for better performance on large datasets")
-	migrationVersion := flag.Int("migration-version", 1, "Migration step version for migrate-legacy-media (defaults to latest supported)")
-	checkMigrationIndexes := flag.Bool("check-migration-indexes", false, "Check required indexes for migrate-legacy-media and report their status")
-	applyMigrationIndexes := flag.Bool("apply-migration-indexes", false, "Create missing required indexes for migrate-legacy-media")
+	migrationVersion := flag.Int("migration-version", 1, "Migration step version (defaults to latest supported)")
+	checkMigrationIndexes := flag.Bool("check-migration-indexes", false, "Check required migration indexes and report their status")
+	applyMigrationIndexes := flag.Bool("apply-migration-indexes", false, "Create missing registered migration indexes")
 	generateDefaultMarkerOptions := flag.Bool("generate-default-marker-options", false, "When running migrate-legacy-media, generate default classification marker_options for users in the organisation scope")
 	timezone := flag.String("timezone", "", "Timezone")
 	mode := flag.String("mode", "dry-run", "Mode")
@@ -113,6 +115,14 @@ func main() {
 	collections := flag.String("collections", "", "Comma separated list of collections to migrate (default all)")
 	indexVersion := flag.String("index-version", "", "Path to the indexes specification file")
 	domains := flag.String("domains", "", "Comma separated list of compatibility domains (default: media,analysis,users,devices,groups,sites,settings)")
+	collection := flag.String("collection", "", "Single registered collection to migrate")
+	allCollections := flag.Bool("all", false, "Process every ready migration adapter")
+	adapterVersion := flag.String("adapter-version", "", "Exact organisations-backfill adapter version")
+	documentId := flag.String("document-id", "", "Single document ObjectID for diagnosis")
+	resume := flag.Bool("resume", false, "Resume the matching migration checkpoint")
+	restart := flag.Bool("restart", false, "Restart the matching migration checkpoint")
+	stopOnConflict := flag.Bool("stop-on-conflict", false, "Stop after the first tenant conflict")
+	reportFile := flag.String("report-file", "", "Optional path for the JSON migration report")
 
 	flag.Parse()
 
@@ -162,6 +172,40 @@ func main() {
 			*batchSize,
 			*batchDelay,
 		)
+	case "organisations-backfill":
+		backfillBatchSize := *batchSize
+		if !actions.WasFlagPassed("batch-size") {
+			backfillBatchSize = 500
+		}
+		err := actions.OrganisationsBackfill(actions.OrganisationsBackfillConfig{
+			Mode:                       *mode,
+			MongoDBURI:                 *mongodbURI,
+			MongoDBHost:                *mongodbHost,
+			MongoDBPort:                *mongodbPort,
+			MongoDBSourceDatabase:      *mongodbSourceDatabase,
+			MongoDBDestinationDatabase: *mongodbDestinationDatabase,
+			MongoDBDatabaseCredentials: *mongodbDatabaseCredentials,
+			MongoDBUsername:            *mongodbUsername,
+			MongoDBPassword:            *mongodbPassword,
+			MigrationVersion:           *migrationVersion,
+			AdapterVersion:             *adapterVersion,
+			Collection:                 *collection,
+			AllCollections:             *allCollections,
+			BatchSize:                  backfillBatchSize,
+			MigrationTimeoutMinutes:    *migrationTimeoutMinutes,
+			OrganisationID:             *organisationId,
+			DocumentID:                 *documentId,
+			Resume:                     *resume,
+			Restart:                    *restart,
+			CheckMigrationIndexes:      *checkMigrationIndexes,
+			ApplyMigrationIndexes:      *applyMigrationIndexes,
+			StopOnConflict:             *stopOnConflict,
+			ReportFile:                 *reportFile,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "organisations-backfill: %v\n", err)
+			os.Exit(actions.OrganisationsBackfillExitCode(err))
+		}
 	case "migrate-legacy-media":
 		fmt.Printf("Running legacy media migration (%s)...\n", *mode)
 		actions.MigrateLegacyMedia(*mode,

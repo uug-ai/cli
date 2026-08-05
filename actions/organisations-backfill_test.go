@@ -1,0 +1,152 @@
+package actions
+
+import (
+	"strings"
+	"testing"
+
+	"go.mongodb.org/mongo-driver/bson"
+)
+
+func TestValidateOrganisationsBackfillConfig(t *testing.T) {
+	valid := normalizeOrganisationsBackfillConfig(OrganisationsBackfillConfig{
+		Mode:                       "dry-run",
+		MongoDBURI:                 "mongodb://localhost:27017",
+		MongoDBDestinationDatabase: "hub",
+		Collection:                 "sites",
+	})
+
+	tests := []struct {
+		name      string
+		mutate    func(OrganisationsBackfillConfig) OrganisationsBackfillConfig
+		wantError string
+	}{
+		{
+			name: "valid collection",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				return config
+			},
+		},
+		{
+			name: "requires connection settings",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.MongoDBURI = ""
+				return config
+			},
+			wantError: "mongodb-uri",
+		},
+		{
+			name: "requires selection",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.Collection = ""
+				return config
+			},
+			wantError: "exactly one",
+		},
+		{
+			name: "rejects collection and all",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.AllCollections = true
+				return config
+			},
+			wantError: "mutually exclusive",
+		},
+		{
+			name: "rejects live mode",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.Mode = "live"
+				return config
+			},
+			wantError: "live mode is disabled",
+		},
+		{
+			name: "rejects index writes",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.ApplyMigrationIndexes = true
+				return config
+			},
+			wantError: "index creation is disabled",
+		},
+		{
+			name: "rejects invalid document id",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.DocumentID = "invalid"
+				return config
+			},
+			wantError: "invalid document-id",
+		},
+		{
+			name: "rejects scoped run before resolvers exist",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.OrganisationID = "507f1f77bcf86cd799439011"
+				return config
+			},
+			wantError: "scoped resolution is disabled",
+		},
+		{
+			name: "reports blocked adapter",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.Collection = "videowalls"
+				return config
+			},
+			wantError: "blocked",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := validateOrganisationsBackfillConfig(test.mutate(valid))
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("validateOrganisationsBackfillConfig() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("validateOrganisationsBackfillConfig() error = %v, want containing %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
+	adapters, err := selectOrganisationsBackfillAdapters("", true)
+	if err != nil {
+		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
+	}
+	want := []string{"alerts", "devices", "groups", "sites"}
+	if len(adapters) != len(want) {
+		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
+	}
+	for index := range want {
+		if adapters[index].Collection != want[index] {
+			t.Errorf("adapters[%d].Collection = %q, want %q", index, adapters[index].Collection, want[index])
+		}
+	}
+}
+
+func TestOrganisationsBackfillIndexCoversField(t *testing.T) {
+	key := bson.D{{Key: "organisationId", Value: 1}, {Key: "timestamp", Value: -1}}
+	if !organisationsBackfillIndexCoversField(key, "organisationId") {
+		t.Fatal("organisationsBackfillIndexCoversField() did not find leading field")
+	}
+	if organisationsBackfillIndexCoversField(key, "user_id") {
+		t.Fatal("organisationsBackfillIndexCoversField() found absent field")
+	}
+}
+
+func TestOrganisationsBackfillExitCode(t *testing.T) {
+	err := &organisationsBackfillError{code: organisationsBackfillExitData, err: errTestDataConflict}
+	if got := OrganisationsBackfillExitCode(err); got != organisationsBackfillExitData {
+		t.Fatalf("OrganisationsBackfillExitCode() = %d, want %d", got, organisationsBackfillExitData)
+	}
+}
+
+var errTestDataConflict = &testBackfillError{"data conflict"}
+
+type testBackfillError struct {
+	message string
+}
+
+func (e *testBackfillError) Error() string {
+	return e.message
+}
