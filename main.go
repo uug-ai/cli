@@ -13,6 +13,7 @@ func promptAction() string {
 	choices := []string{
 		"vault-to-hub-migration",
 		"reprocess-media",
+		"organisations-bootstrap",
 		"organisations-backfill",
 		"migrate-legacy-media",
 		"audit-legacy-compat",
@@ -123,6 +124,9 @@ func main() {
 	restart := flag.Bool("restart", false, "Restart the matching migration checkpoint")
 	stopOnConflict := flag.Bool("stop-on-conflict", false, "Stop after the first tenant conflict")
 	reportFile := flag.String("report-file", "", "Optional path for the JSON migration report")
+	stage := flag.String("stage", "", "Organisations bootstrap stage: owners, sub-users, or verify")
+	bootstrapBatchSize := flag.Int("bootstrap-batch-size", 500, "Source cursor batch size for organisations-bootstrap")
+	legacyOrganisationPolicy := flag.String("legacy-org-policy", "report", "Legacy organisation policy for organisations-bootstrap: report or archive-delete")
 
 	flag.Parse()
 
@@ -205,6 +209,33 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "organisations-backfill: %v\n", err)
 			os.Exit(actions.OrganisationsBackfillExitCode(err))
+		}
+	case "organisations-bootstrap":
+		err := actions.OrganisationsBootstrap(actions.OrganisationsBootstrapConfig{
+			Mode:                       *mode,
+			Stage:                      *stage,
+			MongoDBURI:                 *mongodbURI,
+			MongoDBHost:                *mongodbHost,
+			MongoDBPort:                *mongodbPort,
+			MongoDBSourceDatabase:      *mongodbSourceDatabase,
+			MongoDBDestinationDatabase: *mongodbDestinationDatabase,
+			MongoDBDatabaseCredentials: *mongodbDatabaseCredentials,
+			MongoDBUsername:            *mongodbUsername,
+			MongoDBPassword:            *mongodbPassword,
+			MigrationVersion:           *migrationVersion,
+			MigrationTimeoutMinutes:    *migrationTimeoutMinutes,
+			Username:                   *username,
+			OrganisationID:             *organisationId,
+			BatchSize:                  *bootstrapBatchSize,
+			LegacyOrganisationPolicy:   *legacyOrganisationPolicy,
+			Resume:                     *resume,
+			Restart:                    *restart,
+			StopOnConflict:             *stopOnConflict,
+			ReportFile:                 *reportFile,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "organisations-bootstrap: %v\n", err)
+			os.Exit(actions.OrganisationsBootstrapExitCode(err))
 		}
 	case "migrate-legacy-media":
 		fmt.Printf("Running legacy media migration (%s)...\n", *mode)
