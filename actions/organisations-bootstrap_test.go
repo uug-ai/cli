@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,68 @@ func TestOrganisationsBootstrapExitCode(t *testing.T) {
 	err := &organisationsBootstrapError{code: organisationsBootstrapExitData, err: errTestDataConflict}
 	if got := OrganisationsBootstrapExitCode(err); got != organisationsBootstrapExitData {
 		t.Fatalf("OrganisationsBootstrapExitCode() = %d, want %d", got, organisationsBootstrapExitData)
+	}
+}
+
+func TestOrganisationsBootstrapInterrupted(t *testing.T) {
+	stopRequested := make(chan struct{})
+	runner := organisationsBootstrapRunner{stopRequested: stopRequested}
+	if runner.interrupted() {
+		t.Fatal("runner reported an interruption before the stop channel closed")
+	}
+	close(stopRequested)
+	if !runner.interrupted() {
+		t.Fatal("runner did not report an interruption after the stop channel closed")
+	}
+}
+
+func TestOrganisationsBootstrapHeartbeatSkipsDryRun(t *testing.T) {
+	called := false
+	runner := organisationsBootstrapRunner{}
+	if err := runner.withCheckpointHeartbeat(t.Context(), func(context.Context) error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatalf("withCheckpointHeartbeat() error = %v", err)
+	}
+	if !called {
+		t.Fatal("withCheckpointHeartbeat() did not run the operation")
+	}
+}
+
+func TestOrganisationsBootstrapRestoreCheckpointCounters(t *testing.T) {
+	report := organisationsBootstrapReport{}
+	runner := organisationsBootstrapRunner{report: &report}
+	runner.restoreCheckpoint(organisationsBootstrapCheckpointDocument{
+		Counters: organisationsBootstrapCheckpointCounters{
+			Masters:       organisationsBootstrapMasterCounts{Scanned: 3},
+			SubUsers:      organisationsBootstrapSubUserCounts{Updated: 4},
+			Users:         organisationsBootstrapUserCounts{MastersUpdated: 5},
+			Memberships:   organisationsBootstrapMembershipCounts{Inserted: 6},
+			Organisations: organisationsBootstrapOrganisationCounts{LegacyReported: 7},
+			Writes:        organisationsBootstrapWriteCounts{Applied: 8},
+			Verification:  organisationsBootstrapVerificationCounts{Passed: 9},
+		},
+		Conflicts: []organisationsBootstrapConflict{{Code: "previous-conflict"}},
+	})
+
+	if report.Masters.Scanned != 3 || report.SubUsers.Updated != 4 || report.Users.MastersUpdated != 5 || report.Memberships.Inserted != 6 || report.Organisations.LegacyReported != 7 || report.Writes.Applied != 8 || report.Verification.Passed != 9 {
+		t.Fatalf("restored counters = %+v", report)
+	}
+	if len(report.Conflicts) != 0 {
+		t.Fatalf("historical checkpoint conflicts leaked into resumed report: %+v", report.Conflicts)
+	}
+	if runner.hasConflict {
+		t.Fatal("historical checkpoint conflicts must not block a corrected resume")
+	}
+}
+
+func TestOrganisationsBootstrapLegacyReportConflictDoesNotBlock(t *testing.T) {
+	if organisationsBootstrapConflictBlocks("legacy-organisation-unresolved") {
+		t.Fatal("legacy report conflict must allow the non-destructive live migration path")
+	}
+	if !organisationsBootstrapConflictBlocks("canonical-owner-conflict") {
+		t.Fatal("canonical owner conflict must block live writes during preflight")
 	}
 }
 

@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -163,9 +164,11 @@ type organisationsBootstrapRunner struct {
 	database              *mongo.Database
 	now                   time.Time
 	report                *organisationsBootstrapReport
+	stopRequested         <-chan struct{}
 	strict                bool
 	hasConflict           bool
 	conflictCount         int64
+	blockingConflictCount int64
 	checkpointAcquired    bool
 	checkpointLeaseOwner  string
 	checkpointLeaseExpiry time.Time
@@ -176,6 +179,8 @@ type organisationsBootstrapError struct {
 	code int
 	err  error
 }
+
+var errOrganisationsBootstrapInterrupted = errors.New("bootstrap interrupted")
 
 func (e *organisationsBootstrapError) Error() string {
 	return e.err.Error()
@@ -204,10 +209,10 @@ func OrganisationsBootstrap(config OrganisationsBootstrapConfig) error {
 
 	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	ctx := signalContext
+	ctx := context.Background()
 	cancel := func() {}
 	if config.MigrationTimeoutMinutes > 0 {
-		ctx, cancel = context.WithTimeout(signalContext, time.Duration(config.MigrationTimeoutMinutes)*time.Minute)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(config.MigrationTimeoutMinutes)*time.Minute)
 	}
 	defer cancel()
 
@@ -250,11 +255,12 @@ func OrganisationsBootstrap(config OrganisationsBootstrapConfig) error {
 		},
 	}
 	runner := organisationsBootstrapRunner{
-		config:   config,
-		database: hubDatabase,
-		now:      startedAt,
-		report:   &report,
-		strict:   config.Stage == "verify",
+		config:        config,
+		database:      hubDatabase,
+		now:           startedAt,
+		report:        &report,
+		stopRequested: signalContext.Done(),
+		strict:        config.Stage == "verify",
 	}
 
 	if err := runner.inspectDomains(ctx); err != nil {
@@ -270,7 +276,12 @@ func OrganisationsBootstrap(config OrganisationsBootstrapConfig) error {
 	if config.Mode == "live" && (!report.Indexes.OrganisationOwner || !report.Indexes.OrganisationSlugUnique || !report.Indexes.MembershipUnique || !report.Indexes.MembershipStatus) {
 		runner.addConflict("bootstrap-index-missing", "", "", "live bootstrap requires the canonical organisation and organisation_users indexes")
 	}
-	if !runner.hasConflict {
+	if config.Mode == "live" && runner.blockingConflictCount == 0 && !runner.interrupted() {
+		if err := runner.preflightStage(ctx); err != nil {
+			return &organisationsBootstrapError{code: organisationsBootstrapExitOperational, err: fmt.Errorf("bootstrap stage preflight failed: %w", err)}
+		}
+	}
+	if runner.blockingConflictCount == 0 && !runner.interrupted() {
 		if err := runner.acquireCheckpoint(ctx); err != nil {
 			var bootstrapError *organisationsBootstrapError
 			if errors.As(err, &bootstrapError) {
@@ -281,17 +292,18 @@ func OrganisationsBootstrap(config OrganisationsBootstrapConfig) error {
 	}
 
 	var runErr error
-	if !runner.hasConflict {
-		switch config.Stage {
-		case "owners":
-			runErr = runner.runOwners(ctx)
-		case "sub-users":
-			runErr = runner.runSubUsers(ctx)
-		case "verify":
-			if runErr = runner.runOwners(ctx); runErr == nil && (!runner.hasConflict || !config.StopOnConflict) {
-				runErr = runner.runSubUsers(ctx)
+	if runner.interrupted() {
+		runErr = errOrganisationsBootstrapInterrupted
+	} else if runner.blockingConflictCount == 0 {
+		runErr = runner.withCheckpointHeartbeat(ctx, func(stageContext context.Context) error {
+			if err := runner.runStage(stageContext); err != nil {
+				return err
 			}
-		}
+			if config.Mode == "live" {
+				return runner.verifyStageFresh()
+			}
+			return nil
+		})
 	}
 	if runErr != nil {
 		if checkpointErr := runner.finishCheckpoint("failed"); checkpointErr != nil {
@@ -424,6 +436,9 @@ func organisationsBootstrapCheckpointID(config OrganisationsBootstrapConfig) str
 func (r *organisationsBootstrapRunner) addConflict(code, masterID, documentID, message string) {
 	r.hasConflict = true
 	r.conflictCount++
+	if organisationsBootstrapConflictBlocks(code) {
+		r.blockingConflictCount++
+	}
 	if len(r.report.Conflicts) < 100 {
 		r.report.Conflicts = append(r.report.Conflicts, organisationsBootstrapConflict{
 			Code:       code,
@@ -432,6 +447,10 @@ func (r *organisationsBootstrapRunner) addConflict(code, masterID, documentID, m
 			Message:    message,
 		})
 	}
+}
+
+func organisationsBootstrapConflictBlocks(code string) bool {
+	return code != "legacy-organisation-unresolved"
 }
 
 func (r *organisationsBootstrapRunner) addWarning(code, masterID, documentID, message string) {
@@ -443,6 +462,108 @@ func (r *organisationsBootstrapRunner) addWarning(code, masterID, documentID, me
 			Message:    message,
 		})
 	}
+}
+
+func (r *organisationsBootstrapRunner) interrupted() bool {
+	if r.stopRequested == nil {
+		return false
+	}
+	select {
+	case <-r.stopRequested:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *organisationsBootstrapRunner) runStage(ctx context.Context) error {
+	switch r.config.Stage {
+	case "owners":
+		return r.runOwners(ctx)
+	case "sub-users":
+		return r.runSubUsers(ctx)
+	case "verify":
+		if err := r.runOwners(ctx); err != nil || (r.hasConflict && r.config.StopOnConflict) {
+			return err
+		}
+		return r.runSubUsers(ctx)
+	default:
+		return nil
+	}
+}
+
+func (r *organisationsBootstrapRunner) preflightStage(ctx context.Context) error {
+	preflightConfig := r.config
+	preflightConfig.Mode = "dry-run"
+	preflightConfig.Resume = false
+	preflightConfig.Restart = false
+	preflightConfig.StopOnConflict = false
+	preflightReport := organisationsBootstrapReport{}
+	preflight := organisationsBootstrapRunner{
+		config:        preflightConfig,
+		database:      r.database,
+		now:           r.now,
+		report:        &preflightReport,
+		stopRequested: r.stopRequested,
+	}
+	if err := preflight.runStage(ctx); err != nil {
+		return err
+	}
+	if preflight.blockingConflictCount == 0 {
+		return nil
+	}
+	r.report.Masters = preflightReport.Masters
+	r.report.SubUsers = preflightReport.SubUsers
+	r.report.Users = preflightReport.Users
+	r.report.Memberships = preflightReport.Memberships
+	r.report.Organisations = preflightReport.Organisations
+	r.report.Writes = preflightReport.Writes
+	r.report.Verification = preflightReport.Verification
+	r.report.Conflicts = preflightReport.Conflicts
+	r.report.Warnings = append(r.report.Warnings, preflightReport.Warnings...)
+	r.hasConflict = true
+	r.conflictCount = preflight.conflictCount
+	r.blockingConflictCount = preflight.blockingConflictCount
+	return nil
+}
+
+func (r *organisationsBootstrapRunner) verifyStageFresh() error {
+	freshContext := context.Background()
+	cancel := func() {}
+	if r.config.MigrationTimeoutMinutes > 0 {
+		freshContext, cancel = context.WithTimeout(freshContext, time.Duration(r.config.MigrationTimeoutMinutes)*time.Minute)
+	}
+	defer cancel()
+
+	verificationConfig := r.config
+	verificationConfig.Mode = "dry-run"
+	verificationConfig.Resume = false
+	verificationConfig.Restart = false
+	verificationConfig.StopOnConflict = false
+	verificationReport := organisationsBootstrapReport{}
+	verification := organisationsBootstrapRunner{
+		config:        verificationConfig,
+		database:      r.database,
+		now:           time.Now().UTC(),
+		report:        &verificationReport,
+		stopRequested: r.stopRequested,
+		strict:        true,
+	}
+	if err := verification.runStage(freshContext); err != nil {
+		return fmt.Errorf("fresh bootstrap verification failed: %w", err)
+	}
+	if verification.conflictCount == 0 {
+		return nil
+	}
+	for _, conflict := range verificationReport.Conflicts {
+		r.addConflict(conflict.Code, conflict.MasterID, conflict.DocumentID, conflict.Message)
+	}
+	if verification.blockingConflictCount > 0 && verificationReport.Verification.Failed == 0 {
+		r.report.Verification.Failed++
+	} else if verification.blockingConflictCount > 0 {
+		r.report.Verification.Failed += verificationReport.Verification.Failed
+	}
+	return nil
 }
 
 func (r *organisationsBootstrapRunner) inspectDomains(ctx context.Context) error {
@@ -670,6 +791,9 @@ func (r *organisationsBootstrapRunner) runOwners(ctx context.Context) error {
 	}
 	defer cursor.Close(ctx)
 	for cursor.Next(ctx) {
+		if r.interrupted() {
+			return errOrganisationsBootstrapInterrupted
+		}
 		if err := r.renewCheckpoint(ctx); err != nil {
 			return err
 		}
@@ -683,15 +807,17 @@ func (r *organisationsBootstrapRunner) runOwners(ctx context.Context) error {
 			continue
 		}
 		r.report.Masters.Scanned++
-		conflictsBefore := r.conflictCount
 		verifiedBefore := r.report.Verification.Passed
 		if processErr := r.processOwner(ctx, user); processErr != nil {
 			return processErr
 		}
-		if conflictsBefore == r.conflictCount && verifiedBefore < r.report.Verification.Passed && !r.hasConflict {
+		if r.blockingConflictCount == 0 && verifiedBefore < r.report.Verification.Passed {
 			if checkpointErr := r.advanceCheckpoint(ctx, user.ID); checkpointErr != nil {
 				return checkpointErr
 			}
+		}
+		if r.interrupted() {
+			return errOrganisationsBootstrapInterrupted
 		}
 		if r.hasConflict && r.config.StopOnConflict {
 			break
@@ -816,8 +942,17 @@ func (r *organisationsBootstrapRunner) ensureCanonicalOrganisation(ctx context.C
 		r.report.Writes.Attempted++
 		result, writeErr := collection.UpdateOne(ctx, bson.M{"_id": user.ID}, bson.M{"$setOnInsert": document}, options.Update().SetUpsert(true))
 		if writeErr != nil {
-			r.report.Writes.Failed++
-			return false, true, writeErr
+			ready, _, reconcileErr := r.reconcileCanonicalOrganisation(ctx, user, true)
+			if reconcileErr != nil {
+				r.report.Writes.Failed++
+				return false, true, errors.Join(writeErr, reconcileErr)
+			}
+			if !ready {
+				r.report.Writes.Failed++
+				return false, true, nil
+			}
+			r.report.Writes.Applied++
+			return true, true, nil
 		}
 		if result.UpsertedCount == 1 {
 			r.report.Writes.Applied++
@@ -863,8 +998,18 @@ func (r *organisationsBootstrapRunner) ensureCanonicalOrganisation(ctx context.C
 		r.report.Writes.Attempted++
 		result, writeErr := collection.UpdateOne(ctx, organisationsBootstrapMissingFieldFilter(user.ID, field), bson.M{"$set": bson.M{field: set[field]}})
 		if writeErr != nil {
-			r.report.Writes.Failed++
-			return false, true, writeErr
+			matched, reconcileErr := r.organisationFieldMatches(ctx, user.ID, field, set[field])
+			if reconcileErr != nil {
+				r.report.Writes.Failed++
+				return false, true, errors.Join(writeErr, reconcileErr)
+			}
+			if !matched {
+				r.report.Writes.Failed++
+				r.addConflict("canonical-write-inconclusive", user.ID.Hex(), user.ID.Hex(), "organisation field update did not reconcile")
+				return false, true, nil
+			}
+			r.report.Writes.Applied++
+			continue
 		}
 		if result.ModifiedCount == 1 {
 			r.report.Writes.Applied++
@@ -877,6 +1022,10 @@ func (r *organisationsBootstrapRunner) ensureCanonicalOrganisation(ctx context.C
 func (r *organisationsBootstrapRunner) reconcileCanonicalOrganisation(ctx context.Context, user organisationsBootstrapUser, changed bool) (bool, bool, error) {
 	var stored bson.Raw
 	if err := r.database.Collection("organisation").FindOne(ctx, bson.M{"_id": user.ID}).Decode(&stored); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			r.addConflict("canonical-write-inconclusive", user.ID.Hex(), user.ID.Hex(), "canonical organisation is missing after the write attempt")
+			return false, changed, nil
+		}
 		return false, changed, err
 	}
 	ownerID, state := organisationsBootstrapObjectID(stored, "ownerId")
@@ -888,6 +1037,23 @@ func (r *organisationsBootstrapRunner) reconcileCanonicalOrganisation(ctx contex
 		r.report.Writes.Reconciled++
 	}
 	return true, changed, nil
+}
+
+func (r *organisationsBootstrapRunner) organisationFieldMatches(ctx context.Context, organisationID primitive.ObjectID, field string, expected any) (bool, error) {
+	var stored bson.Raw
+	if err := r.database.Collection("organisation").FindOne(ctx, bson.M{"_id": organisationID}).Decode(&stored); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return false, nil
+		}
+		return false, err
+	}
+	expectedDocument, err := bson.Marshal(bson.M{"value": expected})
+	if err != nil {
+		return false, err
+	}
+	actualValue := stored.Lookup(splitOrganisationsBootstrapPath(field)...)
+	expectedValue := bson.Raw(expectedDocument).Lookup("value")
+	return actualValue.Type == expectedValue.Type && bytes.Equal(actualValue.Value, expectedValue.Value), nil
 }
 
 func (r *organisationsBootstrapRunner) ownerMembershipTargets(ctx context.Context, user organisationsBootstrapUser) ([]primitive.ObjectID, error) {

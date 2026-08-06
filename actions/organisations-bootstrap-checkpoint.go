@@ -16,19 +16,31 @@ import (
 const organisationsBootstrapLeaseDuration = 5 * time.Minute
 
 type organisationsBootstrapCheckpointDocument struct {
-	ID                   string             `bson:"_id"`
-	MigrationVersion     int                `bson:"migrationVersion"`
-	Database             string             `bson:"database"`
-	Stage                string             `bson:"stage"`
-	Scope                string             `bson:"scope"`
-	Mode                 string             `bson:"mode"`
-	Status               string             `bson:"status"`
-	LeaseOwner           string             `bson:"leaseOwner"`
-	LeaseExpiresAt       time.Time          `bson:"leaseExpiresAt"`
-	LastVerifiedMasterID primitive.ObjectID `bson:"lastVerifiedMasterId,omitempty"`
-	StartedAt            time.Time          `bson:"startedAt"`
-	UpdatedAt            time.Time          `bson:"updatedAt"`
-	CompletedAt          time.Time          `bson:"completedAt,omitempty"`
+	ID                   string                                   `bson:"_id"`
+	MigrationVersion     int                                      `bson:"migrationVersion"`
+	Database             string                                   `bson:"database"`
+	Stage                string                                   `bson:"stage"`
+	Scope                string                                   `bson:"scope"`
+	Mode                 string                                   `bson:"mode"`
+	Status               string                                   `bson:"status"`
+	LeaseOwner           string                                   `bson:"leaseOwner"`
+	LeaseExpiresAt       time.Time                                `bson:"leaseExpiresAt"`
+	LastVerifiedMasterID primitive.ObjectID                       `bson:"lastVerifiedMasterId,omitempty"`
+	StartedAt            time.Time                                `bson:"startedAt"`
+	UpdatedAt            time.Time                                `bson:"updatedAt"`
+	CompletedAt          time.Time                                `bson:"completedAt,omitempty"`
+	Counters             organisationsBootstrapCheckpointCounters `bson:"counters,omitempty"`
+	Conflicts            []organisationsBootstrapConflict         `bson:"conflicts,omitempty"`
+}
+
+type organisationsBootstrapCheckpointCounters struct {
+	Masters       organisationsBootstrapMasterCounts       `bson:"masters"`
+	SubUsers      organisationsBootstrapSubUserCounts      `bson:"subUsers"`
+	Users         organisationsBootstrapUserCounts         `bson:"users"`
+	Memberships   organisationsBootstrapMembershipCounts   `bson:"memberships"`
+	Organisations organisationsBootstrapOrganisationCounts `bson:"organisations"`
+	Writes        organisationsBootstrapWriteCounts        `bson:"writes"`
+	Verification  organisationsBootstrapVerificationCounts `bson:"verification"`
 }
 
 func (r *organisationsBootstrapRunner) acquireCheckpoint(ctx context.Context) error {
@@ -87,6 +99,7 @@ func (r *organisationsBootstrapRunner) acquireCheckpoint(ctx context.Context) er
 			return fmt.Errorf("resume bootstrap checkpoint: %w", err)
 		}
 		r.checkpointLastMaster = checkpoint.LastVerifiedMasterID
+		r.restoreCheckpoint(checkpoint)
 	} else {
 		document := organisationsBootstrapCheckpointDocument{
 			ID:               checkpointID,
@@ -119,6 +132,28 @@ func (r *organisationsBootstrapRunner) acquireCheckpoint(ctx context.Context) er
 	return nil
 }
 
+func (r *organisationsBootstrapRunner) restoreCheckpoint(checkpoint organisationsBootstrapCheckpointDocument) {
+	r.report.Masters = checkpoint.Counters.Masters
+	r.report.SubUsers = checkpoint.Counters.SubUsers
+	r.report.Users = checkpoint.Counters.Users
+	r.report.Memberships = checkpoint.Counters.Memberships
+	r.report.Organisations = checkpoint.Counters.Organisations
+	r.report.Writes = checkpoint.Counters.Writes
+	r.report.Verification = checkpoint.Counters.Verification
+}
+
+func (r *organisationsBootstrapRunner) checkpointCounters() organisationsBootstrapCheckpointCounters {
+	return organisationsBootstrapCheckpointCounters{
+		Masters:       r.report.Masters,
+		SubUsers:      r.report.SubUsers,
+		Users:         r.report.Users,
+		Memberships:   r.report.Memberships,
+		Organisations: r.report.Organisations,
+		Writes:        r.report.Writes,
+		Verification:  r.report.Verification,
+	}
+}
+
 func (r *organisationsBootstrapRunner) advanceCheckpoint(ctx context.Context, masterID primitive.ObjectID) error {
 	if !r.checkpointAcquired {
 		return nil
@@ -132,14 +167,8 @@ func (r *organisationsBootstrapRunner) advanceCheckpoint(ctx context.Context, ma
 		"lastVerifiedMasterId": masterID,
 		"leaseExpiresAt":       now.Add(organisationsBootstrapLeaseDuration),
 		"updatedAt":            now,
-		"counters": bson.M{
-			"masters":      r.report.Masters,
-			"subUsers":     r.report.SubUsers,
-			"memberships":  r.report.Memberships,
-			"writes":       r.report.Writes,
-			"verification": r.report.Verification,
-		},
-		"conflicts": r.report.Conflicts,
+		"counters":             r.checkpointCounters(),
+		"conflicts":            r.report.Conflicts,
 	}})
 	if err != nil {
 		return fmt.Errorf("advance bootstrap checkpoint: %w", err)
@@ -177,6 +206,59 @@ func (r *organisationsBootstrapRunner) renewCheckpoint(ctx context.Context) erro
 	return nil
 }
 
+func (r *organisationsBootstrapRunner) withCheckpointHeartbeat(ctx context.Context, operation func(context.Context) error) error {
+	if !r.checkpointAcquired {
+		return operation(ctx)
+	}
+	operationContext, cancelOperation := context.WithCancelCause(ctx)
+	defer cancelOperation(nil)
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(organisationsBootstrapLeaseDuration / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				done <- nil
+				return
+			case <-ticker.C:
+				if err := r.refreshCheckpointLease(operationContext); err != nil {
+					cancelOperation(err)
+					done <- err
+					return
+				}
+			}
+		}
+	}()
+
+	operationErr := operation(operationContext)
+	close(stop)
+	if heartbeatErr := <-done; heartbeatErr != nil {
+		return errors.Join(operationErr, heartbeatErr)
+	}
+	return operationErr
+}
+
+func (r *organisationsBootstrapRunner) refreshCheckpointLease(ctx context.Context) error {
+	now := time.Now().UTC()
+	result, err := r.database.Collection("migration_checkpoints").UpdateOne(ctx, bson.M{
+		"_id":        r.report.Checkpoint.ID,
+		"status":     "running",
+		"leaseOwner": r.checkpointLeaseOwner,
+	}, bson.M{"$set": bson.M{
+		"leaseExpiresAt": now.Add(organisationsBootstrapLeaseDuration),
+		"updatedAt":      now,
+	}})
+	if err != nil {
+		return fmt.Errorf("heartbeat bootstrap checkpoint: %w", err)
+	}
+	if result.MatchedCount != 1 {
+		return errors.New("bootstrap checkpoint lease was lost")
+	}
+	return nil
+}
+
 func (r *organisationsBootstrapRunner) finishCheckpoint(status string) error {
 	if !r.checkpointAcquired {
 		return nil
@@ -193,14 +275,8 @@ func (r *organisationsBootstrapRunner) finishCheckpoint(status string) error {
 			"status":      status,
 			"updatedAt":   now,
 			"completedAt": now,
-			"counters": bson.M{
-				"masters":      r.report.Masters,
-				"subUsers":     r.report.SubUsers,
-				"memberships":  r.report.Memberships,
-				"writes":       r.report.Writes,
-				"verification": r.report.Verification,
-			},
-			"conflicts": r.report.Conflicts,
+			"counters":    r.checkpointCounters(),
+			"conflicts":   r.report.Conflicts,
 		},
 		"$unset": bson.M{
 			"leaseOwner":     "",

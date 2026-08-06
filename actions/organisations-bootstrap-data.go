@@ -456,19 +456,22 @@ func (r *organisationsBootstrapRunner) ensureMembership(ctx context.Context, use
 	}
 	r.report.Writes.Attempted++
 	result, writeErr := collection.UpdateOne(ctx, filter, bson.M{"$setOnInsert": membership}, options.Update().SetUpsert(true))
-	if writeErr != nil && !mongo.IsDuplicateKeyError(writeErr) {
-		r.report.Writes.Failed++
-		return false, writeErr
-	}
 	if writeErr == nil && result.UpsertedCount == 1 {
 		r.report.Writes.Applied++
 		r.report.Memberships.Inserted++
 	}
 	active, reconcileErr := organisationsBootstrapMembershipActive(ctx, collection, filter, r.now)
 	if reconcileErr != nil {
+		if writeErr != nil {
+			r.report.Writes.Failed++
+			return false, errors.Join(writeErr, reconcileErr)
+		}
 		return false, reconcileErr
 	}
 	if !active {
+		if writeErr != nil {
+			r.report.Writes.Failed++
+		}
 		r.report.Memberships.Conflicted++
 		r.addConflict("membership-reconcile-failed", actorID.Hex(), userID.Hex(), "membership write did not reconcile as active")
 		return false, nil
@@ -534,8 +537,18 @@ func (r *organisationsBootstrapRunner) ensureUserSelection(ctx context.Context, 
 	r.report.Writes.Attempted++
 	result, err := collection.UpdateOne(ctx, filter, bson.M{"$set": bson.M{"organisation_id": targetID}})
 	if err != nil {
-		r.report.Writes.Failed++
-		return false, false, err
+		selectionOK, reconcileErr := r.reconcileUserSelection(ctx, user.ID, targetID, masterID)
+		if reconcileErr != nil {
+			r.report.Writes.Failed++
+			return false, false, errors.Join(err, reconcileErr)
+		}
+		if !selectionOK {
+			r.report.Writes.Failed++
+			return false, false, nil
+		}
+		r.report.Writes.Applied++
+		r.report.Writes.Reconciled++
+		return true, true, nil
 	}
 	if result.ModifiedCount == 1 {
 		r.report.Writes.Applied++
@@ -562,6 +575,19 @@ func (r *organisationsBootstrapRunner) ensureUserSelection(ctx context.Context, 
 	return true, result.ModifiedCount == 1, nil
 }
 
+func (r *organisationsBootstrapRunner) reconcileUserSelection(ctx context.Context, userID, targetID, masterID primitive.ObjectID) (bool, error) {
+	var stored bson.Raw
+	if err := r.database.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&stored); err != nil {
+		return false, err
+	}
+	selection, state := organisationsBootstrapObjectID(stored, "organisation_id")
+	if state == organisationsBootstrapFieldValue && selection == targetID {
+		return true, nil
+	}
+	r.addConflict("user-selection-write-inconclusive", masterID.Hex(), userID.Hex(), "organisation_id update did not reconcile to the intended value")
+	return false, nil
+}
+
 func (r *organisationsBootstrapRunner) runSubUsers(ctx context.Context) error {
 	conflictsBeforePreflight := r.conflictCount
 	if err := r.inspectSubUserOrphans(ctx); err != nil {
@@ -582,6 +608,9 @@ func (r *organisationsBootstrapRunner) runSubUsers(ctx context.Context) error {
 	defer masters.Close(ctx)
 	mastersScanned := int64(0)
 	for masters.Next(ctx) {
+		if r.interrupted() {
+			return errOrganisationsBootstrapInterrupted
+		}
 		if err := r.renewCheckpoint(ctx); err != nil {
 			return err
 		}
@@ -594,7 +623,6 @@ func (r *organisationsBootstrapRunner) runSubUsers(ctx context.Context) error {
 			continue
 		}
 		mastersScanned++
-		conflictsBefore := r.conflictCount
 		ready, readyErr := r.ownerBootstrapReady(ctx, master.ID)
 		if readyErr != nil {
 			return readyErr
@@ -640,10 +668,13 @@ func (r *organisationsBootstrapRunner) runSubUsers(ctx context.Context) error {
 			return cursorErr
 		}
 		subUsers.Close(ctx)
-		if conflictsBefore == r.conflictCount && !r.hasConflict {
+		if r.blockingConflictCount == 0 {
 			if checkpointErr := r.advanceCheckpoint(ctx, master.ID); checkpointErr != nil {
 				return checkpointErr
 			}
+		}
+		if r.interrupted() {
+			return errOrganisationsBootstrapInterrupted
 		}
 		if r.hasConflict && r.config.StopOnConflict {
 			break
@@ -735,7 +766,7 @@ func (r *organisationsBootstrapRunner) ownerBootstrapReady(ctx context.Context, 
 		return false, nil
 	}
 	legacyCandidates, legacyInvalid, err := r.legacyOrganisationCandidates(ctx, masterID, false)
-	if err != nil || legacyInvalid || len(legacyCandidates) != 0 {
+	if err != nil || legacyInvalid || len(legacyCandidates) > 1 {
 		return false, err
 	}
 	if master.SelectionState != organisationsBootstrapFieldValue {
