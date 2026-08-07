@@ -664,28 +664,33 @@ func (r *organisationsBootstrapRunner) inspectIndexes(ctx context.Context) error
 	return nil
 }
 
-func readOrganisationsBootstrapIndexes(ctx context.Context, collection *mongo.Collection) ([]bson.M, error) {
+type organisationsBootstrapIndex struct {
+	Key                     bson.D `bson:"key"`
+	Unique                  bool   `bson:"unique,omitempty"`
+	PartialFilterExpression bson.M `bson:"partialFilterExpression,omitempty"`
+}
+
+func readOrganisationsBootstrapIndexes(ctx context.Context, collection *mongo.Collection) ([]organisationsBootstrapIndex, error) {
 	cursor, err := collection.Indexes().List(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer cursor.Close(ctx)
-	var indexes []bson.M
+	var indexes []organisationsBootstrapIndex
 	if err := cursor.All(ctx, &indexes); err != nil {
 		return nil, err
 	}
 	return indexes, nil
 }
 
-func organisationsBootstrapHasIndex(indexes []bson.M, expected bson.D, unique bool) bool {
+func organisationsBootstrapHasIndex(indexes []organisationsBootstrapIndex, expected bson.D, unique bool) bool {
 	for _, index := range indexes {
-		key, ok := index["key"].(bson.D)
-		if !ok || len(key) != len(expected) {
+		if len(index.Key) != len(expected) {
 			continue
 		}
 		matches := true
 		for position := range expected {
-			if key[position].Key != expected[position].Key || fmt.Sprint(key[position].Value) != fmt.Sprint(expected[position].Value) {
+			if index.Key[position].Key != expected[position].Key || fmt.Sprint(index.Key[position].Value) != fmt.Sprint(expected[position].Value) {
 				matches = false
 				break
 			}
@@ -693,24 +698,19 @@ func organisationsBootstrapHasIndex(indexes []bson.M, expected bson.D, unique bo
 		if !matches {
 			continue
 		}
-		isUnique, _ := index["unique"].(bool)
-		if !unique || isUnique {
+		if !unique || index.Unique {
 			return true
 		}
 	}
 	return false
 }
 
-func organisationsBootstrapHasSlugIndex(indexes []bson.M) bool {
+func organisationsBootstrapHasSlugIndex(indexes []organisationsBootstrapIndex) bool {
 	for _, index := range indexes {
-		if !organisationsBootstrapHasIndex([]bson.M{index}, bson.D{{Key: "slug", Value: int32(1)}}, true) {
+		if !organisationsBootstrapHasIndex([]organisationsBootstrapIndex{index}, bson.D{{Key: "slug", Value: int32(1)}}, true) {
 			continue
 		}
-		partial, ok := index["partialFilterExpression"].(bson.M)
-		if !ok {
-			continue
-		}
-		slug, ok := partial["slug"].(bson.M)
+		slug, ok := index.PartialFilterExpression["slug"].(bson.M)
 		if ok && slug["$type"] == "string" {
 			return true
 		}
@@ -836,6 +836,12 @@ func (r *organisationsBootstrapRunner) processOwner(ctx context.Context, user or
 	masterID := user.ID.Hex()
 	if user.ParentState != organisationsBootstrapFieldEmpty {
 		r.addConflict("invalid-master", masterID, masterID, "master user has a non-empty user_id")
+		r.report.Masters.Conflicted++
+		r.report.Verification.Failed++
+		return nil
+	}
+	if user.LegacySelectionPresent {
+		r.addConflict("legacy-user-selection-field", masterID, masterID, "rename users.organisation_id to organisationId before bootstrap")
 		r.report.Masters.Conflicted++
 		r.report.Verification.Failed++
 		return nil
@@ -1080,7 +1086,7 @@ func (r *organisationsBootstrapRunner) ownerMembershipTargets(ctx context.Contex
 	}
 
 	if user.SelectionState == organisationsBootstrapFieldWrong {
-		r.addConflict("invalid-user-selection", user.ID.Hex(), user.ID.Hex(), "organisation_id must be a BSON ObjectID")
+		r.addConflict("invalid-user-selection", user.ID.Hex(), user.ID.Hex(), "organisationId must be a BSON ObjectID")
 		return nil, nil
 	}
 	if user.SelectionState == organisationsBootstrapFieldValue {
@@ -1090,7 +1096,7 @@ func (r *organisationsBootstrapRunner) ownerMembershipTargets(ctx context.Contex
 		}
 		if !accessible {
 			r.report.Users.MissingSelectedOrganisation++
-			r.addConflict("invalid-user-selection", user.ID.Hex(), user.ID.Hex(), "preserved organisation_id does not reference an organisation owned by the master")
+			r.addConflict("invalid-user-selection", user.ID.Hex(), user.ID.Hex(), "preserved organisationId does not reference an organisation owned by the master")
 			return nil, nil
 		}
 		targets[user.Selection] = struct{}{}

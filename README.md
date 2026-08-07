@@ -77,7 +77,7 @@ Live owner and sub-user runs require the canonical organisation and membership
 indexes. They acquire a stage/scope-specific lease in `migration_checkpoints`,
 advance only after a complete tenant verifies, and support `-resume` or
 `-restart`. Live writes are limited to `organisation`, `organisation_users`,
-missing `users.organisation_id` values, and the checkpoint. The destructive
+missing `users.organisationId` values, and the checkpoint. The destructive
 `archive-delete` policy remains disabled until guarded archive/reference checks
 are implemented.
 

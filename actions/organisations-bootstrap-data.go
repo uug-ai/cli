@@ -22,18 +22,19 @@ const (
 )
 
 type organisationsBootstrapUser struct {
-	ID                    primitive.ObjectID
-	Username              string
-	OrganisationName      string
-	ParentID              primitive.ObjectID
-	ParentState           organisationsBootstrapFieldState
-	Selection             primitive.ObjectID
-	SelectionState        organisationsBootstrapFieldState
-	Timezone              string
-	Domain                string
-	CreatedAt             time.Time
-	OrganisationCreatedAt time.Time
-	OrganisationUpdatedAt time.Time
+	ID                     primitive.ObjectID
+	Username               string
+	OrganisationName       string
+	ParentID               primitive.ObjectID
+	ParentState            organisationsBootstrapFieldState
+	Selection              primitive.ObjectID
+	SelectionState         organisationsBootstrapFieldState
+	LegacySelectionPresent bool
+	Timezone               string
+	Domain                 string
+	CreatedAt              time.Time
+	OrganisationCreatedAt  time.Time
+	OrganisationUpdatedAt  time.Time
 }
 
 type organisationsBootstrapLegacyCandidate struct {
@@ -65,7 +66,8 @@ func parseOrganisationsBootstrapUser(document bson.Raw) (organisationsBootstrapU
 			user.ParentID = parentID
 		}
 	}
-	user.Selection, user.SelectionState = organisationsBootstrapObjectID(document, "organisation_id")
+	user.Selection, user.SelectionState = organisationsBootstrapObjectID(document, "organisationId")
+	user.LegacySelectionPresent = document.Lookup("organisation_id").Type != bsontype.Type(0)
 	return user, nil
 }
 
@@ -258,7 +260,7 @@ func (r *organisationsBootstrapRunner) legacyOrganisationCandidates(ctx context.
 		for index := range candidates {
 			ids[index] = candidates[index].ID
 		}
-		referenced, err := r.database.Collection("users").CountDocuments(ctx, bson.M{"organisation_id": bson.M{"$in": ids}})
+		referenced, err := r.database.Collection("users").CountDocuments(ctx, bson.M{"organisationId": bson.M{"$in": ids}})
 		if err != nil {
 			return nil, false, err
 		}
@@ -502,7 +504,7 @@ func organisationsBootstrapMembershipActive(ctx context.Context, collection *mon
 
 func (r *organisationsBootstrapRunner) ensureUserSelection(ctx context.Context, user organisationsBootstrapUser, targetID, masterID primitive.ObjectID) (bool, bool, error) {
 	if user.SelectionState == organisationsBootstrapFieldWrong {
-		r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "organisation_id must be a BSON ObjectID")
+		r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "organisationId must be a BSON ObjectID")
 		return false, false, nil
 	}
 	if user.SelectionState == organisationsBootstrapFieldValue {
@@ -512,13 +514,13 @@ func (r *organisationsBootstrapRunner) ensureUserSelection(ctx context.Context, 
 		}
 		if !accessible {
 			r.report.Users.MissingSelectedOrganisation++
-			r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "preserved organisation_id is missing or not owned by the master")
+			r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "preserved organisationId is missing or not owned by the master")
 			return false, false, nil
 		}
 		return true, false, nil
 	}
 	if r.strict {
-		r.addConflict("user-selection-missing", masterID.Hex(), user.ID.Hex(), "required organisation_id is missing")
+		r.addConflict("user-selection-missing", masterID.Hex(), user.ID.Hex(), "required organisationId is missing")
 		return false, false, nil
 	}
 	if r.config.Mode == "dry-run" {
@@ -529,13 +531,13 @@ func (r *organisationsBootstrapRunner) ensureUserSelection(ctx context.Context, 
 	filter := bson.M{
 		"_id": user.ID,
 		"$or": bson.A{
-			bson.M{"organisation_id": bson.M{"$exists": false}},
-			bson.M{"organisation_id": nil},
-			bson.M{"organisation_id": primitive.NilObjectID},
+			bson.M{"organisationId": bson.M{"$exists": false}},
+			bson.M{"organisationId": nil},
+			bson.M{"organisationId": primitive.NilObjectID},
 		},
 	}
 	r.report.Writes.Attempted++
-	result, err := collection.UpdateOne(ctx, filter, bson.M{"$set": bson.M{"organisation_id": targetID}})
+	result, err := collection.UpdateOne(ctx, filter, bson.M{"$set": bson.M{"organisationId": targetID}})
 	if err != nil {
 		selectionOK, reconcileErr := r.reconcileUserSelection(ctx, user.ID, targetID, masterID)
 		if reconcileErr != nil {
@@ -558,9 +560,9 @@ func (r *organisationsBootstrapRunner) ensureUserSelection(ctx context.Context, 
 	if err := collection.FindOne(ctx, bson.M{"_id": user.ID}).Decode(&stored); err != nil {
 		return false, false, err
 	}
-	selection, state := organisationsBootstrapObjectID(stored, "organisation_id")
+	selection, state := organisationsBootstrapObjectID(stored, "organisationId")
 	if state != organisationsBootstrapFieldValue {
-		r.addConflict("user-selection-reconcile-failed", masterID.Hex(), user.ID.Hex(), "organisation_id update did not reconcile")
+		r.addConflict("user-selection-reconcile-failed", masterID.Hex(), user.ID.Hex(), "organisationId update did not reconcile")
 		return false, true, nil
 	}
 	accessible, err := r.organisationAccessibleToUser(ctx, selection, user.ID, masterID)
@@ -580,11 +582,11 @@ func (r *organisationsBootstrapRunner) reconcileUserSelection(ctx context.Contex
 	if err := r.database.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&stored); err != nil {
 		return false, err
 	}
-	selection, state := organisationsBootstrapObjectID(stored, "organisation_id")
+	selection, state := organisationsBootstrapObjectID(stored, "organisationId")
 	if state == organisationsBootstrapFieldValue && selection == targetID {
 		return true, nil
 	}
-	r.addConflict("user-selection-write-inconclusive", masterID.Hex(), userID.Hex(), "organisation_id update did not reconcile to the intended value")
+	r.addConflict("user-selection-write-inconclusive", masterID.Hex(), userID.Hex(), "organisationId update did not reconcile to the intended value")
 	return false, nil
 }
 
@@ -748,7 +750,7 @@ func (r *organisationsBootstrapRunner) ownerBootstrapReady(ctx context.Context, 
 		return false, err
 	}
 	master, err := parseOrganisationsBootstrapUser(masterDocument)
-	if err != nil || master.ParentState != organisationsBootstrapFieldEmpty {
+	if err != nil || master.ParentState != organisationsBootstrapFieldEmpty || master.LegacySelectionPresent {
 		return false, nil
 	}
 	var organisation bson.Raw
@@ -806,6 +808,12 @@ func (r *organisationsBootstrapRunner) ownerBootstrapReady(ctx context.Context, 
 
 func (r *organisationsBootstrapRunner) processSubUser(ctx context.Context, user organisationsBootstrapUser) error {
 	masterID := user.ParentID
+	if user.LegacySelectionPresent {
+		r.report.SubUsers.Conflicted++
+		r.addConflict("legacy-user-selection-field", masterID.Hex(), user.ID.Hex(), "rename users.organisation_id to organisationId before bootstrap")
+		r.report.Verification.Failed++
+		return nil
+	}
 	targetSet := map[primitive.ObjectID]struct{}{masterID: {}}
 	ownedCursor, err := r.database.Collection("organisation").Find(ctx, bson.M{"ownerId": user.ID}, options.Find().SetProjection(bson.M{"_id": 1}))
 	if err != nil {
@@ -829,7 +837,7 @@ func (r *organisationsBootstrapRunner) processSubUser(ctx context.Context, user 
 	ownedCursor.Close(ctx)
 	if user.SelectionState == organisationsBootstrapFieldWrong {
 		r.report.SubUsers.Conflicted++
-		r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "organisation_id must be a BSON ObjectID")
+		r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "organisationId must be a BSON ObjectID")
 		r.report.Verification.Failed++
 		return nil
 	}
@@ -841,7 +849,7 @@ func (r *organisationsBootstrapRunner) processSubUser(ctx context.Context, user 
 		if !accessible {
 			r.report.SubUsers.Conflicted++
 			r.report.Users.MissingSelectedOrganisation++
-			r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "preserved organisation_id is missing or not owned by the master")
+			r.addConflict("invalid-user-selection", masterID.Hex(), user.ID.Hex(), "preserved organisationId is missing or not owned by the master")
 			r.report.Verification.Failed++
 			return nil
 		}

@@ -179,16 +179,33 @@ func TestOrganisationsBootstrapResumeFilterPreservesScopedMaster(t *testing.T) {
 }
 
 func TestOrganisationsBootstrapSlugIndexRequiresPartialUniqueContract(t *testing.T) {
-	base := bson.M{
-		"key":    bson.D{{Key: "slug", Value: int32(1)}},
-		"unique": true,
+	base := organisationsBootstrapIndex{
+		Key:    bson.D{{Key: "slug", Value: int32(1)}},
+		Unique: true,
 	}
-	if organisationsBootstrapHasSlugIndex([]bson.M{base}) {
+	if organisationsBootstrapHasSlugIndex([]organisationsBootstrapIndex{base}) {
 		t.Fatal("full unique slug index must not satisfy the partial index contract")
 	}
-	base["partialFilterExpression"] = bson.M{"slug": bson.M{"$type": "string"}}
-	if !organisationsBootstrapHasSlugIndex([]bson.M{base}) {
+	base.PartialFilterExpression = bson.M{"slug": bson.M{"$exists": true, "$type": "string"}}
+	if !organisationsBootstrapHasSlugIndex([]organisationsBootstrapIndex{base}) {
 		t.Fatal("partial unique string slug index did not satisfy the contract")
+	}
+}
+
+func TestOrganisationsBootstrapIndexMetadataDecodesDriverShape(t *testing.T) {
+	raw, err := bson.Marshal(bson.D{
+		{Key: "key", Value: bson.D{{Key: "userId", Value: int32(1)}, {Key: "organisationId", Value: int32(1)}}},
+		{Key: "unique", Value: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index organisationsBootstrapIndex
+	if err := bson.Unmarshal(raw, &index); err != nil {
+		t.Fatal(err)
+	}
+	if !organisationsBootstrapHasIndex([]organisationsBootstrapIndex{index}, bson.D{{Key: "userId", Value: int32(1)}, {Key: "organisationId", Value: int32(1)}}, true) {
+		t.Fatalf("decoded index metadata did not match: %+v", index)
 	}
 }
 
@@ -197,10 +214,11 @@ func TestParseOrganisationsBootstrapUser(t *testing.T) {
 	subUserID := primitive.NewObjectID()
 
 	tests := []struct {
-		name            string
-		document        bson.M
-		wantParentState organisationsBootstrapFieldState
-		wantParentID    primitive.ObjectID
+		name                       string
+		document                   bson.M
+		wantParentState            organisationsBootstrapFieldState
+		wantParentID               primitive.ObjectID
+		wantLegacySelectionPresent bool
 	}{
 		{
 			name:            "master without parent",
@@ -223,6 +241,12 @@ func TestParseOrganisationsBootstrapUser(t *testing.T) {
 			document:        bson.M{"_id": subUserID, "username": "viewer", "user_id": masterID},
 			wantParentState: organisationsBootstrapFieldWrong,
 		},
+		{
+			name:                       "user with legacy selection key",
+			document:                   bson.M{"_id": masterID, "username": "owner", "organisation_id": primitive.NewObjectID()},
+			wantParentState:            organisationsBootstrapFieldEmpty,
+			wantLegacySelectionPresent: true,
+		},
 	}
 
 	for _, test := range tests {
@@ -241,7 +265,31 @@ func TestParseOrganisationsBootstrapUser(t *testing.T) {
 			if user.ParentID != test.wantParentID {
 				t.Errorf("ParentID = %v, want %v", user.ParentID, test.wantParentID)
 			}
+			if user.LegacySelectionPresent != test.wantLegacySelectionPresent {
+				t.Errorf("LegacySelectionPresent = %v, want %v", user.LegacySelectionPresent, test.wantLegacySelectionPresent)
+			}
 		})
+	}
+}
+
+func TestOrganisationsBootstrapOwnerBlocksLegacySelectionField(t *testing.T) {
+	report := organisationsBootstrapReport{}
+	runner := organisationsBootstrapRunner{report: &report}
+	userID := primitive.NewObjectID()
+
+	err := runner.processOwner(context.Background(), organisationsBootstrapUser{
+		ID:                     userID,
+		Username:               "owner",
+		LegacySelectionPresent: true,
+	})
+	if err != nil {
+		t.Fatalf("processOwner() error = %v", err)
+	}
+	if runner.blockingConflictCount != 1 || report.Verification.Failed != 1 {
+		t.Fatalf("blocking conflicts = %d, verification failures = %d", runner.blockingConflictCount, report.Verification.Failed)
+	}
+	if len(report.Conflicts) != 1 || report.Conflicts[0].Code != "legacy-user-selection-field" {
+		t.Fatalf("conflicts = %+v", report.Conflicts)
 	}
 }
 

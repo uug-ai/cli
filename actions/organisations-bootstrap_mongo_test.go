@@ -166,7 +166,7 @@ func TestOrganisationsBootstrapAmbiguousUserSelectionReconciles(t *testing.T) {
 			mtest.CreateCommandErrorResponse(mtest.CommandError{Code: 123, Message: "ambiguous update result"}),
 			mtest.CreateCursorResponse(0, namespace, mtest.FirstBatch, bson.D{
 				{Key: "_id", Value: userID},
-				{Key: "organisation_id", Value: targetID},
+				{Key: "organisationId", Value: targetID},
 			}),
 		)
 		report := organisationsBootstrapReport{}
@@ -199,7 +199,7 @@ func TestOrganisationsBootstrapAmbiguousUserSelectionConflictBlocks(t *testing.T
 			mtest.CreateCommandErrorResponse(mtest.CommandError{Code: 123, Message: "ambiguous update result"}),
 			mtest.CreateCursorResponse(0, namespace, mtest.FirstBatch, bson.D{
 				{Key: "_id", Value: userID},
-				{Key: "organisation_id", Value: primitive.NewObjectID()},
+				{Key: "organisationId", Value: primitive.NewObjectID()},
 			}),
 		)
 		report := organisationsBootstrapReport{}
