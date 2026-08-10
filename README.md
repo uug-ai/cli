@@ -6,6 +6,8 @@ This repository contains CLI tools for performing specific automations.
 - `reprocess-media`: Re-queue hub media for analysis when analysis is missing.
 - `audit-legacy-compat`: Auditing legacy data shape compatibility across domains.
 - `migrate-legacy-media`: Backfilling legacy media documents to current media shape.
+- `organisations-bootstrap`: Bootstrapping Phase 3 organisation identity and memberships in ordered stages.
+- `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
 
 
@@ -48,6 +50,59 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
    ```
 
 ## Usage
+
+### Organisation identity bootstrap
+
+Run the Phase 3 identity migration in order: `owners`, `sub-users`, then the
+read-only `verify` stage. Start each mutating stage in `dry-run`; existing
+non-zero selections are preserved.
+
+```sh
+go run . -action organisations-bootstrap \
+         -stage owners \
+         -mode dry-run \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -legacy-org-policy report \
+         -report-file organisations-bootstrap-owners.json
+```
+
+Repeat with `-stage sub-users` only after the owner stage verifies green, then
+run `-stage verify -mode dry-run`. Scope canaries with either `-username` or
+`-organisation-id`; those flags are mutually exclusive. Exit codes are `0` for
+a green run, `2` for identity conflicts or failed verification, `1` for an
+operational failure, and `64` for invalid or unsafe arguments.
+
+Live owner and sub-user runs require the canonical organisation and membership
+indexes. They acquire a stage/scope-specific lease in `migration_checkpoints`,
+advance only after a complete tenant verifies, and support `-resume` or
+`-restart`. Live writes are limited to `organisation`, `organisation_users`,
+missing `users.organisationId` values, and the checkpoint. The destructive
+`archive-delete` policy remains disabled until guarded archive/reference checks
+are implemented.
+
+### Organisation ownership backfill
+
+This action currently implements the read-only Phase 4 preflight. It inventories
+canonical tenant presence, BSON type and ObjectID-hex validity, legacy candidate
+coverage, and current indexes for the registered `sites`, `groups`, `devices`,
+and `alerts` adapters. Live writes, scoped tenant resolution, checkpoint resume,
+and index creation deliberately remain disabled until their compare-and-set and
+reconciliation paths are implemented.
+
+```sh
+go run . -action organisations-backfill \
+         -mode dry-run \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collection sites \
+         -adapter-version v1 \
+         -report-file organisations-backfill-sites.json
+```
+
+Use `-all` instead of `-collection` to inspect every ready adapter. The command
+exits `0` when preflight passes, `2` for invalid canonical tenant data, `1` for
+operational failures, and `64` for unsafe or invalid arguments.
 
 ### Vault to Hub Migration
 
