@@ -15,6 +15,7 @@ func promptAction() string {
 		"reprocess-media",
 		"organisations-bootstrap",
 		"organisations-backfill",
+		"projects-bootstrap",
 		"migrate-legacy-media",
 		"audit-legacy-compat",
 		"generate-default-labels",
@@ -236,6 +237,32 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "organisations-bootstrap: %v\n", err)
 			os.Exit(actions.OrganisationsBootstrapExitCode(err))
+		}
+	case "projects-bootstrap":
+		err := actions.ProjectsBootstrap(actions.ProjectsBootstrapConfig{
+			Mode:                       *mode,
+			Stage:                      *stage,
+			MongoDBURI:                 *mongodbURI,
+			MongoDBHost:                *mongodbHost,
+			MongoDBPort:                *mongodbPort,
+			MongoDBSourceDatabase:      *mongodbSourceDatabase,
+			MongoDBDestinationDatabase: *mongodbDestinationDatabase,
+			MongoDBDatabaseCredentials: *mongodbDatabaseCredentials,
+			MongoDBUsername:            *mongodbUsername,
+			MongoDBPassword:            *mongodbPassword,
+			MigrationVersion:           *migrationVersion,
+			MigrationTimeoutMinutes:    *migrationTimeoutMinutes,
+			Username:                   *username,
+			OrganisationID:             *organisationId,
+			BatchSize:                  *bootstrapBatchSize,
+			Resume:                     *resume,
+			Restart:                    *restart,
+			StopOnConflict:             *stopOnConflict,
+			ReportFile:                 *reportFile,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "projects-bootstrap: %v\n", err)
+			os.Exit(actions.ProjectsBootstrapExitCode(err))
 		}
 	case "migrate-legacy-media":
 		fmt.Printf("Running legacy media migration (%s)...\n", *mode)
