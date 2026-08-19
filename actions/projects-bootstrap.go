@@ -80,7 +80,10 @@ type projectsBootstrapReport struct {
 	Indexes          projectsBootstrapIndexStatus        `json:"indexes"`
 	Checkpoint       projectsBootstrapCheckpoint         `json:"checkpoint"`
 	Conflicts        []projectsBootstrapConflict         `json:"conflicts"`
-	Warnings         []projectsBootstrapWarning          `json:"warnings"`
+	// Warnings keeps the report shape aligned with the organisations bootstrap
+	// so operator tooling can parse both. It is always empty here: every
+	// projects bootstrap finding is blocking, so nothing produces a warning.
+	Warnings []projectsBootstrapWarning `json:"warnings"`
 }
 
 type projectsBootstrapMasterCounts struct {
@@ -100,6 +103,7 @@ type projectsBootstrapSubUserCounts struct {
 }
 
 type projectsBootstrapUserCounts struct {
+	SelectionsPlanned    int64 `json:"selectionsPlanned"`
 	MastersUpdated       int64 `json:"mastersUpdated"`
 	SubUsersUpdated      int64 `json:"subUsersUpdated"`
 	SelectionsPreserved  int64 `json:"selectionsPreserved"`
@@ -172,6 +176,10 @@ type projectsBootstrapRunner struct {
 	checkpointLeaseOwner  string
 	checkpointLeaseExpiry time.Time
 	checkpointLastMaster  primitive.ObjectID
+	// legacyDefaultsSeen memoizes the per-organisation legacy default scan so a
+	// shared organisation is inspected, counted, and reported once per run
+	// rather than once per principal that resolves to it.
+	legacyDefaultsSeen map[primitive.ObjectID]int64
 }
 
 type projectsBootstrapError struct {
@@ -436,17 +444,6 @@ func (r *projectsBootstrapRunner) addConflict(code, masterID, documentID, messag
 	}
 }
 
-func (r *projectsBootstrapRunner) addWarning(code, masterID, documentID, message string) {
-	if len(r.report.Warnings) < 100 {
-		r.report.Warnings = append(r.report.Warnings, projectsBootstrapWarning{
-			Code:       code,
-			MasterID:   masterID,
-			DocumentID: documentID,
-			Message:    message,
-		})
-	}
-}
-
 func (r *projectsBootstrapRunner) interrupted() bool {
 	if r.stopRequested == nil {
 		return false
@@ -640,27 +637,6 @@ func (r *projectsBootstrapRunner) masterFilter(ctx context.Context) (bson.M, err
 	return filter, nil
 }
 
-func (r *projectsBootstrapRunner) scopedMasterID(ctx context.Context) (primitive.ObjectID, bool, error) {
-	if r.config.OrganisationID != "" {
-		id, _ := primitive.ObjectIDFromHex(r.config.OrganisationID)
-		return id, true, nil
-	}
-	if r.config.Username == "" {
-		return primitive.NilObjectID, false, nil
-	}
-	filter, err := r.masterFilter(ctx)
-	if err != nil {
-		return primitive.NilObjectID, false, err
-	}
-	var document struct {
-		ID primitive.ObjectID `bson:"_id"`
-	}
-	if err := r.database.Collection("users").FindOne(ctx, filter).Decode(&document); err != nil {
-		return primitive.NilObjectID, false, err
-	}
-	return document.ID, true, nil
-}
-
 func (r *projectsBootstrapRunner) runOwners(ctx context.Context) error {
 	filter, err := r.masterFilter(ctx)
 	if err != nil {
@@ -740,6 +716,11 @@ func (r *projectsBootstrapRunner) processOwner(ctx context.Context, user project
 	if err != nil {
 		return err
 	}
+	for _, organisationID := range targets {
+		if organisationID != user.ID {
+			r.report.Organisations.SecondaryOwned++
+		}
+	}
 	if user.SelectionState != organisationsBootstrapFieldValue {
 		r.addConflict("organisation-bootstrap-incomplete", masterID, masterID, "master has no canonical organisationId")
 		r.report.Masters.Conflicted++
@@ -776,8 +757,14 @@ func (r *projectsBootstrapRunner) processOwner(ctx context.Context, user project
 		r.report.Verification.Failed++
 		return nil
 	}
-	if selectionChanged && r.config.Mode == "live" {
-		r.report.Users.MastersUpdated++
+	// SelectionsPlanned counts in both modes so the dry-run gate report shows
+	// the volume of users.projectId writes a live run would perform;
+	// MastersUpdated stays an applied-write counter.
+	if selectionChanged {
+		r.report.Users.SelectionsPlanned++
+		if r.config.Mode == "live" {
+			r.report.Users.MastersUpdated++
+		}
 	}
 	if projectChanged || selectionChanged {
 		r.report.Masters.Planned++
@@ -799,7 +786,8 @@ func targetIndex(targets []primitive.ObjectID, id primitive.ObjectID) (int, bool
 
 // ownedOrganisations returns the canonical primary organisation plus every
 // secondary organisation owned by the principal, sorted for deterministic
-// write order.
+// write order. It reports no counters: the sub-users gate calls it too, and
+// counting here would double-count every master.
 func (r *projectsBootstrapRunner) ownedOrganisations(ctx context.Context, ownerID primitive.ObjectID) ([]primitive.ObjectID, error) {
 	owned := map[primitive.ObjectID]struct{}{ownerID: {}}
 	cursor, err := r.database.Collection("organisation").Find(ctx, bson.M{"ownerId": ownerID}, options.Find().SetProjection(bson.M{"_id": 1}))
@@ -813,9 +801,6 @@ func (r *projectsBootstrapRunner) ownedOrganisations(ctx context.Context, ownerI
 		}
 		if err := cursor.Decode(&organisation); err != nil {
 			return nil, err
-		}
-		if organisation.ID != ownerID {
-			r.report.Organisations.SecondaryOwned++
 		}
 		owned[organisation.ID] = struct{}{}
 	}

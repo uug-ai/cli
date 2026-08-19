@@ -56,7 +56,14 @@ func projectsBootstrapProjectDocument(organisationID, ownerID primitive.ObjectID
 // projectsBootstrapMissingProjectFields reports only absent fields. A populated
 // business field is never replaced: the migration fills gaps, it does not
 // rewrite tenant data.
-func projectsBootstrapMissingProjectFields(document bson.Raw, organisationID, ownerID primitive.ObjectID, createdAt time.Time) bson.M {
+//
+// audit.createdBy and audit.updatedBy are deliberately absent from the
+// candidates. models.Audit marks them omitempty and Hub API's
+// ensureDefaultProject sets neither, so a lazily-minted default has no such
+// keys. Patching them in would attribute creation to an owner who did not
+// create the document. Documents this tool inserts carry both; existing
+// documents keep whatever shape they already have.
+func projectsBootstrapMissingProjectFields(document bson.Raw, organisationID primitive.ObjectID, createdAt time.Time) bson.M {
 	if existingCreatedAt, state := organisationsBootstrapTime(document, "audit", "createdAt"); state == organisationsBootstrapFieldValue {
 		createdAt = existingCreatedAt
 	}
@@ -65,9 +72,7 @@ func projectsBootstrapMissingProjectFields(document bson.Raw, organisationID, ow
 		"name":             projectsBootstrapDefaultName,
 		"slug":             projectsBootstrapDefaultSlug,
 		"isActive":         true,
-		"audit.createdBy":  ownerID.Hex(),
 		"audit.createdAt":  createdAt,
-		"audit.updatedBy":  ownerID.Hex(),
 		"audit.updatedAt":  createdAt,
 		"audit.lastAction": projectsBootstrapLastAction,
 	}
@@ -87,12 +92,17 @@ func projectsBootstrapMissingProjectFields(document bson.Raw, organisationID, ow
 	return missing
 }
 
+// projectsBootstrapProjectFieldsValid reports whether a stored default project
+// carries every field this migration depends on.
+//
+// audit.createdBy and audit.updatedBy are not required: Hub API's
+// ensureDefaultProject omits them, and demanding them here would report every
+// lazily-minted default as incomplete — failing `verify` for any organisation
+// that saw a metadata read, and blocking that master's sub-users stage.
 func projectsBootstrapProjectFieldsValid(document bson.Raw) bool {
 	for _, path := range [][]string{
 		{"name"},
 		{"slug"},
-		{"audit", "createdBy"},
-		{"audit", "updatedBy"},
 		{"audit", "lastAction"},
 	} {
 		if _, state := organisationsBootstrapString(document, path...); state != organisationsBootstrapFieldValue {
@@ -217,6 +227,9 @@ func (r *projectsBootstrapRunner) ensureDefaultProject(ctx context.Context, orga
 // requires exactly one match, so a second document would break every metadata
 // read. This tool never deletes or folds it — an operator must decide.
 func (r *projectsBootstrapRunner) inspectLegacyDefaultProjects(ctx context.Context, organisationID, actorID primitive.ObjectID) (int64, error) {
+	if seen, ok := r.legacyDefaultsSeen[organisationID]; ok {
+		return seen, nil
+	}
 	cursor, err := r.database.Collection(projectsBootstrapCollection).Find(ctx, bson.M{
 		"organisationId": organisationID,
 		"slug":           projectsBootstrapDefaultSlug,
@@ -239,7 +252,14 @@ func (r *projectsBootstrapRunner) inspectLegacyDefaultProjects(ctx context.Conte
 		r.report.Projects.Conflicted++
 		r.addConflict("default-project-conflict", actorID.Hex(), legacy.ID.Hex(), "a default project exists outside the deterministic identity and must be resolved by an operator")
 	}
-	return found, cursor.Err()
+	if err := cursor.Err(); err != nil {
+		return found, err
+	}
+	if r.legacyDefaultsSeen == nil {
+		r.legacyDefaultsSeen = map[primitive.ObjectID]int64{}
+	}
+	r.legacyDefaultsSeen[organisationID] = found
+	return found, nil
 }
 
 func (r *projectsBootstrapRunner) createDefaultProject(ctx context.Context, organisationID, ownerID, actorID primitive.ObjectID, createdAt time.Time) (bool, bool, error) {
@@ -311,7 +331,7 @@ func (r *projectsBootstrapRunner) completeDefaultProject(ctx context.Context, st
 		return false, false, nil
 	}
 
-	missing := projectsBootstrapMissingProjectFields(stored, organisationID, ownerID, createdAt)
+	missing := projectsBootstrapMissingProjectFields(stored, organisationID, createdAt)
 	if len(missing) == 0 && projectsBootstrapDefaultProjectValid(stored, organisationID) && projectsBootstrapProjectFieldsValid(stored) {
 		r.report.Projects.AlreadyPresent++
 		return true, false, nil
@@ -621,6 +641,7 @@ func (r *projectsBootstrapRunner) processSubUser(ctx context.Context, user proje
 		return nil
 	}
 	if selectionChanged {
+		r.report.Users.SelectionsPlanned++
 		if r.config.Mode == "live" {
 			r.report.SubUsers.Updated++
 			r.report.Users.SubUsersUpdated++
