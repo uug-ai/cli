@@ -131,10 +131,6 @@ func TestProjectsBootstrapEveryConflictBlocksLiveWrites(t *testing.T) {
 	if runner.blockingConflictCount != 1 || !runner.hasConflict {
 		t.Fatalf("blocking conflicts = %d, hasConflict = %v", runner.blockingConflictCount, runner.hasConflict)
 	}
-	runner.addWarning("informational", "", "", "not blocking")
-	if runner.blockingConflictCount != 1 {
-		t.Fatalf("warnings must not block: %d", runner.blockingConflictCount)
-	}
 }
 
 func TestProjectsBootstrapInterrupted(t *testing.T) {
@@ -332,9 +328,44 @@ func TestProjectsBootstrapProjectDocumentIsTheReservedDefault(t *testing.T) {
 	}
 }
 
+// A default project minted lazily by Hub API's ensureDefaultProject carries no
+// audit.createdBy/updatedBy: models.Audit marks both omitempty and Hub API sets
+// neither. Such a document must read as complete, or `verify` fails for every
+// organisation that saw a metadata read and the sub-users stage blocks.
+func TestProjectsBootstrapAcceptsLazilyMintedDefaultProject(t *testing.T) {
+	organisationID := primitive.NewObjectID()
+	mintedAt := time.Date(2026, time.August, 19, 0, 0, 0, 0, time.UTC)
+	raw, err := bson.Marshal(bson.M{
+		"_id":            organisationID,
+		"organisationId": organisationID,
+		"name":           "Default",
+		"slug":           "default",
+		"isActive":       true,
+		"audit": bson.M{
+			"createdAt":  mintedAt,
+			"updatedAt":  mintedAt,
+			"lastAction": "project.default.created",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !projectsBootstrapDefaultProjectValid(raw, organisationID) {
+		t.Fatal("a lazily-minted default must satisfy the Hub API identity contract")
+	}
+	if !projectsBootstrapExistingProjectTypesValid(raw) {
+		t.Fatal("a lazily-minted default must satisfy project type validation")
+	}
+	if !projectsBootstrapProjectFieldsValid(raw) {
+		t.Fatal("a lazily-minted default must read as complete")
+	}
+	if missing := projectsBootstrapMissingProjectFields(raw, organisationID, mintedAt); len(missing) != 0 {
+		t.Fatalf("missing fields = %v, want none — the migration must not attribute creation to the owner", missing)
+	}
+}
+
 func TestProjectsBootstrapMissingProjectFieldsPreservesExistingValues(t *testing.T) {
 	organisationID := primitive.NewObjectID()
-	ownerID := primitive.NewObjectID()
 	existingCreatedAt := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	raw, err := bson.Marshal(bson.M{
 		"_id":            organisationID,
@@ -353,7 +384,7 @@ func TestProjectsBootstrapMissingProjectFieldsPreservesExistingValues(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing := projectsBootstrapMissingProjectFields(raw, organisationID, ownerID, time.Now())
+	missing := projectsBootstrapMissingProjectFields(raw, organisationID, time.Now())
 	if len(missing) != 0 {
 		t.Fatalf("missing fields = %v, want none — populated tenant values must never be rewritten", missing)
 	}
@@ -361,7 +392,6 @@ func TestProjectsBootstrapMissingProjectFieldsPreservesExistingValues(t *testing
 
 func TestProjectsBootstrapMissingProjectFieldsAdoptsExistingCreatedAt(t *testing.T) {
 	organisationID := primitive.NewObjectID()
-	ownerID := primitive.NewObjectID()
 	existingCreatedAt := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	raw, err := bson.Marshal(bson.M{
 		"audit": bson.M{"createdAt": existingCreatedAt},
@@ -369,7 +399,7 @@ func TestProjectsBootstrapMissingProjectFieldsAdoptsExistingCreatedAt(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing := projectsBootstrapMissingProjectFields(raw, organisationID, ownerID, time.Now())
+	missing := projectsBootstrapMissingProjectFields(raw, organisationID, time.Now())
 	updatedAt, ok := missing["audit.updatedAt"].(time.Time)
 	if !ok || !updatedAt.Equal(existingCreatedAt) {
 		t.Fatalf("audit.updatedAt = %v, want the existing createdAt %v", missing["audit.updatedAt"], existingCreatedAt)
@@ -512,10 +542,9 @@ func TestProjectsBootstrapReportOmitsTenantSecrets(t *testing.T) {
 	runner := projectsBootstrapRunner{report: &report}
 	for index := 0; index < 150; index++ {
 		runner.addConflict("default-project-conflict", primitive.NewObjectID().Hex(), primitive.NewObjectID().Hex(), "legacy default")
-		runner.addWarning("informational", "", "", "noted")
 	}
-	if len(report.Conflicts) != 100 || len(report.Warnings) != 100 {
-		t.Fatalf("report entries = (%d, %d), want capped at 100", len(report.Conflicts), len(report.Warnings))
+	if len(report.Conflicts) != 100 {
+		t.Fatalf("report entries = %d, want capped at 100", len(report.Conflicts))
 	}
 	if runner.conflictCount != 150 {
 		t.Fatalf("conflict count = %d, want every conflict counted even when not listed", runner.conflictCount)
