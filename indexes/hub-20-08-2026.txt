@@ -163,7 +163,11 @@ organisation
   { v: 2, key: { slug: 1 }, name: 'slug_1', unique: true, partialFilterExpression: { slug: { $exists: true, $type: 'string' } } }
 ]
 organisation_users
-[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { userId: 1, organisationId: 1 }, name: 'userId_1_organisationId_1', unique: true },
+  { v: 2, key: { organisationId: 1, status: 1 }, name: 'organisationId_1_status_1' }
+]
 project
 [
   { v: 2, key: { _id: 1 }, name: '_id_' },
