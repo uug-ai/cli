@@ -9,6 +9,8 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+
+	"github.com/uug-ai/models/pkg/models"
 )
 
 func TestValidateProjectsBootstrapConfig(t *testing.T) {
@@ -335,16 +337,19 @@ func TestProjectsBootstrapProjectDocumentIsTheReservedDefault(t *testing.T) {
 func TestProjectsBootstrapAcceptsLazilyMintedDefaultProject(t *testing.T) {
 	organisationID := primitive.NewObjectID()
 	mintedAt := time.Date(2026, time.August, 19, 0, 0, 0, 0, time.UTC)
-	raw, err := bson.Marshal(bson.M{
-		"_id":            organisationID,
-		"organisationId": organisationID,
-		"name":           "Default",
-		"slug":           "default",
-		"isActive":       true,
-		"audit": bson.M{
-			"createdAt":  mintedAt,
-			"updatedAt":  mintedAt,
-			"lastAction": "project.default.created",
+	// Marshalled from the real models.Project rather than a hand-written
+	// approximation, so this breaks at compile time if the schema moves. The
+	// literal mirrors ensureDefaultProject in hub-api's project package.
+	raw, err := bson.Marshal(models.Project{
+		Id:             organisationID,
+		OrganisationId: organisationID,
+		Name:           "Default",
+		Slug:           models.DefaultProjectSlug,
+		IsActive:       true,
+		Audit: models.Audit{
+			CreatedAt:  mintedAt,
+			UpdatedAt:  mintedAt,
+			LastAction: "project.default.created",
 		},
 	})
 	if err != nil {
@@ -361,6 +366,35 @@ func TestProjectsBootstrapAcceptsLazilyMintedDefaultProject(t *testing.T) {
 	}
 	if missing := projectsBootstrapMissingProjectFields(raw, organisationID, mintedAt); len(missing) != 0 {
 		t.Fatalf("missing fields = %v, want none — the migration must not attribute creation to the owner", missing)
+	}
+}
+
+// The migration hand-builds its default project because it patches individual
+// dotted paths, which a struct literal cannot express. That replica is only
+// safe while it covers every field models.Project always persists, so derive
+// the mandatory key set from a zero-valued marshal: omitempty fields drop out
+// and whatever survives is required. A new non-omitempty field in models.Project
+// fails here rather than silently producing documents that disagree with the
+// ones Hub API mints.
+func TestProjectsBootstrapDocumentCoversModelsProjectRequiredFields(t *testing.T) {
+	marshalled, err := bson.Marshal(models.Project{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	elements, err := bson.Raw(marshalled).Elements()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	document := projectsBootstrapProjectDocument(primitive.NewObjectID(), primitive.NewObjectID(), time.Now().UTC())
+	for _, element := range elements {
+		if _, present := document[element.Key()]; !present {
+			t.Errorf("models.Project always persists %q but the migration document omits it", element.Key())
+		}
+	}
+
+	if projectsBootstrapDefaultSlug != models.DefaultProjectSlug {
+		t.Errorf("default slug = %q, want models.DefaultProjectSlug %q", projectsBootstrapDefaultSlug, models.DefaultProjectSlug)
 	}
 }
 

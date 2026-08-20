@@ -1,3 +1,6 @@
 launch.json
 # local temp
 /tmp/
+
+# Compiled binary (module name matches the repo, so `go build` drops it here)
+/cli
