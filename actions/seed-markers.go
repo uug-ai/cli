@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gosuri/uiprogress"
-	"github.com/uug-ai/markers/pkg/markers"
+	"github.com/uug-ai/ingest/pkg/markers"
 	"github.com/uug-ai/models/pkg/models"
 	"github.com/uug-ai/trace/pkg/opentelemetry"
 
@@ -204,6 +204,20 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 		organisationId = userObjectID.Hex()
 	}
 
+	// Resolve the project that owns every seeded marker. The value is derived,
+	// never looked up: models.ResolveProjectId is a pure function of the
+	// organisation id, so the seeder stamps exactly what the services reading
+	// these markers compute for themselves. Hand-rolling the default here would
+	// let the seeder drift from the platform the moment the rollout changes.
+	//
+	// A non-ObjectID organisation yields no project rather than a fabricated
+	// one — the same choice the shared writer makes — because a made-up project
+	// hides the marker from every project-scoped read.
+	projectId := resolveSeedProjectId(organisationId)
+	if projectId == nil {
+		fmt.Printf("[warn] organisation %q is not an ObjectID: seeding markers without a project\n", organisationId)
+	}
+
 	// Align the marker package with user-provided database/collection names.
 	markers.DatabaseName = cfg.DBName
 	markers.MARKERS_COLLECTION = cfg.MarkerColl
@@ -376,9 +390,9 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 
 		var batch []markerInsertTask
 		if cfg.LinkMedia {
-			batch = generateBatchMarkersFromMedia(current, organisationId, &mediaItems, groupIds)
+			batch = generateBatchMarkersFromMedia(current, organisationId, projectId, &mediaItems, groupIds)
 		} else {
-			base := generateBatchMarkers(current, cfg.Days, organisationId, deviceKeys, groupIds)
+			base := generateBatchMarkers(current, cfg.Days, organisationId, projectId, deviceKeys, groupIds)
 			batch = make([]markerInsertTask, 0, len(base))
 			for _, marker := range base {
 				batch = append(batch, markerInsertTask{Marker: marker})
@@ -411,7 +425,22 @@ func RunSeedMarkers(cfg SeedMarkersConfig) error {
 	return nil
 }
 
-func generateBatchMarkersFromMedia(batchSize int, organisationId string, mediaItems *[]mediaCandidate, groupIds []string) []markerInsertTask {
+// resolveSeedProjectId returns the project every seeded resource of an
+// organisation belongs to during the hidden single-project rollout, or nil when
+// the organisation id is not an ObjectID and no project can be derived from it.
+//
+// It defers to models.ResolveProjectId rather than reimplementing the default,
+// so seeded data lands in the same project the rest of the platform computes.
+func resolveSeedProjectId(organisationId string) *primitive.ObjectID {
+	organisationObjectId, err := primitive.ObjectIDFromHex(organisationId)
+	if err != nil {
+		return nil
+	}
+	projectId := models.ResolveProjectId(organisationObjectId, nil)
+	return &projectId
+}
+
+func generateBatchMarkersFromMedia(batchSize int, organisationId string, projectId *primitive.ObjectID, mediaItems *[]mediaCandidate, groupIds []string) []markerInsertTask {
 	if batchSize > len(*mediaItems) {
 		batchSize = len(*mediaItems)
 	}
@@ -509,6 +538,7 @@ func generateBatchMarkersFromMedia(batchSize int, organisationId string, mediaIt
 			SiteId:         randomSiteId(),
 			GroupId:        groupId,
 			OrganisationId: organisationId,
+			ProjectId:      projectId,
 			StartTimestamp: start,
 			EndTimestamp:   end,
 			Duration:       duration,
@@ -538,7 +568,7 @@ func popRandomMedia(mediaItems *[]mediaCandidate) mediaCandidate {
 	return selected
 }
 
-func generateBatchMarkers(batchSize int, days int, organisationId string, deviceKeys []string, groupIds []string) []models.Marker {
+func generateBatchMarkers(batchSize int, days int, organisationId string, projectId *primitive.ObjectID, deviceKeys []string, groupIds []string) []models.Marker {
 	tagNames := []string{
 		"vehicle", "license plate", "security", "entrance", "exit", "parking-lot",
 		"lobby-area", "staff", "visitor", "delivery", "motion", "sound", "door", "window",
@@ -650,6 +680,7 @@ func generateBatchMarkers(batchSize int, days int, organisationId string, device
 			SiteId:         randomSiteId(),
 			GroupId:        groupId,
 			OrganisationId: organisationId,
+			ProjectId:      projectId,
 			StartTimestamp: start,
 			EndTimestamp:   end,
 			Duration:       duration,
