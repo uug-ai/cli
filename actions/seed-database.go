@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/uug-ai/cli/database"
-	"github.com/uug-ai/markers/pkg/markers"
+	"github.com/uug-ai/ingest/pkg/markers"
 	"github.com/uug-ai/models/pkg/models"
 	"github.com/uug-ai/trace/pkg/opentelemetry"
 	"go.mongodb.org/mongo-driver/bson"
@@ -493,6 +493,10 @@ func RunSeedDatabase(cfg SeedDatabaseConfig) error {
 			DeviceId:       deviceID,
 			GroupId:        "",
 			OrganisationId: userHex,
+			// The seeded organisation id is a deterministic ObjectID, so the
+			// owning project is derived from it with the same pure helper the
+			// rest of the platform uses instead of being hand-computed here.
+			ProjectId:      resolveSeedProjectId(userHex),
 			StartTimestamp: markerStart,
 			EndTimestamp:   markerEnd,
 			Name:           markerName,
