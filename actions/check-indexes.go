@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +19,18 @@ type IndexSpec struct {
 	Name   string
 	Key    bson.D
 	Unique bool
+	// PartialFilterExpression restricts which documents the index covers. It is
+	// nil for the ordinary full index that every other entry in the indexes
+	// files describes.
+	//
+	// A unique index needs this whenever the indexed field is optional. Mongo
+	// treats an absent field as null for a plain unique index, so the first
+	// document without the field indexes as null and the second collides — the
+	// build fails outright on any collection that already holds two of them.
+	// The organisation slug is exactly that case: the field is `omitempty`, so
+	// most organisations have no slug key at all, and the uniqueness has to
+	// apply only to the ones that do.
+	PartialFilterExpression bson.M
 }
 
 const (
@@ -208,9 +221,10 @@ func CheckIndexes(
 		fmt.Println("")
 		fmt.Printf(">> Collection: %s\n", collName)
 		fmt.Println("")
-		fmt.Println("  +------------------------------+----------------------------------------------------+---------+")
-		fmt.Println("  | Name                         | Key                                                | Unique  |")
-		fmt.Println("  +------------------------------+----------------------------------------------------+---------+")
+		border := "  +------------------------------+----------------------------------------------------+---------+------------------------------------------+"
+		fmt.Println(border)
+		fmt.Printf("  | %-28s | %-50s | %-7s | %-40s |\n", "Name", "Key", "Unique", "Partial")
+		fmt.Println(border)
 		for _, m := range misses {
 			name := m.Name
 			key := normalizeKey(m.Key)
@@ -218,9 +232,9 @@ func CheckIndexes(
 			if m.Unique {
 				unique = "true"
 			}
-			fmt.Printf("  | %-28s | %-50s | %-7s |\n", name, key, unique)
+			fmt.Printf("  | %-28s | %-50s | %-7s | %-40s |\n", name, key, unique, describePartialFilter(m.PartialFilterExpression))
 		}
-		fmt.Println("  +------------------------------+----------------------------------------------------+---------+")
+		fmt.Println(border)
 	}
 
 	fmt.Printf("\n[summary] missing_total=%d mode=%s\n", missingTotal, mode)
@@ -238,6 +252,9 @@ func CheckIndexes(
 			opts := options.Index().SetName(m.spec.Name)
 			if m.spec.Unique {
 				opts.SetUnique(true)
+			}
+			if len(m.spec.PartialFilterExpression) > 0 {
+				opts.SetPartialFilterExpression(m.spec.PartialFilterExpression)
 			}
 			_, err := db.Collection(m.coll).Indexes().CreateOne(ctx, mongo.IndexModel{
 				Keys:    m.spec.Key,
@@ -354,6 +371,36 @@ func normalizeKey(d bson.D) string {
 	return sb.String()
 }
 
+// describePartialFilter renders a partial filter expression for the missing-index
+// table. Keys are sorted so the same filter always prints the same way.
+func describePartialFilter(m bson.M) string {
+	if len(m) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	sb.WriteString("{")
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(k)
+		sb.WriteString(": ")
+		if nested, ok := m[k].(bson.M); ok {
+			sb.WriteString(describePartialFilter(nested))
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("%v", m[k]))
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
 func loadCanonicalIndexSpecsFromFile(path string) (map[string][]IndexSpec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -428,9 +475,10 @@ func parseIndexArrayBlock(lines []string) []IndexSpec {
 			continue
 		}
 		specs = append(specs, IndexSpec{
-			Name:   name,
-			Key:    key,
-			Unique: extractUnique(p),
+			Name:                    name,
+			Key:                     key,
+			Unique:                  extractUnique(p),
+			PartialFilterExpression: parseFilterDoc(extractPartialFilterExpression(p)),
 		})
 	}
 	return specs
@@ -485,29 +533,64 @@ func extractName(obj string) string {
 }
 
 func extractKeyDoc(obj string) string {
-	start := strings.Index(obj, "key:")
+	return extractBraceDoc(obj, "key:")
+}
+
+// extractPartialFilterExpression returns the raw `partialFilterExpression: {...}`
+// document from an index object, or "" when the index has none. Both the
+// mongosh dump spelling and the shorthand used when hand-writing an indexes
+// file are accepted.
+func extractPartialFilterExpression(obj string) string {
+	for _, label := range []string{"partialFilterExpression:", "partialFilter:"} {
+		if doc := extractBraceDoc(obj, label); doc != "" {
+			return doc
+		}
+	}
+	return ""
+}
+
+// extractBraceDoc returns the balanced `{...}` document that follows label in
+// obj, or "" when label is absent or is not followed by one. Quoted braces are
+// not counted, so a filter such as { name: '{literal}' } stays balanced.
+func extractBraceDoc(obj string, label string) string {
+	start := strings.Index(obj, label)
 	if start == -1 {
 		return ""
 	}
-	s := strings.TrimSpace(obj[start+4:])
+	s := strings.TrimSpace(obj[start+len(label):])
 	if !strings.HasPrefix(s, "{") {
 		return ""
 	}
-	depth := 0
-	var b strings.Builder
+	var (
+		b       strings.Builder
+		inQuote rune
+		depth   int
+	)
 	for _, r := range s {
-		if r == '{' {
-			depth++
-		}
 		b.WriteRune(r)
-		if r == '}' {
-			depth--
-			if depth == 0 {
-				break
+		switch r {
+		case '\'', '"':
+			if inQuote == 0 {
+				inQuote = r
+			} else if inQuote == r {
+				inQuote = 0
+			}
+		case '{':
+			if inQuote == 0 {
+				depth++
+			}
+		case '}':
+			if inQuote == 0 {
+				depth--
+				if depth == 0 {
+					return b.String()
+				}
 			}
 		}
 	}
-	return b.String()
+	// Unbalanced: the object was truncated. Treat it as absent rather than
+	// creating an index with a half-read filter.
+	return ""
 }
 
 func extractUnique(obj string) bool {
@@ -515,15 +598,67 @@ func extractUnique(obj string) bool {
 	return strings.Contains(obj, "unique: true")
 }
 
-func parseKeyFields(doc string) bson.D {
+// parseFilterDoc parses a partialFilterExpression document into bson.M.
+//
+// This is deliberately not parseKeyFields: a key document maps every value to a
+// sort direction, coercing anything unrecognized toward int32(1), whereas a
+// filter carries booleans, strings and nested operator documents that have to
+// survive intact. `{ slug: { $exists: true, $type: 'string' } }` would come out
+// of parseKeyFields as slug:1.
+func parseFilterDoc(doc string) bson.M {
 	doc = strings.TrimSpace(doc)
-	doc = strings.TrimPrefix(doc, "{")
-	doc = strings.TrimSuffix(doc, "}")
-	doc = strings.TrimSpace(doc)
-	if doc == "" {
-		return bson.D{}
+	if !strings.HasPrefix(doc, "{") || !strings.HasSuffix(doc, "}") {
+		return nil
+	}
+	inner := strings.TrimSpace(doc[1 : len(doc)-1])
+	if inner == "" {
+		return bson.M{}
 	}
 
+	out := bson.M{}
+	for _, field := range splitTopLevelFields(inner) {
+		kv := strings.SplitN(field, ":", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(strings.Trim(strings.TrimSpace(kv[0]), "'\""))
+		if key == "" {
+			continue
+		}
+		out[key] = parseFilterValue(strings.TrimSpace(kv[1]))
+	}
+	return out
+}
+
+// parseFilterValue converts a single filter value literal into the Go type the
+// driver should send: a nested document, a bool, an int32, or a string.
+func parseFilterValue(val string) interface{} {
+	val = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(val), ","))
+	switch {
+	case val == "":
+		return ""
+	case strings.HasPrefix(val, "{"):
+		if nested := parseFilterDoc(val); nested != nil {
+			return nested
+		}
+		return val
+	case val == "true":
+		return true
+	case val == "false":
+		return false
+	case strings.HasPrefix(val, "'"), strings.HasPrefix(val, "\""):
+		return strings.Trim(val, "'\"")
+	}
+	if i, err := parseInt(unwrapNumericConstructor(val)); err == nil {
+		return int32(i)
+	}
+	return strings.Trim(val, "'\"")
+}
+
+// splitTopLevelFields splits a comma-separated document body on the commas that
+// sit outside quotes and outside any nested {} or []. Both parseKeyFields and
+// parseFilterDoc need this, and they must agree on it.
+func splitTopLevelFields(body string) []string {
 	var (
 		parts   []string
 		cur     strings.Builder
@@ -531,7 +666,7 @@ func parseKeyFields(doc string) bson.D {
 		depth   int
 	)
 
-	for _, r := range doc {
+	for _, r := range body {
 		switch r {
 		case '\'', '"':
 			if inQuote == 0 {
@@ -552,8 +687,7 @@ func parseKeyFields(doc string) bson.D {
 			cur.WriteRune(r)
 		case ',':
 			if inQuote == 0 && depth == 0 {
-				segment := strings.TrimSpace(cur.String())
-				if segment != "" {
+				if segment := strings.TrimSpace(cur.String()); segment != "" {
 					parts = append(parts, segment)
 				}
 				cur.Reset()
@@ -567,6 +701,19 @@ func parseKeyFields(doc string) bson.D {
 	if tail := strings.TrimSpace(cur.String()); tail != "" {
 		parts = append(parts, tail)
 	}
+	return parts
+}
+
+func parseKeyFields(doc string) bson.D {
+	doc = strings.TrimSpace(doc)
+	doc = strings.TrimPrefix(doc, "{")
+	doc = strings.TrimSuffix(doc, "}")
+	doc = strings.TrimSpace(doc)
+	if doc == "" {
+		return bson.D{}
+	}
+
+	parts := splitTopLevelFields(doc)
 
 	out := make(bson.D, 0, len(parts))
 	for _, p := range parts {
