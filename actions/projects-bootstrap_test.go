@@ -302,7 +302,7 @@ func TestProjectsBootstrapProjectDocumentIsTheReservedDefault(t *testing.T) {
 	if document["_id"] != organisationID || document["organisationId"] != organisationID {
 		t.Fatalf("project identity = (%v, %v), want %v", document["_id"], document["organisationId"], organisationID)
 	}
-	if document["slug"] != "default" || document["name"] != "Default" || document["isActive"] != true {
+	if document["slug"] != models.DefaultProjectSlug || document["name"] != models.DefaultProjectName || document["isActive"] != true {
 		t.Fatalf("default project shape = %+v", document)
 	}
 	for _, forbidden := range []string{"description", "keyset", "keys", "ownerId", "settings"} {
@@ -343,7 +343,7 @@ func TestProjectsBootstrapAcceptsLazilyMintedDefaultProject(t *testing.T) {
 	raw, err := bson.Marshal(models.Project{
 		Id:             organisationID,
 		OrganisationId: organisationID,
-		Name:           "Default",
+		Name:           models.DefaultProjectName,
 		Slug:           models.DefaultProjectSlug,
 		IsActive:       true,
 		Audit: models.Audit{
@@ -393,8 +393,15 @@ func TestProjectsBootstrapDocumentCoversModelsProjectRequiredFields(t *testing.T
 		}
 	}
 
-	if projectsBootstrapDefaultSlug != models.DefaultProjectSlug {
-		t.Errorf("default slug = %q, want models.DefaultProjectSlug %q", projectsBootstrapDefaultSlug, models.DefaultProjectSlug)
+	// The identity fields are what make a migrated document interchangeable with
+	// a lazily-minted one, so assert them on the built document rather than on
+	// the constants: the constants are aliases of the models ones and comparing
+	// them to each other proves nothing.
+	if document["slug"] != models.DefaultProjectSlug {
+		t.Errorf("document slug = %v, want models.DefaultProjectSlug %q", document["slug"], models.DefaultProjectSlug)
+	}
+	if document["name"] != models.DefaultProjectName {
+		t.Errorf("document name = %v, want models.DefaultProjectName %q", document["name"], models.DefaultProjectName)
 	}
 }
 
@@ -405,7 +412,7 @@ func TestProjectsBootstrapMissingProjectFieldsPreservesExistingValues(t *testing
 		"_id":            organisationID,
 		"organisationId": organisationID,
 		"name":           "Renamed by the tenant",
-		"slug":           "default",
+		"slug":           models.DefaultProjectSlug,
 		"isActive":       false,
 		"audit": bson.M{
 			"createdBy":  "existing",
@@ -438,15 +445,15 @@ func TestProjectsBootstrapMissingProjectFieldsAdoptsExistingCreatedAt(t *testing
 	if !ok || !updatedAt.Equal(existingCreatedAt) {
 		t.Fatalf("audit.updatedAt = %v, want the existing createdAt %v", missing["audit.updatedAt"], existingCreatedAt)
 	}
-	if missing["organisationId"] != organisationID || missing["slug"] != "default" {
+	if missing["organisationId"] != organisationID || missing["slug"] != models.DefaultProjectSlug {
 		t.Fatalf("missing identity fields = %+v", missing)
 	}
 }
 
 func TestProjectsBootstrapExistingProjectTypesRejectWrongTypes(t *testing.T) {
 	raw, err := bson.Marshal(bson.M{
-		"name":     "Default",
-		"slug":     "default",
+		"name":     models.DefaultProjectName,
+		"slug":     models.DefaultProjectSlug,
 		"isActive": "true",
 	})
 	if err != nil {
@@ -470,7 +477,7 @@ func TestProjectsBootstrapDefaultProjectValidRejectsRandomIdentity(t *testing.T)
 	raw, err := bson.Marshal(bson.M{
 		"_id":            primitive.NewObjectID(),
 		"organisationId": organisationID,
-		"slug":           "default",
+		"slug":           models.DefaultProjectSlug,
 	})
 	if err != nil {
 		t.Fatal(err)
