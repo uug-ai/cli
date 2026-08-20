@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/uug-ai/cli/database"
+	"github.com/uug-ai/models/pkg/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -31,12 +32,16 @@ const (
 const projectsBootstrapCollection = "project"
 
 // The default project is the reserved, hidden metadata document that Hub API
-// mints lazily at _id == organisationId. These literals must stay byte-identical
-// to models.DefaultProjectSlug and the document ensureDefaultProject writes, so
-// a migrated document and a lazily-minted one are interchangeable.
+// mints lazily at _id == organisationId. The slug and name come from models
+// rather than from literals here, so a migrated document and a lazily-minted one
+// stay interchangeable even when those values change.
+//
+// The last action is ours: it is the audit marker that distinguishes a document
+// this tool wrote from one Hub API minted ("project.default.created") or a user
+// created through the API ("project.created").
 const (
-	projectsBootstrapDefaultSlug = "default"
-	projectsBootstrapDefaultName = "Default"
+	projectsBootstrapDefaultSlug = models.DefaultProjectSlug
+	projectsBootstrapDefaultName = models.DefaultProjectName
 	projectsBootstrapLastAction  = "project.default.migrated"
 )
 
