@@ -1,4 +1,9 @@
-FROM mcr.microsoft.com/devcontainers/go:1.24-bookworm AS builder
+# The builder's Go must be at least the `go` directive in go.mod. It is not
+# merely a version-skew preference: GOSUMDB is off below, so when GOTOOLCHAIN
+# has to fetch a newer toolchain it cannot verify the download and the build
+# fails outright ("checksum database disabled by GOSUMDB=off"). Keep this image
+# ahead of go.mod, or the next directive bump breaks the image build again.
+FROM mcr.microsoft.com/devcontainers/go:1.25-bookworm AS builder
 
 ENV GOROOT=/usr/local/go
 ENV GOPATH=/go
