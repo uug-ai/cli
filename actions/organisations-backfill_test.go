@@ -75,12 +75,29 @@ func TestValidateOrganisationsBackfillConfig(t *testing.T) {
 			wantError: "invalid document-id",
 		},
 		{
-			name: "rejects scoped run before resolvers exist",
+			name: "accepts scoped subscriptions",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.Collection = "subscriptions"
+				config.OrganisationID = "507f1f77bcf86cd799439011"
+				return config
+			},
+		},
+		{
+			name: "rejects scoped sites",
 			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
 				config.OrganisationID = "507f1f77bcf86cd799439011"
 				return config
 			},
-			wantError: "scoped resolution is disabled",
+			wantError: "not implemented",
+		},
+		{
+			name: "rejects invalid scope",
+			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
+				config.Collection = "subscriptions"
+				config.OrganisationID = "invalid"
+				return config
+			},
+			wantError: "invalid organisation-id",
 		},
 		{
 			name: "reports blocked adapter",
@@ -113,7 +130,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
-	want := []string{"alerts", "devices", "groups", "sites"}
+	want := []string{"alerts", "devices", "groups", "sites", "subscriptions"}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
 	}
@@ -121,6 +138,13 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 		if adapters[index].Collection != want[index] {
 			t.Errorf("adapters[%d].Collection = %q, want %q", index, adapters[index].Collection, want[index])
 		}
+	}
+}
+
+func TestSubscriptionsAdapterDeclaresDeploymentPrerequisites(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["subscriptions"]
+	if len(adapter.MinimumWriterVersions) == 0 || len(adapter.MinimumReaderVersions) != 4 {
+		t.Fatalf("subscription deployment prerequisites = writers %#v readers %#v", adapter.MinimumWriterVersions, adapter.MinimumReaderVersions)
 	}
 }
 

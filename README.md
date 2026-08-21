@@ -83,12 +83,13 @@ are implemented.
 
 ### Organisation ownership backfill
 
-This action currently implements the read-only Phase 4 preflight. It inventories
-canonical tenant presence, BSON type and ObjectID-hex validity, legacy candidate
-coverage, and current indexes for the registered `sites`, `groups`, `devices`,
-and `alerts` adapters. Live writes, scoped tenant resolution, checkpoint resume,
-and index creation deliberately remain disabled until their compare-and-set and
-reconciliation paths are implemented.
+This action currently implements the read-only Phase 3e/Phase 4 preflight. It
+inventories canonical tenant presence, BSON types, legacy candidate coverage,
+and current indexes for registered adapters. The `subscriptions` adapter also
+resolves canonical-missing rows through persisted user/master identity, reports
+bounded ownership conflicts and proposed writes, inventories observed document
+shapes, and verifies required index key order. Live writes, checkpoint writes,
+resume/restart, and index creation remain disabled until Phase 4.
 
 ```sh
 go run . -action organisations-backfill \
@@ -103,6 +104,22 @@ go run . -action organisations-backfill \
 Use `-all` instead of `-collection` to inspect every ready adapter. The command
 exits `0` when preflight passes, `2` for invalid canonical tenant data, `1` for
 operational failures, and `64` for unsafe or invalid arguments.
+
+Subscriptions support an organisation-scoped read-only canary. The scope
+includes canonical rows for the organisation and canonical-missing rows whose
+legacy payer resolves to that organisation; it does not assume
+`user_id == organisation_id`.
+
+```sh
+go run . -action organisations-backfill \
+         -mode dry-run \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collection subscriptions \
+         -adapter-version v1 \
+         -organisation-id <organisation-object-id> \
+         -report-file organisations-backfill-subscriptions.json
+```
 
 ### Vault to Hub Migration
 
