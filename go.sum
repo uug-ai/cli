@@ -322,10 +322,8 @@ github.com/tonistiigi/units v0.0.0-20180711220420-6950e57a87ea h1:SXhTLE6pb6eld/
 github.com/tonistiigi/units v0.0.0-20180711220420-6950e57a87ea/go.mod h1:WPnis/6cRcDZSUvVmezrxJPkiO87ThFYsoUiMwWNDJk=
 github.com/tonistiigi/vt100 v0.0.0-20240514184818-90bafcd6abab h1:H6aJ0yKQ0gF49Qb2z5hI1UHxSQt4JMyxebFR15KnApw=
 github.com/tonistiigi/vt100 v0.0.0-20240514184818-90bafcd6abab/go.mod h1:ulncasL3N9uLrVann0m+CDlJKWsIAP34MPcOJF6VRvc=
-github.com/uug-ai/ingest v1.0.8 h1:99r1dYOrdgVTDop5Ot43vN/ZN+e1hDQJ+MT9nZGzzt4=
-github.com/uug-ai/ingest v1.0.8/go.mod h1:hg1eySY4vUkO4k5PYk0m7iz3dOJcsAMLdf1iE7PbpeM=
-github.com/uug-ai/models v1.7.19 h1:GUb3ZqjxpYWGEGScIkKm/SuKlRndGOH6DcE3QYUXUQE=
-github.com/uug-ai/models v1.7.19/go.mod h1:Ts/6PtFhsFOkZQRuC/tntFBG8Fl1BGICC6dmubXULbk=
+github.com/uug-ai/ingest v1.0.10 h1:vkEM13gSLO1OjJcLdAO0J2xqjxDzoKsmEp/7otgqv2Y=
+github.com/uug-ai/ingest v1.0.10/go.mod h1:EMuLMWBPvZ081UcQ/4xZlCh7/PR6oSd5oOHbH0+t7Y8=
 github.com/uug-ai/models v1.7.21 h1:dmdl6ch49msGtabv6tvPtFznXiPzUR0csUbBaY+Pags=
 github.com/uug-ai/models v1.7.21/go.mod h1:Ts/6PtFhsFOkZQRuC/tntFBG8Fl1BGICC6dmubXULbk=
 github.com/uug-ai/trace v1.1.0 h1:JNLfwrs8A23LDHR+JXpDszI+O423k78B8nq9GeAgzSs=
