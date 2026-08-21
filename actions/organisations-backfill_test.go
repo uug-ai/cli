@@ -143,8 +143,18 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 
 func TestSubscriptionsAdapterDeclaresDeploymentPrerequisites(t *testing.T) {
 	adapter := organisationsBackfillAdapters()["subscriptions"]
-	if len(adapter.MinimumWriterVersions) == 0 || len(adapter.MinimumReaderVersions) != 4 {
+	if adapter.OwnershipScope != "organisation-only" || adapter.ProjectField != "" {
+		t.Fatalf("subscription ownership scope = %q project field = %q", adapter.OwnershipScope, adapter.ProjectField)
+	}
+	if len(adapter.MinimumWriterVersions) == 0 || len(adapter.MinimumReaderVersions) != 5 {
 		t.Fatalf("subscription deployment prerequisites = writers %#v readers %#v", adapter.MinimumWriterVersions, adapter.MinimumReaderVersions)
+	}
+}
+
+func TestAlertsAdapterDeclaresProjectScope(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["alerts"]
+	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" {
+		t.Fatalf("alert ownership scope = %+v", adapter)
 	}
 }
 

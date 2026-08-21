@@ -54,6 +54,7 @@ type OrganisationsBackfillConfig struct {
 
 type organisationsBackfillAdapter struct {
 	Collection            string
+	OwnershipScope        string
 	TargetField           string
 	TargetBSONType        string
 	ProjectField          string
@@ -83,6 +84,7 @@ type organisationsBackfillScope struct {
 }
 
 type organisationsBackfillCollection struct {
+	OwnershipScope        string                               `json:"ownershipScope"`
 	TargetField           string                               `json:"targetField"`
 	TargetBSONType        string                               `json:"targetBsonType"`
 	ProjectField          string                               `json:"projectField,omitempty"`
@@ -348,6 +350,7 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 	return map[string]organisationsBackfillAdapter{
 		"alerts": {
 			Collection:            "alerts",
+			OwnershipScope:        "project-scoped",
 			TargetField:           "organisationId",
 			TargetBSONType:        "string",
 			ProjectField:          "projectId",
@@ -356,7 +359,7 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			PreservedFields:       []string{"user_id"},
 			ResolverKind:          organisationsBackfillResolverAlert,
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
-			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-notification:v1.3.19", "hub-pipeline-analysis:unreleased-PR91"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR514", "hub-pipeline-notification:unreleased-PR116", "hub-pipeline-analysis:unreleased-PR91"},
 		},
 		"devices": {
 			Collection:       "devices",
@@ -381,13 +384,14 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 		},
 		"subscriptions": {
 			Collection:            "subscriptions",
+			OwnershipScope:        "organisation-only",
 			TargetField:           "organisation_id",
 			TargetBSONType:        "objectId",
 			LegacyCandidates:      []string{"user_id"},
 			PreservedFields:       []string{"user_id"},
 			ResolverKind:          organisationsBackfillResolverSubscription,
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
-			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-monitor:v1.3.14", "hub-cleanup:v1.4.19", "cli:v1.2.23"},
+			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-monitor:v1.3.14", "hub-cleanup:v1.4.19", "cli:v1.2.23", "hub-monitor-device:unreleased-PR22"},
 		},
 	}
 }
@@ -422,6 +426,7 @@ func inspectOrganisationsBackfillCollection(
 	}
 
 	report := organisationsBackfillCollection{
+		OwnershipScope:        adapter.OwnershipScope,
 		TargetField:           adapter.TargetField,
 		TargetBSONType:        adapter.TargetBSONType,
 		ProjectField:          adapter.ProjectField,

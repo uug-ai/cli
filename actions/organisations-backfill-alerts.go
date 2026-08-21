@@ -8,6 +8,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/bsontype"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type organisationsBackfillAlertOutcome struct {
@@ -55,7 +56,11 @@ func inspectOrganisationsBackfillAlerts(
 
 	legacyUserIDs := make(map[primitive.ObjectID]struct{})
 	organisationIDs := make(map[primitive.ObjectID]struct{})
+	projectIDs := make(map[primitive.ObjectID]struct{})
 	for _, document := range documents {
+		if projectID, state := organisationsBootstrapObjectID(document, "projectId"); state == organisationsBootstrapFieldValue {
+			projectIDs[projectID] = struct{}{}
+		}
 		canonicalID, canonicalState, _ := organisationsBackfillAlertCanonicalOrganisation(document)
 		if canonicalState == organisationsBootstrapFieldValue {
 			organisationIDs[canonicalID] = struct{}{}
@@ -96,6 +101,10 @@ func inspectOrganisationsBackfillAlerts(
 	if err != nil {
 		return report, err
 	}
+	projects, err := findOrganisationsBackfillProjects(ctx, database.Collection("project"), projectIDs)
+	if err != nil {
+		return report, err
+	}
 
 	resolution := organisationsBackfillResolution{
 		ObservedFieldTypes: make(map[string]map[string]int64),
@@ -115,7 +124,7 @@ func inspectOrganisationsBackfillAlerts(
 		})
 	}
 	for _, document := range documents {
-		outcome := resolveOrganisationsBackfillAlert(document, users, organisations)
+		outcome := resolveOrganisationsBackfillAlert(document, users, organisations, projects)
 		if !organisationsBackfillAlertInScope(outcome, scopeID) {
 			continue
 		}
@@ -150,10 +159,11 @@ func resolveOrganisationsBackfillAlert(
 	document bson.Raw,
 	users map[primitive.ObjectID]bson.Raw,
 	organisations map[primitive.ObjectID]bool,
+	projects map[primitive.ObjectID]primitive.ObjectID,
 ) (outcome organisationsBackfillAlertOutcome) {
 	outcome.documentID = organisationsBackfillDocumentID(document)
 	defer outcome.enrichConflicts()
-	defer outcome.resolveDefaultProject()
+	defer outcome.resolveProject(projects)
 	masterID, masterState := organisationsBackfillStringObjectIDField(document, "master_user_id")
 	if masterState != organisationsBootstrapFieldEmpty {
 		outcome.legacyMasterPresent = true
@@ -168,10 +178,11 @@ func resolveOrganisationsBackfillAlert(
 	if userState == organisationsBootstrapFieldValue {
 		outcome.legacyUserID = userID
 	}
-	_, projectState := organisationsBootstrapObjectID(document, "projectId")
+	projectID, projectState := organisationsBootstrapObjectID(document, "projectId")
 	switch projectState {
 	case organisationsBootstrapFieldValue:
 		outcome.projectPresent = true
+		outcome.resolvedProjectID = projectID
 	case organisationsBootstrapFieldEmpty:
 		outcome.projectMissing = true
 	default:
@@ -266,8 +277,8 @@ func resolveOrganisationsBackfillAlert(
 	return outcome
 }
 
-func (outcome *organisationsBackfillAlertOutcome) resolveDefaultProject() {
-	if !outcome.projectMissing || outcome.projectWrong || len(outcome.conflicts) > 0 {
+func (outcome *organisationsBackfillAlertOutcome) resolveProject(projects map[primitive.ObjectID]primitive.ObjectID) {
+	if outcome.projectWrong || len(outcome.conflicts) > 0 {
 		return
 	}
 	organisationID := outcome.resolvedID
@@ -277,9 +288,57 @@ func (outcome *organisationsBackfillAlertOutcome) resolveDefaultProject() {
 	if organisationID.IsZero() {
 		return
 	}
+	if outcome.projectPresent {
+		if outcome.resolvedProjectID == organisationID {
+			outcome.projectResolved = true
+			return
+		}
+		projectOrganisationID, exists := projects[outcome.resolvedProjectID]
+		if !exists {
+			outcome.addConflict("orphan-project", "projectId does not resolve to a project")
+			return
+		}
+		if projectOrganisationID != organisationID {
+			outcome.addConflict("project-organisation-mismatch", "projectId belongs to a different organisation")
+			return
+		}
+		outcome.projectResolved = true
+		return
+	}
+	if !outcome.projectMissing {
+		return
+	}
 	outcome.resolvedProjectID = organisationID
 	outcome.projectResolved = true
 	outcome.proposedProjectWrite = true
+}
+
+func findOrganisationsBackfillProjects(
+	ctx context.Context,
+	collection *mongo.Collection,
+	ids map[primitive.ObjectID]struct{},
+) (map[primitive.ObjectID]primitive.ObjectID, error) {
+	projects := make(map[primitive.ObjectID]primitive.ObjectID, len(ids))
+	if len(ids) == 0 {
+		return projects, nil
+	}
+	cursor, err := collection.Find(ctx, bson.M{"_id": bson.M{"$in": sortedOrganisationsBackfillObjectIDs(ids)}}, options.Find().SetProjection(bson.M{"_id": 1, "organisationId": 1}))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	for cursor.Next(ctx) {
+		var document bson.Raw
+		if err := cursor.Decode(&document); err != nil {
+			return nil, err
+		}
+		projectID, projectState := organisationsBootstrapObjectID(document, "_id")
+		organisationID, organisationState := organisationsBootstrapObjectID(document, "organisationId")
+		if projectState == organisationsBootstrapFieldValue && organisationState == organisationsBootstrapFieldValue {
+			projects[projectID] = organisationID
+		}
+	}
+	return projects, cursor.Err()
 }
 
 func organisationsBackfillAlertCanonicalOrganisation(document bson.Raw) (primitive.ObjectID, organisationsBootstrapFieldState, bool) {

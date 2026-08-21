@@ -228,6 +228,10 @@ func TestSubscriptionOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
 
 	want := []IndexSpec{
 		{
+			Name: "ends_at_1",
+			Key:  bson.D{{Key: "ends_at", Value: int32(1)}},
+		},
+		{
 			Name: "organisation_id_1_ends_at_1",
 			Key:  bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "ends_at", Value: int32(1)}},
 		},

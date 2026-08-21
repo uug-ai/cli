@@ -559,6 +559,7 @@ func inspectOrganisationsBackfillSubscriptionIndexes(ctx context.Context, collec
 	sort.Slice(indexes, func(left, right int) bool { return indexes[left].Name < indexes[right].Name })
 
 	contracts := []organisationsBackfillIndexContract{
+		organisationsBackfillNewIndexContract("active-subscription-scan", bson.D{{Key: "ends_at", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("canonical-active-lookup", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "ends_at", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("legacy-rollback", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "ends_at", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("cleanup", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "updated_at", Value: int32(-1)}, {Key: "created_at", Value: int32(-1)}, {Key: "_id", Value: int32(-1)}}),

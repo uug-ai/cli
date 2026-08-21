@@ -18,6 +18,7 @@ func TestResolveOrganisationsBackfillAlertPrecedence(t *testing.T) {
 		document      bson.D
 		users         map[primitive.ObjectID]bson.Raw
 		organisations map[primitive.ObjectID]bool
+		projects      map[primitive.ObjectID]primitive.ObjectID
 		check         func(*testing.T, organisationsBackfillAlertOutcome)
 	}{
 		{
@@ -62,7 +63,36 @@ func TestResolveOrganisationsBackfillAlertPrecedence(t *testing.T) {
 			},
 		},
 		{
-			name: "existing project is preserved",
+			name: "existing project in organisation is preserved",
+			document: bson.D{
+				{Key: "_id", Value: documentID},
+				{Key: "master_user_id", Value: organisationA.Hex()},
+				{Key: "projectId", Value: organisationB},
+			},
+			organisations: map[primitive.ObjectID]bool{organisationA: true},
+			projects:      map[primitive.ObjectID]primitive.ObjectID{organisationB: organisationA},
+			check: func(t *testing.T, outcome organisationsBackfillAlertOutcome) {
+				if !outcome.resolved || !outcome.projectPresent || !outcome.projectResolved || outcome.proposedProjectWrite || len(outcome.conflicts) != 0 {
+					t.Fatalf("outcome = %+v", outcome)
+				}
+			},
+		},
+		{
+			name: "explicit deterministic default needs no project document",
+			document: bson.D{
+				{Key: "_id", Value: documentID},
+				{Key: "master_user_id", Value: organisationA.Hex()},
+				{Key: "projectId", Value: organisationA},
+			},
+			organisations: map[primitive.ObjectID]bool{organisationA: true},
+			check: func(t *testing.T, outcome organisationsBackfillAlertOutcome) {
+				if !outcome.projectResolved || outcome.resolvedProjectID != organisationA || outcome.proposedProjectWrite || len(outcome.conflicts) != 0 {
+					t.Fatalf("outcome = %+v", outcome)
+				}
+			},
+		},
+		{
+			name: "orphan non-default project conflicts",
 			document: bson.D{
 				{Key: "_id", Value: documentID},
 				{Key: "master_user_id", Value: organisationA.Hex()},
@@ -70,7 +100,22 @@ func TestResolveOrganisationsBackfillAlertPrecedence(t *testing.T) {
 			},
 			organisations: map[primitive.ObjectID]bool{organisationA: true},
 			check: func(t *testing.T, outcome organisationsBackfillAlertOutcome) {
-				if !outcome.resolved || !outcome.projectPresent || outcome.projectResolved || outcome.proposedProjectWrite || len(outcome.conflicts) != 0 {
+				if len(outcome.conflicts) != 1 || outcome.conflicts[0].Code != "orphan-project" {
+					t.Fatalf("outcome = %+v", outcome)
+				}
+			},
+		},
+		{
+			name: "cross-organisation project conflicts",
+			document: bson.D{
+				{Key: "_id", Value: documentID},
+				{Key: "master_user_id", Value: organisationA.Hex()},
+				{Key: "projectId", Value: organisationB},
+			},
+			organisations: map[primitive.ObjectID]bool{organisationA: true},
+			projects:      map[primitive.ObjectID]primitive.ObjectID{organisationB: primitive.NewObjectID()},
+			check: func(t *testing.T, outcome organisationsBackfillAlertOutcome) {
+				if len(outcome.conflicts) != 1 || outcome.conflicts[0].Code != "project-organisation-mismatch" {
 					t.Fatalf("outcome = %+v", outcome)
 				}
 			},
@@ -135,10 +180,14 @@ func TestResolveOrganisationsBackfillAlertPrecedence(t *testing.T) {
 			if test.organisations == nil {
 				test.organisations = map[primitive.ObjectID]bool{}
 			}
+			if test.projects == nil {
+				test.projects = map[primitive.ObjectID]primitive.ObjectID{}
+			}
 			outcome := resolveOrganisationsBackfillAlert(
 				organisationsBackfillTestRaw(t, test.document),
 				test.users,
 				test.organisations,
+				test.projects,
 			)
 			test.check(t, outcome)
 		})
