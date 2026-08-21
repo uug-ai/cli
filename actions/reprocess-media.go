@@ -390,7 +390,7 @@ func loadMonitorContext(client *mongo.Client, dbName, userId string) (pipeline.U
 	if user.Id.IsZero() == false {
 		subUserID = user.Id.Hex()
 	}
-	err := db.Collection("subscriptions").FindOne(ctx, bson.M{"user_id": subUserID}).Decode(&subscription)
+	err := db.Collection("subscriptions").FindOne(ctx, database.SubscriptionOwnershipFilter(user)).Decode(&subscription)
 	if err != nil && err != mongo.ErrNoDocuments {
 		return user, subscription, plans, err
 	}

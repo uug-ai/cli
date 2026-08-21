@@ -86,21 +86,50 @@ func GetPipelineUserFromMongodb(client *mongo.Client, DatabaseName string, usern
 	return user
 }
 
-func GetActiveSubscriptionFromMongodb(client *mongo.Client, DatabaseName string, userId string) models.Subscription {
+func SubscriptionOwnershipFilter(user models.User) bson.M {
+	legacyOwnerID := strings.TrimSpace(user.MasterAccount)
+	if legacyOwnerID == "" && !user.Id.IsZero() {
+		legacyOwnerID = user.Id.Hex()
+	}
+
+	organisationID := user.OrganisationId
+	if organisationID.IsZero() && legacyOwnerID != "" {
+		organisationID, _ = primitive.ObjectIDFromHex(legacyOwnerID)
+	}
+
+	canonical := bson.M{"organisation_id": organisationID}
+	legacy := bson.M{
+		"organisation_id": bson.M{"$exists": false},
+		"user_id":         legacyOwnerID,
+	}
+	switch {
+	case !organisationID.IsZero() && legacyOwnerID != "":
+		return bson.M{"$or": bson.A{canonical, legacy}}
+	case !organisationID.IsZero():
+		return canonical
+	default:
+		return legacy
+	}
+}
+
+func activeSubscriptionFilter(user models.User, now time.Time) bson.M {
+	return bson.M{"$and": bson.A{
+		SubscriptionOwnershipFilter(user),
+		bson.M{"$or": bson.A{
+			bson.M{"ends_at": bson.M{"$gt": now}},
+			bson.M{"ends_at": nil},
+		}},
+	}}
+}
+
+func GetActiveSubscriptionFromMongodb(client *mongo.Client, DatabaseName string, user models.User) models.Subscription {
 	ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT)
 	defer cancel()
 	db := client.Database(DatabaseName)
 	subscriptionCollection := db.Collection("subscriptions")
 
 	var subscription models.Subscription
-	now := time.Now()
-	match := bson.M{
-		"user_id": userId,
-		"$or": []bson.M{
-			{"ends_at": bson.M{"$gt": now}},
-			{"ends_at": nil},
-		},
-	}
+	match := activeSubscriptionFilter(user, time.Now())
 	err := subscriptionCollection.FindOne(ctx, match).Decode(&subscription)
 	if err != nil {
 		log.Println(err)
