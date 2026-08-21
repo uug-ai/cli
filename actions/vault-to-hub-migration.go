@@ -156,7 +156,11 @@ func VaultToHubMigration(mode string,
 		if pipelineUser.Username == "" {
 			log.Println("Warning: unable to load pipeline user for analysis-only events")
 		}
-		pipelineSubscription = database.GetActiveSubscriptionFromMongodb(client, mongodbDestinationDatabase, user.Id.Hex())
+		subscriptionUser := pipelineUser
+		if subscriptionUser.Id.IsZero() {
+			subscriptionUser.Id = user.Id
+		}
+		pipelineSubscription = database.GetActiveSubscriptionFromMongodb(client, mongodbDestinationDatabase, subscriptionUser)
 		pipelinePlans = database.GetPlansFromMongodb(client, mongodbDestinationDatabase, pipelineUser)
 	}
 	time.Sleep(time.Second * 2)
