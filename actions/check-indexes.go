@@ -55,15 +55,15 @@ func CheckIndexes(
 		if mongoURI == "" {
 			mongoURI = DefaultMongoURI
 		}
-		fmt.Printf("[info] using flag -mongodb-uri=%s\n", mongoURI)
+		fmt.Printf("[info] using flag -mongodb-uri=%s\n", redactMongoURI(mongoURI))
 	} else {
 		in := PromptString(fmt.Sprintf("MongoDB URI (-mongodb-uri, default %s): ", DefaultMongoURI))
 		if strings.TrimSpace(in) == "" {
 			mongoURI = DefaultMongoURI
-			fmt.Printf("[info] using default -mongodb-uri=%s\n", mongoURI)
+			fmt.Printf("[info] using default -mongodb-uri=%s\n", redactMongoURI(mongoURI))
 		} else {
 			mongoURI = in
-			fmt.Printf("[info] using input -mongodb-uri=%s\n", mongoURI)
+			fmt.Printf("[info] using input -mongodb-uri=%s\n", redactMongoURI(mongoURI))
 		}
 	}
 
@@ -277,6 +277,16 @@ func CheckIndexes(
 
 // Helpers
 
+func redactMongoURI(uri string) string {
+	uri = strings.TrimSpace(uri)
+	for _, scheme := range []string{"mongodb+srv://", "mongodb://"} {
+		if strings.HasPrefix(uri, scheme) {
+			return scheme + "<redacted>"
+		}
+	}
+	return "<redacted>"
+}
+
 func parseCSV(s string) []string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -293,7 +303,7 @@ func parseCSV(s string) []string {
 	return out
 }
 
-// listIndexKeys returns a set keyed by normalized key spec like "name:1.user_id:1"
+// listIndexKeys returns a set keyed by ordered key spec like "name:1.user_id:1".
 func listIndexKeys(ctx context.Context, coll *mongo.Collection) (map[string]struct{}, error) {
 	cur, err := coll.Indexes().List(ctx)
 	if err != nil {
@@ -303,61 +313,31 @@ func listIndexKeys(ctx context.Context, coll *mongo.Collection) (map[string]stru
 
 	out := make(map[string]struct{})
 	for cur.Next(ctx) {
-		var doc bson.M
-		if err := cur.Decode(&doc); err != nil {
+		var doc struct {
+			Key bson.D `bson:"key"`
+		}
+		if err := cur.Decode(&doc); err != nil || len(doc.Key) == 0 {
 			continue
 		}
-		// doc["key"] is a document of fields
-		keyDoc, _ := doc["key"].(bson.M)
-		if keyDoc == nil {
-			// try bson.D
-			if d, ok := doc["key"].(bson.D); ok {
-				out[normalizeKey(d)] = struct{}{}
-				continue
-			}
-			continue
-		}
-		// Convert bson.M to bson.D (stable order)
-		var d bson.D
-		for k, v := range keyDoc {
-			// try to preserve natural ordering isn't possible with map; normalize handles reordering
-			d = append(d, bson.E{Key: k, Value: v})
-		}
-		out[normalizeKey(d)] = struct{}{}
+		out[normalizeKey(doc.Key)] = struct{}{}
 	}
-	return out, nil
+	return out, cur.Err()
 }
 
-// normalizeKey builds a stable string like "field1:1.field2:-1"
+// normalizeKey builds an order-preserving string like "field1:1.field2:-1".
+// Compound index order changes which query prefixes the index can support.
 func normalizeKey(d bson.D) string {
 	if len(d) == 0 {
 		return ""
 	}
-	// Sort by field name for stable comparison
-	type kv struct {
-		k string
-		v interface{}
-	}
-	arr := make([]kv, 0, len(d))
-	for _, e := range d {
-		arr = append(arr, kv{k: e.Key, v: e.Value})
-	}
-	// simple bubble (len small) or use map then sort
-	for i := 0; i < len(arr); i++ {
-		for j := i + 1; j < len(arr); j++ {
-			if arr[j].k < arr[i].k {
-				arr[i], arr[j] = arr[j], arr[i]
-			}
-		}
-	}
 	var sb strings.Builder
-	for i, e := range arr {
+	for i, e := range d {
 		if i > 0 {
 			sb.WriteString(".")
 		}
-		sb.WriteString(e.k)
+		sb.WriteString(e.Key)
 		sb.WriteString(":")
-		switch v := e.v.(type) {
+		switch v := e.Value.(type) {
 		case int32:
 			sb.WriteString(fmt.Sprintf("%d", v))
 		case int64:
@@ -378,24 +358,24 @@ func describePartialFilter(m bson.M) string {
 		return "-"
 	}
 	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+	for key := range m {
+		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 
 	var sb strings.Builder
 	sb.WriteString("{")
-	for i, k := range keys {
+	for i, key := range keys {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString(k)
+		sb.WriteString(key)
 		sb.WriteString(": ")
-		if nested, ok := m[k].(bson.M); ok {
+		if nested, ok := m[key].(bson.M); ok {
 			sb.WriteString(describePartialFilter(nested))
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("%v", m[k]))
+		sb.WriteString(fmt.Sprintf("%v", m[key]))
 	}
 	sb.WriteString("}")
 	return sb.String()

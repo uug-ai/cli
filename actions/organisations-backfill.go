@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	organisationsBackfillAdapterVersion  = "v1"
-	organisationsBackfillExitOperational = 1
-	organisationsBackfillExitData        = 2
-	organisationsBackfillExitUsage       = 64
+	organisationsBackfillAdapterVersion       = "v1"
+	organisationsBackfillExitOperational      = 1
+	organisationsBackfillExitData             = 2
+	organisationsBackfillExitUsage            = 64
+	organisationsBackfillResolverSubscription = "subscription-user"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -51,11 +52,14 @@ type OrganisationsBackfillConfig struct {
 }
 
 type organisationsBackfillAdapter struct {
-	Collection       string
-	TargetField      string
-	TargetBSONType   string
-	LegacyCandidates []string
-	PreservedFields  []string
+	Collection            string
+	TargetField           string
+	TargetBSONType        string
+	LegacyCandidates      []string
+	PreservedFields       []string
+	ResolverKind          string
+	MinimumWriterVersions []string
+	MinimumReaderVersions []string
 }
 
 type organisationsBackfillReport struct {
@@ -64,25 +68,35 @@ type organisationsBackfillReport struct {
 	MigrationVersion int                                        `json:"migrationVersion"`
 	AdapterVersion   string                                     `json:"adapterVersion"`
 	BatchSize        int                                        `json:"batchSize"`
+	Scope            *organisationsBackfillScope                `json:"scope,omitempty"`
 	StartedAt        string                                     `json:"startedAt"`
 	CompletedAt      string                                     `json:"completedAt"`
 	PreflightStatus  string                                     `json:"preflightStatus"`
 	Collections      map[string]organisationsBackfillCollection `json:"collections"`
 }
 
+type organisationsBackfillScope struct {
+	OrganisationID string `json:"organisationId"`
+}
+
 type organisationsBackfillCollection struct {
-	TargetField          string           `json:"targetField"`
-	TargetBSONType       string           `json:"targetBsonType"`
-	LegacyCandidates     []string         `json:"legacyCandidates"`
-	PreservedFields      []string         `json:"preservedFields"`
-	Total                int64            `json:"total"`
-	CanonicalPresent     int64            `json:"canonicalPresent"`
-	CanonicalMissing     int64            `json:"canonicalMissing"`
-	CanonicalWrongType   int64            `json:"canonicalWrongType"`
-	CanonicalInvalidHex  int64            `json:"canonicalInvalidHex"`
-	LegacyCandidateCount map[string]int64 `json:"legacyCandidateCount"`
-	Indexes              []string         `json:"indexes"`
-	TargetIndexCovered   bool             `json:"targetIndexCovered"`
+	TargetField           string                                       `json:"targetField"`
+	TargetBSONType        string                                       `json:"targetBsonType"`
+	LegacyCandidates      []string                                     `json:"legacyCandidates"`
+	PreservedFields       []string                                     `json:"preservedFields"`
+	ResolverKind          string                                       `json:"resolverKind,omitempty"`
+	MinimumWriterVersions []string                                     `json:"minimumWriterVersions,omitempty"`
+	MinimumReaderVersions []string                                     `json:"minimumReaderVersions,omitempty"`
+	Total                 int64                                        `json:"total"`
+	CanonicalPresent      int64                                        `json:"canonicalPresent"`
+	CanonicalMissing      int64                                        `json:"canonicalMissing"`
+	CanonicalWrongType    int64                                        `json:"canonicalWrongType"`
+	CanonicalInvalidHex   int64                                        `json:"canonicalInvalidHex"`
+	LegacyCandidateCount  map[string]int64                             `json:"legacyCandidateCount"`
+	Indexes               []string                                     `json:"indexes"`
+	TargetIndexCovered    bool                                         `json:"targetIndexCovered"`
+	IndexContracts        []organisationsBackfillIndexContract         `json:"indexContracts,omitempty"`
+	Resolution            *organisationsBackfillSubscriptionResolution `json:"resolution,omitempty"`
 }
 
 type organisationsBackfillError struct {
@@ -162,14 +176,18 @@ func OrganisationsBackfill(config OrganisationsBackfillConfig) error {
 		PreflightStatus:  "passed",
 		Collections:      make(map[string]organisationsBackfillCollection, len(adapters)),
 	}
+	if config.OrganisationID != "" {
+		report.Scope = &organisationsBackfillScope{OrganisationID: config.OrganisationID}
+	}
 
 	hasDataConflict := false
 	for _, adapter := range adapters {
-		collectionReport, err := inspectOrganisationsBackfillCollection(ctx, hubDB.Collection(adapter.Collection), adapter, config.DocumentID)
+		collectionReport, err := inspectOrganisationsBackfillAdapter(ctx, hubDB, adapter, config)
 		if err != nil {
 			return &organisationsBackfillError{code: organisationsBackfillExitOperational, err: fmt.Errorf("inspect %s: %w", adapter.Collection, err)}
 		}
-		if collectionReport.CanonicalWrongType > 0 || collectionReport.CanonicalInvalidHex > 0 {
+		if collectionReport.CanonicalWrongType > 0 || collectionReport.CanonicalInvalidHex > 0 ||
+			(collectionReport.Resolution != nil && collectionReport.Resolution.Conflicts > 0) {
 			hasDataConflict = true
 			report.PreflightStatus = "blocked"
 		}
@@ -184,9 +202,25 @@ func OrganisationsBackfill(config OrganisationsBackfillConfig) error {
 		return &organisationsBackfillError{code: organisationsBackfillExitOperational, err: err}
 	}
 	if hasDataConflict {
-		return &organisationsBackfillError{code: organisationsBackfillExitData, err: errors.New("preflight found canonical tenant values with invalid BSON type or ObjectID hex")}
+		return &organisationsBackfillError{code: organisationsBackfillExitData, err: errors.New("preflight found invalid or conflicting tenant ownership")}
 	}
 	return nil
+}
+
+func inspectOrganisationsBackfillAdapter(
+	ctx context.Context,
+	database *mongo.Database,
+	adapter organisationsBackfillAdapter,
+	config OrganisationsBackfillConfig,
+) (organisationsBackfillCollection, error) {
+	report, err := inspectOrganisationsBackfillCollection(ctx, database.Collection(adapter.Collection), adapter, config.DocumentID)
+	if err != nil {
+		return report, err
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverSubscription {
+		return inspectOrganisationsBackfillSubscriptions(ctx, database, adapter, config, report)
+	}
+	return report, nil
 }
 
 func normalizeOrganisationsBackfillConfig(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
@@ -257,7 +291,13 @@ func validateOrganisationsBackfillConfig(config OrganisationsBackfillConfig) ([]
 		if _, err := primitive.ObjectIDFromHex(config.OrganisationID); err != nil {
 			return nil, fmt.Errorf("invalid organisation-id: %w", err)
 		}
-		return nil, errors.New("organisation-scoped resolution is disabled until collection resolvers are implemented")
+		if config.AllCollections || config.Collection == "" {
+			return nil, errors.New("organisation-id requires exactly one -collection")
+		}
+		adapter, ok := organisationsBackfillAdapters()[config.Collection]
+		if !ok || adapter.ResolverKind == "" {
+			return nil, fmt.Errorf("organisation-scoped resolution is not implemented for collection %q", config.Collection)
+		}
 	}
 	if config.DocumentID != "" {
 		if config.AllCollections || config.Collection == "" {
@@ -323,6 +363,16 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			LegacyCandidates: []string{"user_id"},
 			PreservedFields:  []string{"created_by", "updated_by"},
 		},
+		"subscriptions": {
+			Collection:            "subscriptions",
+			TargetField:           "organisation_id",
+			TargetBSONType:        "objectId",
+			LegacyCandidates:      []string{"user_id"},
+			PreservedFields:       []string{"user_id"},
+			ResolverKind:          organisationsBackfillResolverSubscription,
+			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
+			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-monitor:v1.3.14", "hub-cleanup:v1.4.19", "cli:v1.2.23"},
+		},
 	}
 }
 
@@ -356,33 +406,44 @@ func inspectOrganisationsBackfillCollection(
 	}
 
 	report := organisationsBackfillCollection{
-		TargetField:          adapter.TargetField,
-		TargetBSONType:       adapter.TargetBSONType,
-		LegacyCandidates:     append([]string(nil), adapter.LegacyCandidates...),
-		PreservedFields:      append([]string(nil), adapter.PreservedFields...),
-		LegacyCandidateCount: make(map[string]int64, len(adapter.LegacyCandidates)),
+		TargetField:           adapter.TargetField,
+		TargetBSONType:        adapter.TargetBSONType,
+		LegacyCandidates:      append([]string(nil), adapter.LegacyCandidates...),
+		PreservedFields:       append([]string(nil), adapter.PreservedFields...),
+		ResolverKind:          adapter.ResolverKind,
+		MinimumWriterVersions: append([]string(nil), adapter.MinimumWriterVersions...),
+		MinimumReaderVersions: append([]string(nil), adapter.MinimumReaderVersions...),
+		LegacyCandidateCount:  make(map[string]int64, len(adapter.LegacyCandidates)),
 	}
 
+	canonicalMissing := bson.A{
+		bson.M{adapter.TargetField: bson.M{"$exists": false}},
+		bson.M{adapter.TargetField: nil},
+	}
+	if adapter.TargetBSONType == "string" {
+		canonicalMissing = append(canonicalMissing, bson.M{adapter.TargetField: ""})
+	}
 	counts := []struct {
 		target *int64
 		filter bson.M
 	}{
 		{&report.Total, baseFilter},
 		{&report.CanonicalPresent, combineOrganisationsBackfillFilters(baseFilter, bson.M{adapter.TargetField: bson.M{"$type": adapter.TargetBSONType, "$ne": ""}})},
-		{&report.CanonicalMissing, combineOrganisationsBackfillFilters(baseFilter, bson.M{"$or": bson.A{
-			bson.M{adapter.TargetField: bson.M{"$exists": false}},
-			bson.M{adapter.TargetField: nil},
-			bson.M{adapter.TargetField: ""},
-		}})},
+		{&report.CanonicalMissing, combineOrganisationsBackfillFilters(baseFilter, bson.M{"$or": canonicalMissing})},
 		{&report.CanonicalWrongType, combineOrganisationsBackfillFilters(baseFilter, bson.M{
 			adapter.TargetField: bson.M{"$exists": true, "$ne": nil},
 			"$expr":             bson.M{"$ne": bson.A{bson.M{"$type": "$" + adapter.TargetField}, adapter.TargetBSONType}},
 		})},
-		{&report.CanonicalInvalidHex, combineOrganisationsBackfillFilters(baseFilter, bson.M{adapter.TargetField: bson.M{
+	}
+	if adapter.TargetBSONType == "string" {
+		counts = append(counts, struct {
+			target *int64
+			filter bson.M
+		}{&report.CanonicalInvalidHex, combineOrganisationsBackfillFilters(baseFilter, bson.M{adapter.TargetField: bson.M{
 			"$type": adapter.TargetBSONType,
 			"$ne":   "",
 			"$not":  primitive.Regex{Pattern: "^[0-9a-fA-F]{24}$"},
-		}})},
+		}})})
 	}
 	for _, count := range counts {
 		value, err := collection.CountDocuments(ctx, count.filter)
