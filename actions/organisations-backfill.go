@@ -56,6 +56,8 @@ type organisationsBackfillAdapter struct {
 	Collection            string
 	TargetField           string
 	TargetBSONType        string
+	ProjectField          string
+	ProjectBSONType       string
 	LegacyCandidates      []string
 	PreservedFields       []string
 	ResolverKind          string
@@ -83,6 +85,8 @@ type organisationsBackfillScope struct {
 type organisationsBackfillCollection struct {
 	TargetField           string                               `json:"targetField"`
 	TargetBSONType        string                               `json:"targetBsonType"`
+	ProjectField          string                               `json:"projectField,omitempty"`
+	ProjectBSONType       string                               `json:"projectBsonType,omitempty"`
 	LegacyCandidates      []string                             `json:"legacyCandidates"`
 	PreservedFields       []string                             `json:"preservedFields"`
 	ResolverKind          string                               `json:"resolverKind,omitempty"`
@@ -93,6 +97,9 @@ type organisationsBackfillCollection struct {
 	CanonicalMissing      int64                                `json:"canonicalMissing"`
 	CanonicalWrongType    int64                                `json:"canonicalWrongType"`
 	CanonicalInvalidHex   int64                                `json:"canonicalInvalidHex"`
+	ProjectPresent        int64                                `json:"projectPresent,omitempty"`
+	ProjectMissing        int64                                `json:"projectMissing,omitempty"`
+	ProjectWrongType      int64                                `json:"projectWrongType,omitempty"`
 	LegacyCandidateCount  map[string]int64                     `json:"legacyCandidateCount"`
 	Indexes               []string                             `json:"indexes"`
 	TargetIndexCovered    bool                                 `json:"targetIndexCovered"`
@@ -187,7 +194,7 @@ func OrganisationsBackfill(config OrganisationsBackfillConfig) error {
 		if err != nil {
 			return &organisationsBackfillError{code: organisationsBackfillExitOperational, err: fmt.Errorf("inspect %s: %w", adapter.Collection, err)}
 		}
-		if collectionReport.CanonicalWrongType > 0 || collectionReport.CanonicalInvalidHex > 0 ||
+		if collectionReport.CanonicalWrongType > 0 || collectionReport.CanonicalInvalidHex > 0 || collectionReport.ProjectWrongType > 0 ||
 			(collectionReport.Resolution != nil && collectionReport.Resolution.Conflicts > 0) {
 			hasDataConflict = true
 			report.PreflightStatus = "blocked"
@@ -343,6 +350,8 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			Collection:            "alerts",
 			TargetField:           "organisationId",
 			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
 			LegacyCandidates:      []string{"master_user_id", "user_id"},
 			PreservedFields:       []string{"user_id"},
 			ResolverKind:          organisationsBackfillResolverAlert,
@@ -415,6 +424,8 @@ func inspectOrganisationsBackfillCollection(
 	report := organisationsBackfillCollection{
 		TargetField:           adapter.TargetField,
 		TargetBSONType:        adapter.TargetBSONType,
+		ProjectField:          adapter.ProjectField,
+		ProjectBSONType:       adapter.ProjectBSONType,
 		LegacyCandidates:      append([]string(nil), adapter.LegacyCandidates...),
 		PreservedFields:       append([]string(nil), adapter.PreservedFields...),
 		ResolverKind:          adapter.ResolverKind,
@@ -458,6 +469,29 @@ func inspectOrganisationsBackfillCollection(
 			return report, err
 		}
 		*count.target = value
+	}
+	if adapter.ProjectField != "" {
+		projectCounts := []struct {
+			target *int64
+			filter bson.M
+		}{
+			{&report.ProjectPresent, combineOrganisationsBackfillFilters(baseFilter, bson.M{adapter.ProjectField: bson.M{"$type": adapter.ProjectBSONType}})},
+			{&report.ProjectMissing, combineOrganisationsBackfillFilters(baseFilter, bson.M{"$or": bson.A{
+				bson.M{adapter.ProjectField: bson.M{"$exists": false}},
+				bson.M{adapter.ProjectField: nil},
+			}})},
+			{&report.ProjectWrongType, combineOrganisationsBackfillFilters(baseFilter, bson.M{
+				adapter.ProjectField: bson.M{"$exists": true, "$ne": nil},
+				"$expr":              bson.M{"$ne": bson.A{bson.M{"$type": "$" + adapter.ProjectField}, adapter.ProjectBSONType}},
+			})},
+		}
+		for _, count := range projectCounts {
+			value, err := collection.CountDocuments(ctx, count.filter)
+			if err != nil {
+				return report, err
+			}
+			*count.target = value
+		}
 	}
 	for _, candidate := range adapter.LegacyCandidates {
 		count, err := collection.CountDocuments(ctx, combineOrganisationsBackfillFilters(baseFilter, bson.M{candidate: bson.M{"$exists": true, "$nin": bson.A{nil, ""}}}))

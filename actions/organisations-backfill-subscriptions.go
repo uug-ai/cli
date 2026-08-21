@@ -509,6 +509,9 @@ func resetOrganisationsBackfillScopedInventory(report *organisationsBackfillColl
 	report.CanonicalMissing = 0
 	report.CanonicalWrongType = 0
 	report.CanonicalInvalidHex = 0
+	report.ProjectPresent = 0
+	report.ProjectMissing = 0
+	report.ProjectWrongType = 0
 	for candidate := range report.LegacyCandidateCount {
 		report.LegacyCandidateCount[candidate] = 0
 	}

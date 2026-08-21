@@ -258,9 +258,10 @@ func TestAlertOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
 	}
 
 	want := []IndexSpec{
-		{Name: "organisationId_1_enabled_1", Key: bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}},
+		{Name: "organisationId_1_projectId_1_enabled_1", Key: bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}},
+		{Name: "master_user_id_1_projectId_1_enabled_1", Key: bson.D{{Key: "master_user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}},
+		{Name: "user_id_1_projectId_1_enabled_1", Key: bson.D{{Key: "user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}},
 		{Name: "master_user_id_1_enabled_1", Key: bson.D{{Key: "master_user_id", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}},
-		{Name: "user_id_1_enabled_1", Key: bson.D{{Key: "user_id", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}},
 	}
 	if got := canonical["alerts"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("alert ownership indexes = %#v, want %#v", got, want)

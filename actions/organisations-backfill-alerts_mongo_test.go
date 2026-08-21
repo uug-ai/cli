@@ -42,7 +42,7 @@ func TestInspectOrganisationsBackfillAlertsIsReadOnly(t *testing.T) {
 		if report.Resolution == nil || report.Resolution.Resolved != 1 || report.Resolution.ProposedWrites != 1 || report.Resolution.Conflicts != 0 {
 			mt.Fatalf("resolution = %+v", report.Resolution)
 		}
-		if len(report.IndexContracts) != 3 || report.IndexContracts[1].Status != "exact" {
+		if len(report.IndexContracts) != 4 || report.IndexContracts[3].Status != "exact" {
 			mt.Fatalf("index contracts = %+v", report.IndexContracts)
 		}
 		for _, event := range mt.GetAllStartedEvents() {

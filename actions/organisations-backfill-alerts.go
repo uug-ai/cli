@@ -16,6 +16,9 @@ type organisationsBackfillAlertOutcome struct {
 	canonicalValid      bool
 	canonicalMissing    bool
 	canonicalWrong      bool
+	projectPresent      bool
+	projectMissing      bool
+	projectWrong        bool
 	legacyMasterID      primitive.ObjectID
 	legacyMasterPresent bool
 	legacyUserID        primitive.ObjectID
@@ -160,6 +163,16 @@ func resolveOrganisationsBackfillAlert(
 	}
 	if userState == organisationsBootstrapFieldValue {
 		outcome.legacyUserID = userID
+	}
+	_, projectState := organisationsBootstrapObjectID(document, "projectId")
+	switch projectState {
+	case organisationsBootstrapFieldValue:
+		outcome.projectPresent = true
+	case organisationsBootstrapFieldEmpty:
+		outcome.projectMissing = true
+	default:
+		outcome.projectWrong = true
+		outcome.addConflict("invalid-project-id", "projectId must be a non-zero BSON ObjectID or null")
 	}
 
 	canonicalID, canonicalState, canonicalWrongType := organisationsBackfillAlertCanonicalOrganisation(document)
@@ -353,6 +366,15 @@ func addOrganisationsBackfillAlertScopedInventory(report *organisationsBackfillC
 	if outcome.canonicalWrong {
 		report.CanonicalWrongType++
 	}
+	if outcome.projectPresent {
+		report.ProjectPresent++
+	}
+	if outcome.projectMissing {
+		report.ProjectMissing++
+	}
+	if outcome.projectWrong {
+		report.ProjectWrongType++
+	}
 	if outcome.legacyMasterPresent {
 		report.LegacyCandidateCount["master_user_id"]++
 	}
@@ -375,9 +397,10 @@ func inspectOrganisationsBackfillAlertIndexes(ctx context.Context, collection *m
 		return nil, err
 	}
 	contracts := []organisationsBackfillIndexContract{
-		organisationsBackfillNewIndexContract("canonical-enabled-lookup", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("canonical-project-enabled-lookup", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("legacy-master-project-lookup", bson.D{{Key: "master_user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("legacy-creator-project-lookup", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("legacy-master-rollback", bson.D{{Key: "master_user_id", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("legacy-creator-rollback", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "enabled", Value: int32(1)}}),
 	}
 	for index := range contracts {
 		contracts[index].Status = "missing"
