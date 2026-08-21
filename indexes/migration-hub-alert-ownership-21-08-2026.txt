@@ -1,0 +1,6 @@
+alerts
+[
+  { v: 2, key: { organisationId: 1, enabled: 1 }, name: 'organisationId_1_enabled_1' },
+  { v: 2, key: { master_user_id: 1, enabled: 1 }, name: 'master_user_id_1_enabled_1' },
+  { v: 2, key: { user_id: 1, enabled: 1 }, name: 'user_id_1_enabled_1' }
+]

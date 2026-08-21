@@ -23,6 +23,7 @@ const (
 	organisationsBackfillExitData             = 2
 	organisationsBackfillExitUsage            = 64
 	organisationsBackfillResolverSubscription = "subscription-user"
+	organisationsBackfillResolverAlert        = "alert-tenant"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -80,23 +81,23 @@ type organisationsBackfillScope struct {
 }
 
 type organisationsBackfillCollection struct {
-	TargetField           string                                       `json:"targetField"`
-	TargetBSONType        string                                       `json:"targetBsonType"`
-	LegacyCandidates      []string                                     `json:"legacyCandidates"`
-	PreservedFields       []string                                     `json:"preservedFields"`
-	ResolverKind          string                                       `json:"resolverKind,omitempty"`
-	MinimumWriterVersions []string                                     `json:"minimumWriterVersions,omitempty"`
-	MinimumReaderVersions []string                                     `json:"minimumReaderVersions,omitempty"`
-	Total                 int64                                        `json:"total"`
-	CanonicalPresent      int64                                        `json:"canonicalPresent"`
-	CanonicalMissing      int64                                        `json:"canonicalMissing"`
-	CanonicalWrongType    int64                                        `json:"canonicalWrongType"`
-	CanonicalInvalidHex   int64                                        `json:"canonicalInvalidHex"`
-	LegacyCandidateCount  map[string]int64                             `json:"legacyCandidateCount"`
-	Indexes               []string                                     `json:"indexes"`
-	TargetIndexCovered    bool                                         `json:"targetIndexCovered"`
-	IndexContracts        []organisationsBackfillIndexContract         `json:"indexContracts,omitempty"`
-	Resolution            *organisationsBackfillSubscriptionResolution `json:"resolution,omitempty"`
+	TargetField           string                               `json:"targetField"`
+	TargetBSONType        string                               `json:"targetBsonType"`
+	LegacyCandidates      []string                             `json:"legacyCandidates"`
+	PreservedFields       []string                             `json:"preservedFields"`
+	ResolverKind          string                               `json:"resolverKind,omitempty"`
+	MinimumWriterVersions []string                             `json:"minimumWriterVersions,omitempty"`
+	MinimumReaderVersions []string                             `json:"minimumReaderVersions,omitempty"`
+	Total                 int64                                `json:"total"`
+	CanonicalPresent      int64                                `json:"canonicalPresent"`
+	CanonicalMissing      int64                                `json:"canonicalMissing"`
+	CanonicalWrongType    int64                                `json:"canonicalWrongType"`
+	CanonicalInvalidHex   int64                                `json:"canonicalInvalidHex"`
+	LegacyCandidateCount  map[string]int64                     `json:"legacyCandidateCount"`
+	Indexes               []string                             `json:"indexes"`
+	TargetIndexCovered    bool                                 `json:"targetIndexCovered"`
+	IndexContracts        []organisationsBackfillIndexContract `json:"indexContracts,omitempty"`
+	Resolution            *organisationsBackfillResolution     `json:"resolution,omitempty"`
 }
 
 type organisationsBackfillError struct {
@@ -220,6 +221,9 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverSubscription {
 		return inspectOrganisationsBackfillSubscriptions(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverAlert {
+		return inspectOrganisationsBackfillAlerts(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -336,11 +340,14 @@ func selectOrganisationsBackfillAdapters(collection string, all bool) ([]organis
 func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 	return map[string]organisationsBackfillAdapter{
 		"alerts": {
-			Collection:       "alerts",
-			TargetField:      "organisationId",
-			TargetBSONType:   "string",
-			LegacyCandidates: []string{"master_user_id"},
-			PreservedFields:  []string{"user_id"},
+			Collection:            "alerts",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			LegacyCandidates:      []string{"master_user_id", "user_id"},
+			PreservedFields:       []string{"user_id"},
+			ResolverKind:          organisationsBackfillResolverAlert,
+			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
+			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-notification:v1.3.19", "hub-pipeline-analysis:unreleased-PR91"},
 		},
 		"devices": {
 			Collection:       "devices",

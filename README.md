@@ -134,6 +134,27 @@ go run . -action check-indexes \
          -index-version migration-hub-subscription-ownership-21-08-2026
 ```
 
+Alerts use canonical `organisationId`, then `master_user_id`, then `user_id`
+only when every higher-precedence field is absent. Their read-only resolver and
+index contracts can be audited with:
+
+```sh
+go run . -action organisations-backfill \
+         -mode dry-run \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collection alerts \
+         -adapter-version v1 \
+         -report-file organisations-backfill-alerts.json
+
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections alerts \
+         -mode dry-run \
+         -index-version migration-hub-alert-ownership-21-08-2026
+```
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.

@@ -13,28 +13,30 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const organisationsBackfillSubscriptionConflictLimit = 100
+const organisationsBackfillConflictLimit = 100
 
-type organisationsBackfillSubscriptionResolution struct {
-	Scanned             int64                                       `json:"scanned"`
-	CanonicalValid      int64                                       `json:"canonicalValid"`
-	CanonicalMissing    int64                                       `json:"canonicalMissing"`
-	Resolved            int64                                       `json:"resolved"`
-	ZeroCandidate       int64                                       `json:"zeroCandidate"`
-	Conflicts           int64                                       `json:"conflicts"`
-	InvalidLegacy       int64                                       `json:"invalidLegacy"`
-	OrphanUsers         int64                                       `json:"orphanUsers"`
-	OrphanOrganisations int64                                       `json:"orphanOrganisations"`
-	ProposedWrites      int64                                       `json:"proposedWrites"`
-	ObservedFieldTypes  map[string]map[string]int64                 `json:"observedFieldTypes"`
-	ObservedShapes      map[string]int64                            `json:"observedShapes"`
-	ConflictEntries     []organisationsBackfillSubscriptionConflict `json:"conflictEntries"`
+type organisationsBackfillResolution struct {
+	Scanned             int64                           `json:"scanned"`
+	CanonicalValid      int64                           `json:"canonicalValid"`
+	CanonicalMissing    int64                           `json:"canonicalMissing"`
+	Resolved            int64                           `json:"resolved"`
+	ZeroCandidate       int64                           `json:"zeroCandidate"`
+	MultipleCandidates  int64                           `json:"multipleCandidates"`
+	Conflicts           int64                           `json:"conflicts"`
+	InvalidLegacy       int64                           `json:"invalidLegacy"`
+	OrphanUsers         int64                           `json:"orphanUsers"`
+	OrphanOrganisations int64                           `json:"orphanOrganisations"`
+	ProposedWrites      int64                           `json:"proposedWrites"`
+	ObservedFieldTypes  map[string]map[string]int64     `json:"observedFieldTypes"`
+	ObservedShapes      map[string]int64                `json:"observedShapes"`
+	ConflictEntries     []organisationsBackfillConflict `json:"conflictEntries"`
 }
 
-type organisationsBackfillSubscriptionConflict struct {
+type organisationsBackfillConflict struct {
 	Code                  string   `json:"code"`
 	DocumentID            string   `json:"documentId"`
 	CanonicalOrganisation string   `json:"canonicalOrganisation,omitempty"`
+	LegacyMaster          string   `json:"legacyMaster,omitempty"`
 	LegacyUser            string   `json:"legacyUser,omitempty"`
 	ResolvedOrganisations []string `json:"resolvedOrganisations,omitempty"`
 	Message               string   `json:"message"`
@@ -67,7 +69,7 @@ type organisationsBackfillSubscriptionOutcome struct {
 	orphanUser         bool
 	orphanOrganisation bool
 	proposedWrite      bool
-	conflicts          []organisationsBackfillSubscriptionConflict
+	conflicts          []organisationsBackfillConflict
 }
 
 type organisationsBackfillUserResolution struct {
@@ -87,7 +89,7 @@ func inspectOrganisationsBackfillSubscriptions(
 	if config.OrganisationID != "" {
 		scopeID, _ = primitive.ObjectIDFromHex(config.OrganisationID)
 	}
-	documents, err := findOrganisationsBackfillSubscriptionDocuments(ctx, database.Collection(adapter.Collection), config)
+	documents, err := findOrganisationsBackfillDocuments(ctx, database.Collection(adapter.Collection), config)
 	if err != nil {
 		return report, err
 	}
@@ -121,7 +123,7 @@ func inspectOrganisationsBackfillSubscriptions(
 		return report, err
 	}
 
-	resolution := organisationsBackfillSubscriptionResolution{
+	resolution := organisationsBackfillResolution{
 		ObservedFieldTypes: make(map[string]map[string]int64),
 		ObservedShapes:     make(map[string]int64),
 	}
@@ -131,7 +133,7 @@ func inspectOrganisationsBackfillSubscriptions(
 	if !scopeID.IsZero() && !organisations[scopeID] {
 		resolution.OrphanOrganisations++
 		resolution.Conflicts++
-		resolution.ConflictEntries = append(resolution.ConflictEntries, organisationsBackfillSubscriptionConflict{
+		resolution.ConflictEntries = append(resolution.ConflictEntries, organisationsBackfillConflict{
 			Code:                  "scope-organisation-not-found",
 			CanonicalOrganisation: scopeID.Hex(),
 			ResolvedOrganisations: []string{scopeID.Hex()},
@@ -143,7 +145,7 @@ func inspectOrganisationsBackfillSubscriptions(
 		if !organisationsBackfillSubscriptionInScope(outcome, scopeID) {
 			continue
 		}
-		observeOrganisationsBackfillSubscriptionDocument(&resolution, document)
+		observeOrganisationsBackfillDocument(&resolution, document)
 		addOrganisationsBackfillSubscriptionOutcome(&resolution, outcome)
 		if config.OrganisationID != "" {
 			addOrganisationsBackfillScopedInventory(&report, outcome)
@@ -160,8 +162,8 @@ func inspectOrganisationsBackfillSubscriptions(
 		}
 		return first.Message < second.Message
 	})
-	if len(resolution.ConflictEntries) > organisationsBackfillSubscriptionConflictLimit {
-		resolution.ConflictEntries = resolution.ConflictEntries[:organisationsBackfillSubscriptionConflictLimit]
+	if len(resolution.ConflictEntries) > organisationsBackfillConflictLimit {
+		resolution.ConflictEntries = resolution.ConflictEntries[:organisationsBackfillConflictLimit]
 	}
 	report.Resolution = &resolution
 
@@ -173,7 +175,7 @@ func inspectOrganisationsBackfillSubscriptions(
 	return report, nil
 }
 
-func observeOrganisationsBackfillSubscriptionDocument(report *organisationsBackfillSubscriptionResolution, document bson.Raw) {
+func observeOrganisationsBackfillDocument(report *organisationsBackfillResolution, document bson.Raw) {
 	elements, err := document.Elements()
 	if err != nil {
 		return
@@ -192,7 +194,7 @@ func observeOrganisationsBackfillSubscriptionDocument(report *organisationsBackf
 	report.ObservedShapes[strings.Join(shape, ",")]++
 }
 
-func findOrganisationsBackfillSubscriptionDocuments(
+func findOrganisationsBackfillDocuments(
 	ctx context.Context,
 	collection *mongo.Collection,
 	config OrganisationsBackfillConfig,
@@ -288,7 +290,7 @@ func resolveOrganisationsBackfillSubscription(
 	users map[primitive.ObjectID]bson.Raw,
 	organisations map[primitive.ObjectID]bool,
 ) (outcome organisationsBackfillSubscriptionOutcome) {
-	outcome.documentID = organisationsBackfillSubscriptionDocumentID(document)
+	outcome.documentID = organisationsBackfillDocumentID(document)
 	defer outcome.enrichConflicts()
 	legacyUserID, legacyState := organisationsBackfillSubscriptionLegacyUser(document)
 	if legacyState != organisationsBootstrapFieldEmpty {
@@ -365,7 +367,7 @@ func resolveOrganisationsBackfillUser(user bson.Raw) organisationsBackfillUserRe
 	// of which organisation owned a historical legacy subscription. The stable
 	// legacy master relationship, or the master's own deterministic primary
 	// organisation identity, is the only safe fallback for canonical-missing rows.
-	parentID, parentState := organisationsBackfillSubscriptionLegacyField(user, "user_id")
+	parentID, parentState := organisationsBackfillStringObjectIDField(user, "user_id")
 	if parentState == organisationsBootstrapFieldValue {
 		return organisationsBackfillUserResolution{organisationID: parentID}
 	}
@@ -376,7 +378,7 @@ func resolveOrganisationsBackfillUser(user bson.Raw) organisationsBackfillUserRe
 }
 
 func organisationsBackfillSubscriptionLegacyUser(document bson.Raw) (primitive.ObjectID, organisationsBootstrapFieldState) {
-	return organisationsBackfillSubscriptionLegacyField(document, "user_id")
+	return organisationsBackfillStringObjectIDField(document, "user_id")
 }
 
 func organisationsBackfillSubscriptionCanonicalOrganisation(document bson.Raw) (primitive.ObjectID, organisationsBootstrapFieldState) {
@@ -395,7 +397,7 @@ func organisationsBackfillSubscriptionCanonicalOrganisation(document bson.Raw) (
 	}
 }
 
-func organisationsBackfillSubscriptionLegacyField(document bson.Raw, field string) (primitive.ObjectID, organisationsBootstrapFieldState) {
+func organisationsBackfillStringObjectIDField(document bson.Raw, field string) (primitive.ObjectID, organisationsBootstrapFieldState) {
 	value := document.Lookup(field)
 	switch value.Type {
 	case bsontype.Type(0), bsontype.Null, bsontype.Undefined:
@@ -415,7 +417,7 @@ func organisationsBackfillSubscriptionLegacyField(document bson.Raw, field strin
 	}
 }
 
-func organisationsBackfillSubscriptionDocumentID(document bson.Raw) string {
+func organisationsBackfillDocumentID(document bson.Raw) string {
 	value := document.Lookup("_id")
 	if value.Type == bsontype.ObjectID {
 		return value.ObjectID().Hex()
@@ -427,7 +429,7 @@ func organisationsBackfillSubscriptionDocumentID(document bson.Raw) string {
 }
 
 func (outcome *organisationsBackfillSubscriptionOutcome) addConflict(code, message string) {
-	outcome.conflicts = append(outcome.conflicts, organisationsBackfillSubscriptionConflict{
+	outcome.conflicts = append(outcome.conflicts, organisationsBackfillConflict{
 		Code:       code,
 		DocumentID: outcome.documentID,
 		Message:    message,
@@ -469,7 +471,7 @@ func organisationsBackfillSubscriptionInScope(outcome organisationsBackfillSubsc
 }
 
 func addOrganisationsBackfillSubscriptionOutcome(
-	report *organisationsBackfillSubscriptionResolution,
+	report *organisationsBackfillResolution,
 	outcome organisationsBackfillSubscriptionOutcome,
 ) {
 	report.Scanned++
