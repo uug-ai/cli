@@ -39,7 +39,8 @@ func TestInspectOrganisationsBackfillAlertsIsReadOnly(t *testing.T) {
 		if err != nil {
 			mt.Fatalf("inspectOrganisationsBackfillAlerts() error = %v", err)
 		}
-		if report.Resolution == nil || report.Resolution.Resolved != 1 || report.Resolution.ProposedWrites != 1 || report.Resolution.Conflicts != 0 {
+		if report.Resolution == nil || report.Resolution.Resolved != 1 || report.Resolution.ProposedWrites != 1 ||
+			report.Resolution.ProjectResolved != 1 || report.Resolution.ProposedProjectWrites != 1 || report.Resolution.Conflicts != 0 {
 			mt.Fatalf("resolution = %+v", report.Resolution)
 		}
 		if len(report.IndexContracts) != 4 || report.IndexContracts[3].Status != "exact" {

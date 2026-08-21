@@ -11,27 +11,30 @@ import (
 )
 
 type organisationsBackfillAlertOutcome struct {
-	documentID          string
-	canonicalID         primitive.ObjectID
-	canonicalValid      bool
-	canonicalMissing    bool
-	canonicalWrong      bool
-	projectPresent      bool
-	projectMissing      bool
-	projectWrong        bool
-	legacyMasterID      primitive.ObjectID
-	legacyMasterPresent bool
-	legacyUserID        primitive.ObjectID
-	legacyUserPresent   bool
-	invalidLegacy       bool
-	resolvedID          primitive.ObjectID
-	resolved            bool
-	zeroCandidate       bool
-	multipleCandidates  bool
-	orphanUser          bool
-	orphanOrganisation  bool
-	proposedWrite       bool
-	conflicts           []organisationsBackfillConflict
+	documentID           string
+	canonicalID          primitive.ObjectID
+	canonicalValid       bool
+	canonicalMissing     bool
+	canonicalWrong       bool
+	projectPresent       bool
+	projectMissing       bool
+	projectWrong         bool
+	resolvedProjectID    primitive.ObjectID
+	projectResolved      bool
+	proposedProjectWrite bool
+	legacyMasterID       primitive.ObjectID
+	legacyMasterPresent  bool
+	legacyUserID         primitive.ObjectID
+	legacyUserPresent    bool
+	invalidLegacy        bool
+	resolvedID           primitive.ObjectID
+	resolved             bool
+	zeroCandidate        bool
+	multipleCandidates   bool
+	orphanUser           bool
+	orphanOrganisation   bool
+	proposedWrite        bool
+	conflicts            []organisationsBackfillConflict
 }
 
 func inspectOrganisationsBackfillAlerts(
@@ -150,6 +153,7 @@ func resolveOrganisationsBackfillAlert(
 ) (outcome organisationsBackfillAlertOutcome) {
 	outcome.documentID = organisationsBackfillDocumentID(document)
 	defer outcome.enrichConflicts()
+	defer outcome.resolveDefaultProject()
 	masterID, masterState := organisationsBackfillStringObjectIDField(document, "master_user_id")
 	if masterState != organisationsBootstrapFieldEmpty {
 		outcome.legacyMasterPresent = true
@@ -262,6 +266,22 @@ func resolveOrganisationsBackfillAlert(
 	return outcome
 }
 
+func (outcome *organisationsBackfillAlertOutcome) resolveDefaultProject() {
+	if !outcome.projectMissing || outcome.projectWrong || len(outcome.conflicts) > 0 {
+		return
+	}
+	organisationID := outcome.resolvedID
+	if outcome.canonicalValid {
+		organisationID = outcome.canonicalID
+	}
+	if organisationID.IsZero() {
+		return
+	}
+	outcome.resolvedProjectID = organisationID
+	outcome.projectResolved = true
+	outcome.proposedProjectWrite = true
+}
+
 func organisationsBackfillAlertCanonicalOrganisation(document bson.Raw) (primitive.ObjectID, organisationsBootstrapFieldState, bool) {
 	value := document.Lookup("organisationId")
 	if value.Type == bsontype.ObjectID {
@@ -350,6 +370,12 @@ func addOrganisationsBackfillAlertOutcome(report *organisationsBackfillResolutio
 	}
 	if outcome.proposedWrite {
 		report.ProposedWrites++
+	}
+	if outcome.projectResolved {
+		report.ProjectResolved++
+	}
+	if outcome.proposedProjectWrite {
+		report.ProposedProjectWrites++
 	}
 	report.Conflicts += int64(len(outcome.conflicts))
 	report.ConflictEntries = append(report.ConflictEntries, outcome.conflicts...)

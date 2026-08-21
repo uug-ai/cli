@@ -55,7 +55,22 @@ func TestResolveOrganisationsBackfillAlertPrecedence(t *testing.T) {
 			organisations: map[primitive.ObjectID]bool{organisationA: true},
 			check: func(t *testing.T, outcome organisationsBackfillAlertOutcome) {
 				if !outcome.resolved || outcome.resolvedID != organisationA || !outcome.proposedWrite ||
-					!outcome.legacyMasterPresent || !outcome.legacyUserPresent || !outcome.projectMissing || len(outcome.conflicts) != 0 {
+					!outcome.legacyMasterPresent || !outcome.legacyUserPresent || !outcome.projectMissing ||
+					!outcome.projectResolved || outcome.resolvedProjectID != organisationA || !outcome.proposedProjectWrite || len(outcome.conflicts) != 0 {
+					t.Fatalf("outcome = %+v", outcome)
+				}
+			},
+		},
+		{
+			name: "existing project is preserved",
+			document: bson.D{
+				{Key: "_id", Value: documentID},
+				{Key: "master_user_id", Value: organisationA.Hex()},
+				{Key: "projectId", Value: organisationB},
+			},
+			organisations: map[primitive.ObjectID]bool{organisationA: true},
+			check: func(t *testing.T, outcome organisationsBackfillAlertOutcome) {
+				if !outcome.resolved || !outcome.projectPresent || outcome.projectResolved || outcome.proposedProjectWrite || len(outcome.conflicts) != 0 {
 					t.Fatalf("outcome = %+v", outcome)
 				}
 			},
