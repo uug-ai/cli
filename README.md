@@ -121,6 +121,19 @@ go run . -action organisations-backfill \
          -report-file organisations-backfill-subscriptions.json
 ```
 
+The subscription rollout index contracts are versioned in
+`indexes/migration-hub-subscription-ownership-21-08-2026.txt`. Audit them before
+the backfill with:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections subscriptions \
+         -mode dry-run \
+         -index-version migration-hub-subscription-ownership-21-08-2026
+```
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.

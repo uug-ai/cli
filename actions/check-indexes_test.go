@@ -61,12 +61,36 @@ func TestParseKeyFieldsSingleAndCompound(t *testing.T) {
 	}
 }
 
+func TestNormalizeKeyPreservesCompoundOrder(t *testing.T) {
+	forward := bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "ends_at", Value: int32(1)}}
+	reverse := bson.D{{Key: "ends_at", Value: int32(1)}, {Key: "organisation_id", Value: int32(1)}}
+	if got, want := normalizeKey(forward), "organisation_id:1.ends_at:1"; got != want {
+		t.Fatalf("normalizeKey(forward) = %q, want %q", got, want)
+	}
+	if normalizeKey(forward) == normalizeKey(reverse) {
+		t.Fatal("reverse-order compound index normalized as the required index")
+	}
+}
+
 func TestExtractUnique(t *testing.T) {
 	if extractUnique("{ v: 2, key: { slug: 1 }, name: 'slug_1', unique: true }") != true {
 		t.Fatal("unique: true not detected")
 	}
 	if extractUnique("{ v: 2, key: { slug: 1 }, name: 'slug_1' }") != false {
 		t.Fatal("absent unique reported as true")
+	}
+}
+
+func TestRedactMongoURI(t *testing.T) {
+	tests := map[string]string{
+		"mongodb+srv://user:secret@example.mongodb.net/?retryWrites=true": "mongodb+srv://<redacted>",
+		"mongodb://user:secret@localhost:27017/database":                  "mongodb://<redacted>",
+		"not-a-mongodb-uri": "<redacted>",
+	}
+	for input, want := range tests {
+		if got := redactMongoURI(input); got != want {
+			t.Errorf("redactMongoURI(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 
@@ -193,6 +217,37 @@ func TestShippedIndexFileDeclaresSlugIndexes(t *testing.T) {
 
 	// The listing index the bootstrap preflight also requires.
 	findSpecByKey(t, canonical["project"], "organisationId:1")
+}
+
+func TestSubscriptionOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-subscription-ownership-21-08-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+
+	want := []IndexSpec{
+		{
+			Name: "organisation_id_1_ends_at_1",
+			Key:  bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "ends_at", Value: int32(1)}},
+		},
+		{
+			Name: "user_id_1_ends_at_1",
+			Key:  bson.D{{Key: "user_id", Value: int32(1)}, {Key: "ends_at", Value: int32(1)}},
+		},
+		{
+			Name: "organisation_id_1_updated_at_-1_created_at_-1__id_-1",
+			Key: bson.D{
+				{Key: "organisation_id", Value: int32(1)},
+				{Key: "updated_at", Value: int32(-1)},
+				{Key: "created_at", Value: int32(-1)},
+				{Key: "_id", Value: int32(-1)},
+			},
+		},
+	}
+	if got := canonical["subscriptions"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("subscription ownership indexes = %#v, want %#v", got, want)
+	}
 }
 
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
