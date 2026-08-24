@@ -1,0 +1,6 @@
+subscriptions
+[
+  { v: 2, key: { organisation_id: 1, ends_at: 1 }, name: 'organisation_id_1_ends_at_1' },
+  { v: 2, key: { user_id: 1, ends_at: 1 }, name: 'user_id_1_ends_at_1' },
+  { v: 2, key: { organisation_id: 1, updated_at: -1, created_at: -1, _id: -1 }, name: 'organisation_id_1_updated_at_-1_created_at_-1__id_-1' }
+]
