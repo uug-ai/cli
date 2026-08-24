@@ -179,7 +179,7 @@ func TestOrganisationsBackfillSubscriptionScopeUsesResolvedUserOrganisation(t *t
 		organisationsBackfillTestRaw(t, bson.D{{Key: "_id", Value: primitive.NewObjectID()}, {Key: "organisation_id", Value: otherOrganisation}}),
 	}
 
-	report := organisationsBackfillSubscriptionResolution{}
+	report := organisationsBackfillResolution{}
 	for _, document := range documents {
 		outcome := resolveOrganisationsBackfillSubscription(document, users, organisations)
 		if organisationsBackfillSubscriptionInScope(outcome, requestedOrganisation) {
@@ -274,7 +274,7 @@ func TestOrganisationsBackfillOrderedIndexCoverage(t *testing.T) {
 }
 
 func TestObserveOrganisationsBackfillSubscriptionDocumentRecordsTypesAndShape(t *testing.T) {
-	report := organisationsBackfillSubscriptionResolution{
+	report := organisationsBackfillResolution{
 		ObservedFieldTypes: make(map[string]map[string]int64),
 		ObservedShapes:     make(map[string]int64),
 	}
@@ -283,7 +283,7 @@ func TestObserveOrganisationsBackfillSubscriptionDocumentRecordsTypesAndShape(t 
 		{Key: "organisation_id", Value: primitive.NewObjectID()},
 		{Key: "user_id", Value: primitive.NewObjectID().Hex()},
 	})
-	observeOrganisationsBackfillSubscriptionDocument(&report, document)
+	observeOrganisationsBackfillDocument(&report, document)
 	if report.ObservedFieldTypes["organisation_id"]["objectID"] != 1 || report.ObservedFieldTypes["user_id"]["string"] != 1 {
 		t.Fatalf("observed field types = %#v", report.ObservedFieldTypes)
 	}
