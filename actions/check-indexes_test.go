@@ -289,10 +289,27 @@ func TestDeviceScopeIndexFileDeclaresCanonicalAndLegacyContracts(t *testing.T) {
 			},
 		},
 		{
+			Name: "organisationId_1_projectId_1_key_1_analytics.cloudpublickey_1",
+			Key: bson.D{
+				{Key: "organisationId", Value: int32(1)},
+				{Key: "projectId", Value: int32(1)},
+				{Key: "key", Value: int32(1)},
+				{Key: "analytics.cloudpublickey", Value: int32(1)},
+			},
+		},
+		{
 			Name: "key_1_user_id_1",
 			Key: bson.D{
 				{Key: "key", Value: int32(1)},
 				{Key: "user_id", Value: int32(1)},
+			},
+		},
+		{
+			Name: "key_1_user_id_1_analytics.cloudpublickey_1",
+			Key: bson.D{
+				{Key: "key", Value: int32(1)},
+				{Key: "user_id", Value: int32(1)},
+				{Key: "analytics.cloudpublickey", Value: int32(1)},
 			},
 		},
 	}
@@ -303,6 +320,13 @@ func TestDeviceScopeIndexFileDeclaresCanonicalAndLegacyContracts(t *testing.T) {
 		if spec.Unique {
 			t.Fatalf("device scope index %q must remain non-unique before reconciliation", spec.Name)
 		}
+	}
+	wantUsers := []IndexSpec{{
+		Name: "amazon_access_key_id_1",
+		Key:  bson.D{{Key: "amazon_access_key_id", Value: int32(1)}},
+	}}
+	if got := canonical["users"]; !reflect.DeepEqual(got, wantUsers) {
+		t.Fatalf("cloud-key user indexes = %#v, want %#v", got, wantUsers)
 	}
 }
 
