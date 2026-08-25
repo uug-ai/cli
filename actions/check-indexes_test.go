@@ -298,6 +298,13 @@ func TestDeviceScopeIndexFileDeclaresCanonicalAndLegacyContracts(t *testing.T) {
 			},
 		},
 		{
+			Name: "key_1_analytics.cloudpublickey_1",
+			Key: bson.D{
+				{Key: "key", Value: int32(1)},
+				{Key: "analytics.cloudpublickey", Value: int32(1)},
+			},
+		},
+		{
 			Name: "key_1_user_id_1",
 			Key: bson.D{
 				{Key: "key", Value: int32(1)},
