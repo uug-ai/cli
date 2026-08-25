@@ -272,6 +272,40 @@ func TestAlertOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
 	}
 }
 
+func TestDeviceScopeIndexFileDeclaresCanonicalAndLegacyContracts(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-device-scope-25-08-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+
+	want := []IndexSpec{
+		{
+			Name: "organisationId_1_projectId_1_key_1",
+			Key: bson.D{
+				{Key: "organisationId", Value: int32(1)},
+				{Key: "projectId", Value: int32(1)},
+				{Key: "key", Value: int32(1)},
+			},
+		},
+		{
+			Name: "key_1_user_id_1",
+			Key: bson.D{
+				{Key: "key", Value: int32(1)},
+				{Key: "user_id", Value: int32(1)},
+			},
+		},
+	}
+	if got := canonical["devices"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("device scope indexes = %#v, want %#v", got, want)
+	}
+	for _, spec := range canonical["devices"] {
+		if spec.Unique {
+			t.Fatalf("device scope index %q must remain non-unique before reconciliation", spec.Name)
+		}
+	}
+}
+
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
 	t.Helper()
 	for _, s := range specs {
