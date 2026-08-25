@@ -9,7 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type organisationsBackfillSiteOutcome struct {
+type organisationsBackfillProjectResourceOutcome struct {
 	documentID           string
 	canonicalID          primitive.ObjectID
 	canonicalValid       bool
@@ -38,6 +38,26 @@ func inspectOrganisationsBackfillSites(
 	adapter organisationsBackfillAdapter,
 	config OrganisationsBackfillConfig,
 	report organisationsBackfillCollection,
+) (organisationsBackfillCollection, error) {
+	return inspectOrganisationsBackfillProjectResource(
+		ctx,
+		database,
+		adapter,
+		config,
+		report,
+		"site",
+		inspectOrganisationsBackfillSiteIndexes,
+	)
+}
+
+func inspectOrganisationsBackfillProjectResource(
+	ctx context.Context,
+	database *mongo.Database,
+	adapter organisationsBackfillAdapter,
+	config OrganisationsBackfillConfig,
+	report organisationsBackfillCollection,
+	resourceName string,
+	inspectIndexes func(context.Context, *mongo.Collection) ([]organisationsBackfillIndexContract, error),
 ) (organisationsBackfillCollection, error) {
 	var scopeID primitive.ObjectID
 	if config.OrganisationID != "" {
@@ -92,7 +112,7 @@ func inspectOrganisationsBackfillSites(
 		})
 	}
 	for _, document := range documents {
-		outcome := resolveOrganisationsBackfillSite(document, organisations, projects)
+		outcome := resolveOrganisationsBackfillProjectResource(document, resourceName, organisations, projects)
 		if !organisationsBackfillSiteInScope(outcome, scopeID) {
 			continue
 		}
@@ -114,7 +134,7 @@ func inspectOrganisationsBackfillSites(
 		resolution.ConflictEntries = resolution.ConflictEntries[:organisationsBackfillConflictLimit]
 	}
 	report.Resolution = &resolution
-	report.IndexContracts, err = inspectOrganisationsBackfillSiteIndexes(ctx, database.Collection(adapter.Collection))
+	report.IndexContracts, err = inspectIndexes(ctx, database.Collection(adapter.Collection))
 	return report, err
 }
 
@@ -122,7 +142,16 @@ func resolveOrganisationsBackfillSite(
 	document bson.Raw,
 	organisations map[primitive.ObjectID]bool,
 	projects map[primitive.ObjectID]primitive.ObjectID,
-) (outcome organisationsBackfillSiteOutcome) {
+) (outcome organisationsBackfillProjectResourceOutcome) {
+	return resolveOrganisationsBackfillProjectResource(document, "site", organisations, projects)
+}
+
+func resolveOrganisationsBackfillProjectResource(
+	document bson.Raw,
+	resourceName string,
+	organisations map[primitive.ObjectID]bool,
+	projects map[primitive.ObjectID]primitive.ObjectID,
+) (outcome organisationsBackfillProjectResourceOutcome) {
 	outcome.documentID = organisationsBackfillDocumentID(document)
 	defer outcome.enrichConflicts()
 	defer outcome.resolveProject(projects)
@@ -168,7 +197,7 @@ func resolveOrganisationsBackfillSite(
 	switch legacyState {
 	case organisationsBootstrapFieldEmpty:
 		outcome.zeroCandidate = true
-		outcome.addConflict("zero-candidate", "site has neither canonical organisationId nor legacy user_id")
+		outcome.addConflict("zero-candidate", resourceName+" has neither canonical organisationId nor legacy user_id")
 	case organisationsBootstrapFieldWrong:
 		outcome.invalidLegacy = true
 		outcome.addConflict("invalid-legacy-user-id", "user_id must contain an ObjectID hex string")
@@ -185,7 +214,7 @@ func resolveOrganisationsBackfillSite(
 	return outcome
 }
 
-func (outcome *organisationsBackfillSiteOutcome) resolveProject(projects map[primitive.ObjectID]primitive.ObjectID) {
+func (outcome *organisationsBackfillProjectResourceOutcome) resolveProject(projects map[primitive.ObjectID]primitive.ObjectID) {
 	if outcome.projectWrong || len(outcome.conflicts) > 0 {
 		return
 	}
@@ -220,11 +249,11 @@ func (outcome *organisationsBackfillSiteOutcome) resolveProject(projects map[pri
 	}
 }
 
-func (outcome *organisationsBackfillSiteOutcome) addConflict(code, message string) {
+func (outcome *organisationsBackfillProjectResourceOutcome) addConflict(code, message string) {
 	outcome.conflicts = append(outcome.conflicts, organisationsBackfillConflict{Code: code, DocumentID: outcome.documentID, Message: message})
 }
 
-func (outcome *organisationsBackfillSiteOutcome) enrichConflicts() {
+func (outcome *organisationsBackfillProjectResourceOutcome) enrichConflicts() {
 	resolved := make(map[string]struct{})
 	if !outcome.canonicalID.IsZero() {
 		resolved[outcome.canonicalID.Hex()] = struct{}{}
@@ -248,7 +277,7 @@ func (outcome *organisationsBackfillSiteOutcome) enrichConflicts() {
 	}
 }
 
-func organisationsBackfillSiteInScope(outcome organisationsBackfillSiteOutcome, scopeID primitive.ObjectID) bool {
+func organisationsBackfillSiteInScope(outcome organisationsBackfillProjectResourceOutcome, scopeID primitive.ObjectID) bool {
 	if scopeID.IsZero() {
 		return true
 	}
@@ -258,7 +287,7 @@ func organisationsBackfillSiteInScope(outcome organisationsBackfillSiteOutcome, 
 	return outcome.resolvedID == scopeID
 }
 
-func addOrganisationsBackfillSiteOutcome(report *organisationsBackfillResolution, outcome organisationsBackfillSiteOutcome) {
+func addOrganisationsBackfillSiteOutcome(report *organisationsBackfillResolution, outcome organisationsBackfillProjectResourceOutcome) {
 	report.Scanned++
 	if outcome.canonicalValid {
 		report.CanonicalValid++
@@ -291,7 +320,7 @@ func addOrganisationsBackfillSiteOutcome(report *organisationsBackfillResolution
 	report.ConflictEntries = append(report.ConflictEntries, outcome.conflicts...)
 }
 
-func addOrganisationsBackfillSiteScopedInventory(report *organisationsBackfillCollection, outcome organisationsBackfillSiteOutcome) {
+func addOrganisationsBackfillSiteScopedInventory(report *organisationsBackfillCollection, outcome organisationsBackfillProjectResourceOutcome) {
 	report.Total++
 	if outcome.canonicalValid {
 		report.CanonicalPresent++
