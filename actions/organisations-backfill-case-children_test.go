@@ -94,3 +94,28 @@ func TestResolveOrganisationsBackfillCaseChildRejectsOrphanParent(t *testing.T) 
 		t.Fatalf("outcome = %+v", outcome)
 	}
 }
+
+func TestResolveOrganisationsBackfillCaseShareRejectsMissingToken(t *testing.T) {
+	organisationID := primitive.NewObjectID()
+	taskID := primitive.NewObjectID()
+	tasks := map[primitive.ObjectID]bson.Raw{
+		taskID: organisationsBackfillTestRaw(t, bson.D{{Key: "_id", Value: taskID}, {Key: "user_id", Value: organisationID.Hex()}}),
+	}
+	document := organisationsBackfillTestRaw(t, bson.D{{Key: "_id", Value: primitive.NewObjectID()}, {Key: "task_id", Value: taskID.Hex()}})
+	outcome := resolveOrganisationsBackfillCaseChild(document, "case share", tasks, map[primitive.ObjectID]bool{organisationID: true}, map[primitive.ObjectID]primitive.ObjectID{})
+	outcome = resolveOrganisationsBackfillCaseShareToken(document, outcome)
+	if len(outcome.conflicts) != 1 || outcome.conflicts[0].Code != "invalid-share-token" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestCaseShareActiveTokenAndIndexContracts(t *testing.T) {
+	document := organisationsBackfillTestRaw(t, bson.D{{Key: "token", Value: "token"}, {Key: "is_active", Value: true}})
+	if token, active := organisationsBackfillActiveCaseShareToken(document); !active || token != "token" {
+		t.Fatalf("active token = %q/%v", token, active)
+	}
+	contracts := caseShareIndexContracts()
+	if len(contracts) != 3 || contracts[1].Name != "active-token" || contracts[2].Name != "legacy-management-rollback" {
+		t.Fatalf("index contracts = %+v", contracts)
+	}
+}

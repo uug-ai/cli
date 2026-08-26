@@ -16,23 +16,25 @@ import (
 const organisationsBackfillConflictLimit = 100
 
 type organisationsBackfillResolution struct {
-	Scanned               int64                           `json:"scanned"`
-	CanonicalValid        int64                           `json:"canonicalValid"`
-	CanonicalMissing      int64                           `json:"canonicalMissing"`
-	Resolved              int64                           `json:"resolved"`
-	ZeroCandidate         int64                           `json:"zeroCandidate"`
-	MultipleCandidates    int64                           `json:"multipleCandidates"`
-	Conflicts             int64                           `json:"conflicts"`
-	InvalidLegacy         int64                           `json:"invalidLegacy"`
-	OrphanUsers           int64                           `json:"orphanUsers"`
-	OrphanParents         int64                           `json:"orphanParents,omitempty"`
-	OrphanOrganisations   int64                           `json:"orphanOrganisations"`
-	ProposedWrites        int64                           `json:"proposedWrites"`
-	ProjectResolved       int64                           `json:"projectResolved,omitempty"`
-	ProposedProjectWrites int64                           `json:"proposedProjectWrites,omitempty"`
-	ObservedFieldTypes    map[string]map[string]int64     `json:"observedFieldTypes"`
-	ObservedShapes        map[string]int64                `json:"observedShapes"`
-	ConflictEntries       []organisationsBackfillConflict `json:"conflictEntries"`
+	Scanned                       int64                           `json:"scanned"`
+	CanonicalValid                int64                           `json:"canonicalValid"`
+	CanonicalMissing              int64                           `json:"canonicalMissing"`
+	Resolved                      int64                           `json:"resolved"`
+	ZeroCandidate                 int64                           `json:"zeroCandidate"`
+	MultipleCandidates            int64                           `json:"multipleCandidates"`
+	Conflicts                     int64                           `json:"conflicts"`
+	InvalidLegacy                 int64                           `json:"invalidLegacy"`
+	OrphanUsers                   int64                           `json:"orphanUsers"`
+	OrphanParents                 int64                           `json:"orphanParents,omitempty"`
+	OrphanOrganisations           int64                           `json:"orphanOrganisations"`
+	DuplicateActiveTokens         int64                           `json:"duplicateActiveTokens,omitempty"`
+	DuplicateActiveTokenDocuments int64                           `json:"duplicateActiveTokenDocuments,omitempty"`
+	ProposedWrites                int64                           `json:"proposedWrites"`
+	ProjectResolved               int64                           `json:"projectResolved,omitempty"`
+	ProposedProjectWrites         int64                           `json:"proposedProjectWrites,omitempty"`
+	ObservedFieldTypes            map[string]map[string]int64     `json:"observedFieldTypes"`
+	ObservedShapes                map[string]int64                `json:"observedShapes"`
+	ConflictEntries               []organisationsBackfillConflict `json:"conflictEntries"`
 }
 
 type organisationsBackfillConflict struct {

@@ -129,7 +129,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
-	want := []string{"alerts", "case_attachments", "case_media", "devices", "groups", "io", "sites", "subscriptions", "tasks"}
+	want := []string{"alerts", "case_attachments", "case_media", "case_shares", "devices", "groups", "io", "sites", "subscriptions", "tasks"}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
 	}
@@ -190,6 +190,10 @@ func TestCaseAdaptersDeclareParentDerivedProjectScope(t *testing.T) {
 	}
 	if adapter := organisationsBackfillAdapters()["tasks"]; adapter.ResolverKind != organisationsBackfillResolverTask || adapter.TargetField != "organisationId" {
 		t.Fatalf("task ownership scope = %+v", adapter)
+	}
+	share := organisationsBackfillAdapters()["case_shares"]
+	if share.OwnershipScope != "project-scoped-parent-derived-capability" || share.TargetField != "organisation_id" || share.ResolverKind != organisationsBackfillResolverCaseChild {
+		t.Fatalf("case share ownership scope = %+v", share)
 	}
 }
 

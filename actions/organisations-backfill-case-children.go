@@ -2,9 +2,11 @@ package actions
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsontype"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -51,7 +53,7 @@ func inspectOrganisationsBackfillCaseChildren(
 	}
 	taskIDs := make(map[primitive.ObjectID]struct{})
 	for _, document := range documents {
-		if taskID, state := organisationsBootstrapObjectID(document, "task_id"); state == organisationsBootstrapFieldValue {
+		if taskID, state := organisationsBackfillCaseChildTaskID(document, adapter.Collection == "case_shares"); state == organisationsBootstrapFieldValue {
 			taskIDs[taskID] = struct{}{}
 		}
 	}
@@ -104,11 +106,20 @@ func inspectOrganisationsBackfillCaseChildren(
 	resourceName := "case media"
 	if adapter.Collection == "case_attachments" {
 		resourceName = "case attachment"
+	} else if adapter.Collection == "case_shares" {
+		resourceName = "case share"
 	}
+	activeTokens := make(map[string]int64)
 	for _, document := range documents {
 		outcome := resolveOrganisationsBackfillCaseChild(document, resourceName, tasks, organisations, projects)
+		if adapter.Collection == "case_shares" {
+			outcome = resolveOrganisationsBackfillCaseShareToken(document, outcome)
+		}
 		if !organisationsBackfillSiteInScope(outcome.organisationsBackfillProjectResourceOutcome, scopeID) {
 			continue
+		}
+		if token, active := organisationsBackfillActiveCaseShareToken(document); active {
+			activeTokens[token]++
 		}
 		observeOrganisationsBackfillDocument(&resolution, document)
 		addOrganisationsBackfillSiteOutcome(&resolution, outcome.organisationsBackfillProjectResourceOutcome)
@@ -117,6 +128,16 @@ func inspectOrganisationsBackfillCaseChildren(
 		}
 		if config.OrganisationID != "" {
 			addOrganisationsBackfillSiteScopedInventory(&report, outcome.organisationsBackfillProjectResourceOutcome)
+		}
+	}
+	for _, count := range activeTokens {
+		if count > 1 {
+			resolution.DuplicateActiveTokens++
+			resolution.DuplicateActiveTokenDocuments += count
+			resolution.Conflicts += count
+			resolution.ConflictEntries = append(resolution.ConflictEntries, organisationsBackfillConflict{
+				Code: "duplicate-active-token", Message: fmt.Sprintf("%d active case shares reuse one token", count),
+			})
 		}
 	}
 	sort.Slice(resolution.ConflictEntries, func(left, right int) bool {
@@ -133,6 +154,24 @@ func inspectOrganisationsBackfillCaseChildren(
 	return report, err
 }
 
+func resolveOrganisationsBackfillCaseShareToken(document bson.Raw, outcome organisationsBackfillCaseChildOutcome) organisationsBackfillCaseChildOutcome {
+	value := document.Lookup("token")
+	if value.Type != bsontype.String || value.StringValue() == "" {
+		outcome.addConflict("invalid-share-token", "case share token must be a non-empty string")
+		outcome.enrichConflicts()
+	}
+	return outcome
+}
+
+func organisationsBackfillActiveCaseShareToken(document bson.Raw) (string, bool) {
+	token := document.Lookup("token")
+	active := document.Lookup("is_active")
+	if token.Type != bsontype.String || token.StringValue() == "" || active.Type != bsontype.Boolean || !active.Boolean() {
+		return "", false
+	}
+	return token.StringValue(), true
+}
+
 func resolveOrganisationsBackfillCaseChild(
 	document bson.Raw,
 	resourceName string,
@@ -144,7 +183,7 @@ func resolveOrganisationsBackfillCaseChild(
 	child.documentID = organisationsBackfillDocumentID(document)
 	defer child.enrichConflicts()
 
-	taskID, taskState := organisationsBootstrapObjectID(document, "task_id")
+	taskID, taskState := organisationsBackfillCaseChildTaskID(document, resourceName == "case share")
 	if taskState != organisationsBootstrapFieldValue {
 		child.addConflict("invalid-parent-task", resourceName+" task_id must be a non-zero BSON ObjectID")
 		return outcome
@@ -209,6 +248,13 @@ func resolveOrganisationsBackfillCaseChild(
 	return outcome
 }
 
+func organisationsBackfillCaseChildTaskID(document bson.Raw, stringID bool) (primitive.ObjectID, organisationsBootstrapFieldState) {
+	if stringID {
+		return organisationsBackfillStringObjectIDField(document, "task_id")
+	}
+	return organisationsBootstrapObjectID(document, "task_id")
+}
+
 func findOrganisationsBackfillCaseParentTasks(
 	ctx context.Context,
 	collection *mongo.Collection,
@@ -252,12 +298,22 @@ func inspectOrganisationsBackfillCaseChildIndexes(ctx context.Context, collectio
 			organisationsBackfillNewIndexContract("project-status-recovery", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "status", Value: int32(1)}}),
 			organisationsBackfillNewIndexContract("source-media-lookup", bson.D{{Key: "source_media_id", Value: int32(1)}}),
 		)
+	} else if collectionName == "case_shares" {
+		contracts = caseShareIndexContracts()
 	} else {
 		contracts = append(contracts,
 			organisationsBackfillNewIndexContract("project-task-list", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "task_id", Value: int32(1)}, {Key: "created_at", Value: int32(1)}}),
 		)
 	}
 	return inspectOrganisationsBackfillCaseIndexes(ctx, collection, contracts)
+}
+
+func caseShareIndexContracts() []organisationsBackfillIndexContract {
+	return []organisationsBackfillIndexContract{
+		organisationsBackfillNewIndexContract("project-task-list", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "task_id", Value: int32(1)}, {Key: "created_at", Value: int32(-1)}}),
+		organisationsBackfillNewIndexContract("active-token", bson.D{{Key: "token", Value: int32(1)}, {Key: "is_active", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("legacy-management-rollback", bson.D{{Key: "task_id", Value: int32(1)}, {Key: "user_id", Value: int32(1)}, {Key: "created_at", Value: int32(-1)}}),
+	}
 }
 
 func inspectOrganisationsBackfillCaseIndexes(ctx context.Context, collection *mongo.Collection, contracts []organisationsBackfillIndexContract) ([]organisationsBackfillIndexContract, error) {

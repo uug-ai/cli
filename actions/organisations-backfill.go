@@ -405,6 +405,18 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 		},
+		"case_shares": {
+			Collection:            "case_shares",
+			OwnershipScope:        "project-scoped-parent-derived-capability",
+			TargetField:           "organisation_id",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"user_id", "user_email", "email", "token"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR528"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR528"},
+		},
 		"devices": {
 			Collection:       "devices",
 			TargetField:      "organisationId",

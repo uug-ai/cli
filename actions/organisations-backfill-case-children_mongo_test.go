@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -60,6 +61,55 @@ func TestInspectOrganisationsBackfillCaseChildrenIsReadOnly(t *testing.T) {
 		for _, event := range mt.GetAllStartedEvents() {
 			if event.CommandName != "find" && event.CommandName != "listIndexes" {
 				mt.Fatalf("case child dry-run issued non-read command %q", event.CommandName)
+			}
+		}
+	})
+}
+
+func TestInspectOrganisationsBackfillCaseSharesReportsDuplicateActiveTokens(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+	mt.Run("duplicate active token", func(mt *mtest.T) {
+		organisationID := primitive.NewObjectID()
+		taskID := primitive.NewObjectID()
+		sharesNamespace := mt.DB.Name() + ".case_shares"
+		tasksNamespace := mt.DB.Name() + ".tasks"
+		organisationsNamespace := mt.DB.Name() + ".organisation"
+		mt.AddMockResponses(
+			mtest.CreateCursorResponse(0, sharesNamespace, mtest.FirstBatch,
+				bson.D{{Key: "_id", Value: primitive.NewObjectID()}, {Key: "task_id", Value: taskID.Hex()}, {Key: "token", Value: "secret-token"}, {Key: "is_active", Value: true}},
+				bson.D{{Key: "_id", Value: primitive.NewObjectID()}, {Key: "task_id", Value: taskID.Hex()}, {Key: "token", Value: "secret-token"}, {Key: "is_active", Value: true}},
+			),
+			mtest.CreateCursorResponse(0, tasksNamespace, mtest.FirstBatch, bson.D{{Key: "_id", Value: taskID}, {Key: "user_id", Value: organisationID.Hex()}}),
+			mtest.CreateCursorResponse(0, organisationsNamespace, mtest.FirstBatch, bson.D{{Key: "_id", Value: organisationID}}),
+			mtest.CreateCursorResponse(0, sharesNamespace, mtest.FirstBatch,
+				bson.D{{Key: "name", Value: "token_1_is_active_1"}, {Key: "key", Value: bson.D{{Key: "token", Value: int32(1)}, {Key: "is_active", Value: int32(1)}}}},
+				bson.D{{Key: "name", Value: "task_id_1_user_id_1_created_at_-1"}, {Key: "key", Value: bson.D{{Key: "task_id", Value: int32(1)}, {Key: "user_id", Value: int32(1)}, {Key: "created_at", Value: int32(-1)}}}},
+			),
+		)
+
+		report, err := inspectOrganisationsBackfillCaseChildren(
+			context.Background(), mt.DB, organisationsBackfillAdapters()["case_shares"], OrganisationsBackfillConfig{BatchSize: 500},
+			organisationsBackfillCollection{LegacyCandidateCount: map[string]int64{}},
+		)
+		if err != nil {
+			mt.Fatalf("inspect case shares: %v", err)
+		}
+		resolution := report.Resolution
+		if resolution == nil || resolution.Resolved != 2 || resolution.ProjectResolved != 2 ||
+			resolution.DuplicateActiveTokens != 1 || resolution.DuplicateActiveTokenDocuments != 2 || resolution.Conflicts != 2 {
+			mt.Fatalf("resolution = %+v", resolution)
+		}
+		if len(resolution.ConflictEntries) != 1 || resolution.ConflictEntries[0].Code != "duplicate-active-token" ||
+			strings.Contains(resolution.ConflictEntries[0].Message, "secret-token") {
+			mt.Fatalf("duplicate conflict = %+v", resolution.ConflictEntries)
+		}
+		if len(report.IndexContracts) != 3 || report.IndexContracts[0].Status != "missing" ||
+			report.IndexContracts[1].Status != "exact" || report.IndexContracts[2].Status != "exact" {
+			mt.Fatalf("index contracts = %+v", report.IndexContracts)
+		}
+		for _, event := range mt.GetAllStartedEvents() {
+			if event.CommandName != "find" && event.CommandName != "listIndexes" {
+				mt.Fatalf("case share dry-run issued non-read command %q", event.CommandName)
 			}
 		}
 	})
