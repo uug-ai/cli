@@ -129,7 +129,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
-	want := []string{"alerts", "devices", "groups", "io", "sites", "subscriptions"}
+	want := []string{"alerts", "case_attachments", "case_media", "devices", "groups", "io", "sites", "subscriptions", "tasks"}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
 	}
@@ -178,6 +178,18 @@ func TestIOAdapterDeclaresProjectScopeAndActorFallback(t *testing.T) {
 	}
 	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "user_id" || len(adapter.PreservedFields) != 1 || adapter.PreservedFields[0] != "user_id" {
 		t.Fatalf("IO actor contract = %+v", adapter)
+	}
+}
+
+func TestCaseAdaptersDeclareParentDerivedProjectScope(t *testing.T) {
+	for _, collection := range []string{"case_media", "case_attachments"} {
+		adapter := organisationsBackfillAdapters()[collection]
+		if adapter.OwnershipScope != "project-scoped-parent-derived" || adapter.TargetField != "organisation_id" || adapter.ProjectField != "projectId" || adapter.ResolverKind != organisationsBackfillResolverCaseChild {
+			t.Fatalf("%s ownership scope = %+v", collection, adapter)
+		}
+	}
+	if adapter := organisationsBackfillAdapters()["tasks"]; adapter.ResolverKind != organisationsBackfillResolverTask || adapter.TargetField != "organisationId" {
+		t.Fatalf("task ownership scope = %+v", adapter)
 	}
 }
 

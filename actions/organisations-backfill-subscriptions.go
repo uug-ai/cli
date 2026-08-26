@@ -25,6 +25,7 @@ type organisationsBackfillResolution struct {
 	Conflicts             int64                           `json:"conflicts"`
 	InvalidLegacy         int64                           `json:"invalidLegacy"`
 	OrphanUsers           int64                           `json:"orphanUsers"`
+	OrphanParents         int64                           `json:"orphanParents,omitempty"`
 	OrphanOrganisations   int64                           `json:"orphanOrganisations"`
 	ProposedWrites        int64                           `json:"proposedWrites"`
 	ProjectResolved       int64                           `json:"projectResolved,omitempty"`

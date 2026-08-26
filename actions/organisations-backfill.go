@@ -27,6 +27,8 @@ const (
 	organisationsBackfillResolverSite         = "site-tenant"
 	organisationsBackfillResolverGroup        = "group-tenant"
 	organisationsBackfillResolverIO           = "io-actor"
+	organisationsBackfillResolverTask         = "task-tenant"
+	organisationsBackfillResolverCaseChild    = "case-parent"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -245,6 +247,12 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverIO {
 		return inspectOrganisationsBackfillIO(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverTask {
+		return inspectOrganisationsBackfillTasks(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverCaseChild {
+		return inspectOrganisationsBackfillCaseChildren(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -373,6 +381,30 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR514", "hub-pipeline-notification:unreleased-PR116", "hub-pipeline-analysis:unreleased-PR91"},
 		},
+		"case_attachments": {
+			Collection:            "case_attachments",
+			OwnershipScope:        "project-scoped-parent-derived",
+			TargetField:           "organisation_id",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"created_by"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+		},
+		"case_media": {
+			Collection:            "case_media",
+			OwnershipScope:        "project-scoped-parent-derived",
+			TargetField:           "organisation_id",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"created_by", "source_media_id", "origin_attachment_id"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+		},
 		"devices": {
 			Collection:       "devices",
 			TargetField:      "organisationId",
@@ -430,6 +462,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
 			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-monitor:v1.3.14", "hub-cleanup:v1.4.19", "cli:v1.2.23", "hub-monitor-device:unreleased-PR22"},
 		},
+		"tasks": {
+			Collection:            "tasks",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"user_id"},
+			PreservedFields:       []string{"reporter_id", "assignees"},
+			ResolverKind:          organisationsBackfillResolverTask,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+		},
 	}
 }
 
@@ -443,7 +488,6 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",
 		"settings":      "shared model does not declare a canonical tenant field",
-		"tasks":         "shared model and canonical BSON type are not declared",
 		"videowalls":    "shared model does not declare organisationId",
 		"workflow_runs": "persisted canonical BSON type is not verified",
 	}
