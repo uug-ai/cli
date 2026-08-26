@@ -134,6 +134,31 @@ go run . -action check-indexes \
          -index-version migration-hub-subscription-ownership-21-08-2026
 ```
 
+Access tokens use canonical string `organisationId`, then resolve legacy
+creator `userId` through the persisted user's stable `user_id` parent or own
+`_id`. Mutable user organisation selection is never ownership evidence.
+Missing `projectId` resolves to the organisation's deterministic default;
+explicit projects must belong to that organisation. Token credentials, scopes,
+expiration, and audit provenance are preserved. The read-only report includes
+optional normalization writes, observed shapes, conflicts, and ordered
+`{organisationId, projectId, _id}`, `{userId, projectId, _id}`, and `{_id}`
+index contracts. Runtime requires Hub API PR 530 or later.
+
+Use `-organisation-id` with `-collection tokens` for a scoped canary. The
+canary includes canonical tokens and canonical-missing tokens whose stable
+creator identity resolves to that organisation.
+
+```sh
+go run . -action organisations-backfill \
+         -mode dry-run \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collection tokens \
+         -adapter-version v1 \
+         -organisation-id <organisation-object-id> \
+         -report-file organisations-backfill-tokens-canary.json
+```
+
 Alerts use canonical `organisationId`, then `master_user_id`, then `user_id`
 only when every higher-precedence field is absent. Their read-only resolver and
 index contracts can be audited with:

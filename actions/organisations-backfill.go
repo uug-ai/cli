@@ -39,6 +39,7 @@ const (
 	organisationsBackfillResolverWorkflowRun     = "workflow-run"
 	organisationsBackfillResolverAnalysis        = "analysis-tenant"
 	organisationsBackfillResolverDetection       = "detection-source"
+	organisationsBackfillResolverToken           = "access-token-creator"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -296,6 +297,9 @@ func inspectOrganisationsBackfillAdapter(
 	}
 	if adapter.ResolverKind == organisationsBackfillResolverDetection {
 		return inspectOrganisationsBackfillDetections(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverToken {
+		return inspectOrganisationsBackfillTokens(ctx, database, adapter, config, report)
 	}
 	return report, nil
 }
@@ -628,6 +632,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 		},
+		"tokens": {
+			Collection:            "tokens",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"userId"},
+			PreservedFields:       []string{"name", "description", "expiration", "scopes", "token", "userId", "audit"},
+			ResolverKind:          organisationsBackfillResolverToken,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR530"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR530"},
+		},
 		"workflow_runs": {
 			Collection:            "workflow_runs",
 			OwnershipScope:        "project-scoped",
@@ -697,7 +714,6 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",
 		"settings":      "shared model does not declare a canonical tenant field",
-
 	}
 }
 
