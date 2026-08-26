@@ -223,7 +223,7 @@ func inspectOrganisationsBackfillIOIndexes(ctx context.Context, collection *mong
 		organisationsBackfillNewIndexContract("legacy-project-device-list", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "device", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("canonical-project-hash-mutation", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "hash", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("legacy-project-hash-mutation", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "hash", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("global-hash-conflict", bson.D{{Key: "hash", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("heartbeat-device-hash-candidate", bson.D{{Key: "device", Value: int32(1)}, {Key: "hash", Value: int32(1)}}),
 	}
 	for index := range contracts {
 		contracts[index].Status = "missing"

@@ -403,8 +403,8 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			LegacyCandidates:      []string{"user_id"},
 			PreservedFields:       []string{"user_id"},
 			ResolverKind:          organisationsBackfillResolverIO,
-			MinimumWriterVersions: []string{"hub-api:unreleased-project-scoped-io"},
-			MinimumReaderVersions: []string{"hub-api:unreleased-project-scoped-io", "hub-pipeline-notification:unverified"},
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR524"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR524", "hub-pipeline-notification:unreleased-PR120"},
 		},
 		"sites": {
 			Collection:            "sites",

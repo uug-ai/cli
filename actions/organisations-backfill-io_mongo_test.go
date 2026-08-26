@@ -31,7 +31,7 @@ func TestInspectOrganisationsBackfillIOIsReadOnly(t *testing.T) {
 			}),
 			mtest.CreateCursorResponse(0, organisationsNamespace, mtest.FirstBatch, bson.D{{Key: "_id", Value: organisationID}}),
 			mtest.CreateCursorResponse(0, ioNamespace, mtest.FirstBatch,
-				bson.D{{Key: "name", Value: "hash_1"}, {Key: "key", Value: bson.D{{Key: "hash", Value: int32(1)}}}},
+				bson.D{{Key: "name", Value: "device_1_hash_1"}, {Key: "key", Value: bson.D{{Key: "device", Value: int32(1)}, {Key: "hash", Value: int32(1)}}}},
 			),
 		)
 
