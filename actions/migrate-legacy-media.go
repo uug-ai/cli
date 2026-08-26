@@ -38,25 +38,25 @@ type migrateLegacyMediaReport struct {
 }
 
 type analysisSnapshot struct {
-	ID                 string
-	Key                string
-	HasThumby          bool
-	HasSprite          bool
-	Width              int64
-	Height             int64
-	HasDominantColor   bool
-	ThumbyFilename     string
-	ThumbyProvider     string
-	SpriteFilename     string
-	SpriteProvider     string
-	SpriteInterval     int64
-	DominantColorCount int64
-	DominantColors     []string
-	Classifications    []bson.M
+	ID                    string
+	Key                   string
+	HasThumby             bool
+	HasSprite             bool
+	Width                 int64
+	Height                int64
+	HasDominantColor      bool
+	ThumbyFilename        string
+	ThumbyProvider        string
+	SpriteFilename        string
+	SpriteProvider        string
+	SpriteInterval        int64
+	DominantColorCount    int64
+	DominantColors        []string
+	Classifications       []bson.M
 	ClassificationSummary []bson.M
-	MarkerNames        []string
-	CountingSummary    []bson.M
-	CountTotal         int64
+	MarkerNames           []string
+	CountingSummary       []bson.M
+	CountTotal            int64
 }
 
 func MigrateLegacyMedia(mode string,
@@ -179,36 +179,36 @@ func MigrateLegacyMedia(mode string,
 		StartTS:      startTimestamp,
 		EndTS:        endTimestamp,
 		Cases: map[string]int64{
-			"new_shape_compliant":             0,
-			"legacy_media_missing_fields":     0,
-			"analysis_shaped_in_media":        0,
-			"invalid_media_missing_key":       0,
-			"missing_matching_analysis":       0,
+			"new_shape_compliant":            0,
+			"legacy_media_missing_fields":    0,
+			"analysis_shaped_in_media":       0,
+			"invalid_media_missing_key":      0,
+			"missing_matching_analysis":      0,
 			"candidate_insert_from_analysis": 0,
-			"candidate_patch_existing":        0,
+			"candidate_patch_existing":       0,
 			"already_enriched_with_analysis": 0,
 		},
 		Needs: map[string]int64{
-			"deviceKey":               0,
-			"organisationId":          0,
-			"startTimestamp":          0,
-			"endTimestamp":            0,
-			"duration":                0,
-			"thumbnailFile":           0,
-			"thumbnailProvider":       0,
-			"spriteFile":              0,
-			"spriteProvider":          0,
-			"metadata.spriteInterval": 0,
-			"metadata.analysisId":     0,
-			"metadata.dominantColors": 0,
+			"deviceKey":                0,
+			"organisationId":           0,
+			"startTimestamp":           0,
+			"endTimestamp":             0,
+			"duration":                 0,
+			"thumbnailFile":            0,
+			"thumbnailProvider":        0,
+			"spriteFile":               0,
+			"spriteProvider":           0,
+			"metadata.spriteInterval":  0,
+			"metadata.analysisId":      0,
+			"metadata.dominantColors":  0,
 			"metadata.classifications": 0,
-			"metadata.width":          0,
-			"metadata.height":         0,
-			"metadata.resolution":     0,
-			"classificationSummary":   0,
-			"markerNames":             0,
-			"countingSummary":         0,
-			"metadata.count":          0,
+			"metadata.width":           0,
+			"metadata.height":          0,
+			"metadata.resolution":      0,
+			"classificationSummary":    0,
+			"markerNames":              0,
+			"countingSummary":          0,
+			"metadata.count":           0,
 		},
 		Examples: map[string]string{},
 		Writes: map[string]int64{
@@ -219,15 +219,15 @@ func MigrateLegacyMedia(mode string,
 			"errors":           0,
 		},
 		MarkerOptions: map[string]int64{
-			"enabled":         0,
+			"enabled":              0,
 			"classification_count": 0,
-			"users_scanned":   0,
-			"users_targeted":  0,
-			"options_attempted": 0,
-			"options_upserted": 0,
-			"options_modified": 0,
-			"errors":          0,
-			"skipped":         0,
+			"users_scanned":        0,
+			"users_targeted":       0,
+			"options_attempted":    0,
+			"options_upserted":     0,
+			"options_modified":     0,
+			"errors":               0,
+			"skipped":              0,
 		},
 		Indexes: map[string]int64{
 			"checked":  0,
@@ -253,33 +253,33 @@ func MigrateLegacyMedia(mode string,
 	}
 
 	projection := bson.M{
-		"_id": 1,
-		"key": 1,
-		"provider": 1,
-		"source": 1,
-		"timestamp": 1,
-		"start": 1,
-		"end": 1,
-		"userid": 1,
-		"user_id": 1,
-		"deviceid": 1,
-		"deviceId": 1,
-		"deviceKey": 1,
-		"organisationId": 1,
-		"startTimestamp": 1,
-		"endTimestamp": 1,
-		"duration": 1,
-		"videoFile": 1,
-		"videoProvider": 1,
-		"storageSolution": 1,
-		"thumbnailFile": 1,
-		"thumbnailProvider": 1,
-		"spriteFile": 1,
-		"spriteProvider": 1,
+		"_id":                   1,
+		"key":                   1,
+		"provider":              1,
+		"source":                1,
+		"timestamp":             1,
+		"start":                 1,
+		"end":                   1,
+		"userid":                1,
+		"user_id":               1,
+		"deviceid":              1,
+		"deviceId":              1,
+		"deviceKey":             1,
+		"organisationId":        1,
+		"startTimestamp":        1,
+		"endTimestamp":          1,
+		"duration":              1,
+		"videoFile":             1,
+		"videoProvider":         1,
+		"storageSolution":       1,
+		"thumbnailFile":         1,
+		"thumbnailProvider":     1,
+		"spriteFile":            1,
+		"spriteProvider":        1,
 		"classificationSummary": 1,
-		"countingSummary": 1,
-		"markerNames": 1,
-		"metadata": 1,
+		"countingSummary":       1,
+		"markerNames":           1,
+		"metadata":              1,
 	}
 
 	if !skipMatchedCount {
@@ -306,7 +306,7 @@ func MigrateLegacyMedia(mode string,
 	batchKeysSet := make(map[string]struct{}, mediaBatchSize)
 	batchAnalysisCandidates := make([]any, 0, mediaBatchSize)
 
-		flushBatch := func() {
+	flushBatch := func() {
 		if len(batchItems) == 0 {
 			return
 		}
@@ -428,15 +428,15 @@ func fetchAnalysisSnapshotsByKeys(
 	}
 
 	analysisProjection := bson.M{
-		"_id":                               1,
-		"key":                               1,
-		"data.thumby.filename":              1,
-		"data.thumby.provider":              1,
-		"data.sprite.filename":              1,
-		"data.sprite.provider":              1,
-		"data.sprite.interval":              1,
-		"data.dominantcolor.hexs":           1,
-		"data.classify.details.classified":  1,
+		"_id":                                    1,
+		"key":                                    1,
+		"data.thumby.filename":                   1,
+		"data.thumby.provider":                   1,
+		"data.sprite.filename":                   1,
+		"data.sprite.provider":                   1,
+		"data.sprite.interval":                   1,
+		"data.dominantcolor.hexs":                1,
+		"data.classify.details.classified":       1,
 		"data.classify.details.trajectCentroids": 1,
 		"data.classify.details.traject":          1,
 		"data.classify.details.x":                1,
@@ -991,16 +991,16 @@ func generateDefaultClassificationMarkerOptions(
 ) map[string]int64 {
 	allClassificationOptions := mergeClassificationOptions(classificationNames)
 	stats := map[string]int64{
-		"classification_count": int64(len(allClassificationOptions)),
-		"users_scanned":        0,
-		"users_targeted":       0,
-		"options_attempted":    0,
-		"options_upserted":     0,
-		"options_modified":     0,
+		"classification_count":       int64(len(allClassificationOptions)),
+		"users_scanned":              0,
+		"users_targeted":             0,
+		"options_attempted":          0,
+		"options_upserted":           0,
+		"options_modified":           0,
 		"category_options_attempted": 0,
 		"category_options_upserted":  0,
 		"category_options_modified":  0,
-		"errors":               0,
+		"errors":                     0,
 	}
 
 	targetUserIDs := make([]string, 0, 1024)
