@@ -26,6 +26,7 @@ const (
 	organisationsBackfillResolverAlert        = "alert-tenant"
 	organisationsBackfillResolverSite         = "site-tenant"
 	organisationsBackfillResolverGroup        = "group-tenant"
+	organisationsBackfillResolverIO           = "io-actor"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -241,6 +242,9 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverGroup {
 		return inspectOrganisationsBackfillGroups(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverIO {
+		return inspectOrganisationsBackfillIO(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -389,6 +393,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.56"},
 			MinimumReaderVersions: []string{"hub-api:v1.9.56", "hub-pipeline-notification:v1.3.19"},
 		},
+		"io": {
+			Collection:            "io",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"user_id"},
+			PreservedFields:       []string{"user_id"},
+			ResolverKind:          organisationsBackfillResolverIO,
+			MinimumWriterVersions: []string{"hub-api:unreleased-project-scoped-io"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-project-scoped-io", "hub-pipeline-notification:unverified"},
+		},
 		"sites": {
 			Collection:            "sites",
 			OwnershipScope:        "project-scoped",
@@ -422,7 +439,6 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 		"channels":      "persistence and ownership contracts are unverified",
 		"counting":      "persisted shapes require a production audit",
 		"heatmap":       "persisted shapes require a production audit",
-		"io":            "product ownership remains undecided",
 		"labels":        "shared model does not declare organisationId",
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",

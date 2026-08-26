@@ -129,7 +129,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
-	want := []string{"alerts", "devices", "groups", "sites", "subscriptions"}
+	want := []string{"alerts", "devices", "groups", "io", "sites", "subscriptions"}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
 	}
@@ -168,6 +168,16 @@ func TestGroupsAdapterDeclaresProjectScope(t *testing.T) {
 	adapter := organisationsBackfillAdapters()["groups"]
 	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" || adapter.ResolverKind != organisationsBackfillResolverGroup {
 		t.Fatalf("group ownership scope = %+v", adapter)
+	}
+}
+
+func TestIOAdapterDeclaresProjectScopeAndActorFallback(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["io"]
+	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" || adapter.ResolverKind != organisationsBackfillResolverIO {
+		t.Fatalf("IO ownership scope = %+v", adapter)
+	}
+	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "user_id" || len(adapter.PreservedFields) != 1 || adapter.PreservedFields[0] != "user_id" {
+		t.Fatalf("IO actor contract = %+v", adapter)
 	}
 }
 
