@@ -27,6 +27,8 @@ const (
 	organisationsBackfillResolverSite         = "site-tenant"
 	organisationsBackfillResolverGroup        = "group-tenant"
 	organisationsBackfillResolverIO           = "io-actor"
+	organisationsBackfillResolverWorkflow     = "workflow-definition"
+	organisationsBackfillResolverWorkflowRun  = "workflow-run"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -245,6 +247,12 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverIO {
 		return inspectOrganisationsBackfillIO(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverWorkflow {
+		return inspectOrganisationsBackfillWorkflows(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverWorkflowRun {
+		return inspectOrganisationsBackfillWorkflowRuns(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -430,6 +438,32 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
 			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-monitor:v1.3.14", "hub-cleanup:v1.4.19", "cli:v1.2.23", "hub-monitor-device:unreleased-PR22"},
 		},
+		"workflow_runs": {
+			Collection:            "workflow_runs",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"userid", "user_id"},
+			PreservedFields:       []string{"userid", "user_id", "workflowid", "sourceref", "key"},
+			ResolverKind:          organisationsBackfillResolverWorkflowRun,
+			MinimumWriterVersions: []string{"hub-workflows:unreleased-PR58"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR532", "hub-workflows:unreleased-PR58", "hub-cleanup:unverified"},
+		},
+		"workflows": {
+			Collection:            "workflows",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"organisation_id", "user_id"},
+			PreservedFields:       []string{"user_id", "userId", "created_by", "updated_by", "audit"},
+			ResolverKind:          organisationsBackfillResolverWorkflow,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR532"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR532", "hub-workflows:unreleased-PR58", "hub-cleanup:unverified"},
+		},
 	}
 }
 
@@ -445,7 +479,6 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 		"settings":      "shared model does not declare a canonical tenant field",
 		"tasks":         "shared model and canonical BSON type are not declared",
 		"videowalls":    "shared model does not declare organisationId",
-		"workflow_runs": "persisted canonical BSON type is not verified",
 	}
 }
 

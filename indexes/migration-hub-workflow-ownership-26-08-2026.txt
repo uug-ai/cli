@@ -1,0 +1,17 @@
+workflows
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, enabled: 1 }, name: 'organisationId_1_projectId_1_enabled_1' },
+  { v: 2, key: { organisation_id: 1, projectId: 1, enabled: 1 }, name: 'organisation_id_1_projectId_1_enabled_1' },
+  { v: 2, key: { user_id: 1, projectId: 1, enabled: 1 }, name: 'user_id_1_projectId_1_enabled_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, name: 1 }, name: 'organisationId_1_projectId_1_name_1' },
+  { v: 2, key: { organisation_id: 1, projectId: 1, name: 1 }, name: 'organisation_id_1_projectId_1_name_1' },
+  { v: 2, key: { user_id: 1, projectId: 1, name: 1 }, name: 'user_id_1_projectId_1_name_1' },
+]
+
+workflow_runs
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, sourceref: 1, origin: 1, start: -1 }, name: 'organisationId_1_projectId_1_sourceref_1_origin_1_start_-1' },
+  { v: 2, key: { userid: 1, sourceref: 1, origin: 1, start: -1 }, name: 'userid_1_sourceref_1_origin_1_start_-1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, key: 1 }, name: 'organisationId_1_projectId_1_key_1' },
+  { v: 2, key: { userid: 1, key: 1 }, name: 'userid_1_key_1' },
+]

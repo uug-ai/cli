@@ -155,6 +155,27 @@ go run . -action check-indexes \
          -index-version migration-hub-alert-ownership-21-08-2026
 ```
 
+Workflows and workflow runs have separate project-scoped resolvers. Definitions
+use canonical `organisationId`, then `organisation_id`, then stable creator
+`user_id` only when both organisation fields are absent. Runs use canonical
+`organisationId`, then legacy tenant `userid`; accidental `user_id` is inventoried
+but never becomes ownership. Explicit projects must belong to the resolved
+organisation. Runs also validate case/media source ownership and database
+workflow ownership when those relationships can be resolved; a missing config
+workflow definition is not a conflict.
+
+The minimum runtime is Hub API PR 532 and hub-workflows PR 58. Cleanup remains
+unverified. Audit the ordered definition and run index families with:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections workflows,workflow_runs \
+         -mode dry-run \
+         -index-version migration-hub-workflow-ownership-26-08-2026
+```
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.
