@@ -83,12 +83,11 @@ func TestValidateOrganisationsBackfillConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "rejects scoped sites",
+			name: "accepts scoped sites",
 			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
 				config.OrganisationID = "507f1f77bcf86cd799439011"
 				return config
 			},
-			wantError: "not implemented",
 		},
 		{
 			name: "rejects invalid scope",
@@ -155,6 +154,13 @@ func TestAlertsAdapterDeclaresProjectScope(t *testing.T) {
 	adapter := organisationsBackfillAdapters()["alerts"]
 	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" {
 		t.Fatalf("alert ownership scope = %+v", adapter)
+	}
+}
+
+func TestSitesAdapterDeclaresProjectScope(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["sites"]
+	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" || adapter.ResolverKind != organisationsBackfillResolverSite {
+		t.Fatalf("site ownership scope = %+v", adapter)
 	}
 }
 

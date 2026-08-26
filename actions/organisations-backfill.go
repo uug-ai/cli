@@ -24,6 +24,7 @@ const (
 	organisationsBackfillExitUsage            = 64
 	organisationsBackfillResolverSubscription = "subscription-user"
 	organisationsBackfillResolverAlert        = "alert-tenant"
+	organisationsBackfillResolverSite         = "site-tenant"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -233,6 +234,9 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverAlert {
 		return inspectOrganisationsBackfillAlerts(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverSite {
+		return inspectOrganisationsBackfillSites(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -376,11 +380,17 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			PreservedFields:  []string{"created_by", "updated_by"},
 		},
 		"sites": {
-			Collection:       "sites",
-			TargetField:      "organisationId",
-			TargetBSONType:   "string",
-			LegacyCandidates: []string{"user_id"},
-			PreservedFields:  []string{"created_by", "updated_by"},
+			Collection:            "sites",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"user_id"},
+			PreservedFields:       []string{"created_by", "updated_by"},
+			ResolverKind:          organisationsBackfillResolverSite,
+			MinimumWriterVersions: []string{"hub-api:v1.9.56"},
+			MinimumReaderVersions: []string{"hub-api:v1.9.56", "hub-pipeline-notification:v1.3.19"},
 		},
 		"subscriptions": {
 			Collection:            "subscriptions",
