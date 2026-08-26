@@ -34,6 +34,7 @@ func TestInspectOrganisationsBackfillCaseChildrenIsReadOnly(t *testing.T) {
 					{Key: "organisation_id", Value: int32(1)},
 					{Key: "projectId", Value: int32(1)},
 					{Key: "task_id", Value: int32(1)},
+					{Key: "role", Value: int32(1)},
 					{Key: "created_at", Value: int32(1)},
 				}}},
 			),
@@ -53,7 +54,7 @@ func TestInspectOrganisationsBackfillCaseChildrenIsReadOnly(t *testing.T) {
 			report.Resolution.ProjectResolved != 1 || report.Resolution.ProposedProjectWrites != 1 || report.Resolution.Conflicts != 0 {
 			mt.Fatalf("resolution = %+v", report.Resolution)
 		}
-		if len(report.IndexContracts) != 4 || report.IndexContracts[0].Status != "exact" {
+		if len(report.IndexContracts) != 3 || report.IndexContracts[0].Status != "exact" {
 			mt.Fatalf("index contracts = %+v", report.IndexContracts)
 		}
 		for _, event := range mt.GetAllStartedEvents() {

@@ -245,14 +245,16 @@ func inspectOrganisationsBackfillTaskIndexes(ctx context.Context, collection *mo
 }
 
 func inspectOrganisationsBackfillCaseChildIndexes(ctx context.Context, collection *mongo.Collection, collectionName string) ([]organisationsBackfillIndexContract, error) {
-	contracts := []organisationsBackfillIndexContract{
-		organisationsBackfillNewIndexContract("project-task-list", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "task_id", Value: int32(1)}, {Key: "created_at", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("project-task-id-lookup", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "task_id", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
-	}
+	contracts := []organisationsBackfillIndexContract{}
 	if collectionName == "case_media" {
 		contracts = append(contracts,
+			organisationsBackfillNewIndexContract("project-task-list", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "task_id", Value: int32(1)}, {Key: "role", Value: int32(1)}, {Key: "created_at", Value: int32(1)}}),
 			organisationsBackfillNewIndexContract("project-status-recovery", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "status", Value: int32(1)}}),
 			organisationsBackfillNewIndexContract("source-media-lookup", bson.D{{Key: "source_media_id", Value: int32(1)}}),
+		)
+	} else {
+		contracts = append(contracts,
+			organisationsBackfillNewIndexContract("project-task-list", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "task_id", Value: int32(1)}, {Key: "created_at", Value: int32(1)}}),
 		)
 	}
 	return inspectOrganisationsBackfillCaseIndexes(ctx, collection, contracts)
