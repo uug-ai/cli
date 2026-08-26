@@ -164,6 +164,13 @@ func TestSitesAdapterDeclaresProjectScope(t *testing.T) {
 	}
 }
 
+func TestGroupsAdapterDeclaresProjectScope(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["groups"]
+	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" || adapter.ResolverKind != organisationsBackfillResolverGroup {
+		t.Fatalf("group ownership scope = %+v", adapter)
+	}
+}
+
 func TestOrganisationsBackfillIndexCoversField(t *testing.T) {
 	key := bson.D{{Key: "organisationId", Value: 1}, {Key: "timestamp", Value: -1}}
 	if !organisationsBackfillIndexCoversField(key, "organisationId") {

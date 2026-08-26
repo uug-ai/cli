@@ -7,7 +7,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func TestResolveOrganisationsBackfillSitePrecedence(t *testing.T) {
+func TestResolveOrganisationsBackfillGroupPrecedence(t *testing.T) {
 	organisationID := primitive.NewObjectID()
 	otherOrganisationID := primitive.NewObjectID()
 	projectID := primitive.NewObjectID()
@@ -21,14 +21,10 @@ func TestResolveOrganisationsBackfillSitePrecedence(t *testing.T) {
 		check    func(*testing.T, organisationsBackfillProjectResourceOutcome)
 	}{
 		{
-			name: "canonical ownership wins over legacy tenant",
-			document: bson.D{
-				{Key: "_id", Value: documentID},
-				{Key: "organisationId", Value: organisationID.Hex()},
-				{Key: "user_id", Value: otherOrganisationID.Hex()},
-			},
+			name:     "legacy tenant resolves both default axes",
+			document: bson.D{{Key: "_id", Value: documentID}, {Key: "user_id", Value: organisationID.Hex()}},
 			check: func(t *testing.T, outcome organisationsBackfillProjectResourceOutcome) {
-				if !outcome.canonicalValid || outcome.resolved || !outcome.projectResolved || outcome.resolvedProjectID != organisationID || len(outcome.conflicts) != 0 {
+				if !outcome.resolved || outcome.resolvedID != organisationID || !outcome.proposedWrite || !outcome.projectResolved || outcome.resolvedProjectID != organisationID || !outcome.proposedProjectWrite || len(outcome.conflicts) != 0 {
 					t.Fatalf("outcome = %+v", outcome)
 				}
 			},
@@ -41,16 +37,7 @@ func TestResolveOrganisationsBackfillSitePrecedence(t *testing.T) {
 				{Key: "user_id", Value: "invalid"},
 			},
 			check: func(t *testing.T, outcome organisationsBackfillProjectResourceOutcome) {
-				if !outcome.canonicalValid || outcome.resolved || outcome.invalidLegacy || !outcome.projectResolved || len(outcome.conflicts) != 0 {
-					t.Fatalf("outcome = %+v", outcome)
-				}
-			},
-		},
-		{
-			name:     "legacy tenant resolves both default axes",
-			document: bson.D{{Key: "_id", Value: documentID}, {Key: "user_id", Value: organisationID.Hex()}},
-			check: func(t *testing.T, outcome organisationsBackfillProjectResourceOutcome) {
-				if !outcome.resolved || outcome.resolvedID != organisationID || !outcome.proposedWrite || !outcome.projectResolved || outcome.resolvedProjectID != organisationID || !outcome.proposedProjectWrite || len(outcome.conflicts) != 0 {
+				if !outcome.canonicalValid || outcome.invalidLegacy || !outcome.projectResolved || len(outcome.conflicts) != 0 {
 					t.Fatalf("outcome = %+v", outcome)
 				}
 			},
@@ -83,15 +70,6 @@ func TestResolveOrganisationsBackfillSitePrecedence(t *testing.T) {
 				}
 			},
 		},
-		{
-			name:     "invalid canonical blocks legacy fallback",
-			document: bson.D{{Key: "_id", Value: documentID}, {Key: "organisationId", Value: "invalid"}, {Key: "user_id", Value: organisationID.Hex()}},
-			check: func(t *testing.T, outcome organisationsBackfillProjectResourceOutcome) {
-				if !outcome.canonicalWrong || outcome.resolved || len(outcome.conflicts) != 1 || outcome.conflicts[0].Code != "invalid-canonical-organisation" {
-					t.Fatalf("outcome = %+v", outcome)
-				}
-			},
-		},
 	}
 
 	for _, test := range tests {
@@ -99,18 +77,19 @@ func TestResolveOrganisationsBackfillSitePrecedence(t *testing.T) {
 			if test.projects == nil {
 				test.projects = map[primitive.ObjectID]primitive.ObjectID{}
 			}
-			outcome := resolveOrganisationsBackfillSite(organisationsBackfillTestRaw(t, test.document), organisations, test.projects)
+			outcome := resolveOrganisationsBackfillGroup(organisationsBackfillTestRaw(t, test.document), organisations, test.projects)
 			test.check(t, outcome)
 		})
 	}
 }
 
-func TestOrganisationsBackfillSiteScopeUsesCanonicalPrecedence(t *testing.T) {
-	organisationID := primitive.NewObjectID()
-	if !organisationsBackfillSiteInScope(organisationsBackfillProjectResourceOutcome{resolvedID: organisationID}, organisationID) {
-		t.Fatal("resolved legacy site excluded from scope")
-	}
-	if organisationsBackfillSiteInScope(organisationsBackfillProjectResourceOutcome{canonicalID: primitive.NewObjectID(), resolvedID: organisationID}, organisationID) {
-		t.Fatal("lower-precedence legacy ownership overrode canonical scope")
+func TestResolveOrganisationsBackfillGroupUsesGroupConflictLabel(t *testing.T) {
+	outcome := resolveOrganisationsBackfillGroup(
+		organisationsBackfillTestRaw(t, bson.D{{Key: "_id", Value: primitive.NewObjectID()}}),
+		map[primitive.ObjectID]bool{},
+		map[primitive.ObjectID]primitive.ObjectID{},
+	)
+	if len(outcome.conflicts) != 1 || outcome.conflicts[0].Message != "group has neither canonical organisationId nor legacy user_id" {
+		t.Fatalf("outcome = %+v", outcome)
 	}
 }
