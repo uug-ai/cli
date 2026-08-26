@@ -391,7 +391,7 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			PreservedFields:       []string{"created_by"},
 			ResolverKind:          organisationsBackfillResolverCaseChild,
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR526"},
-			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 		},
 		"case_media": {
 			Collection:            "case_media",
@@ -402,8 +402,8 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			ProjectBSONType:       "objectId",
 			PreservedFields:       []string{"created_by", "source_media_id", "origin_attachment_id"},
 			ResolverKind:          organisationsBackfillResolverCaseChild,
-			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
-			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 		},
 		"devices": {
 			Collection:       "devices",
@@ -472,8 +472,8 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			LegacyCandidates:      []string{"user_id"},
 			PreservedFields:       []string{"reporter_id", "assignees"},
 			ResolverKind:          organisationsBackfillResolverTask,
-			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
-			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:v1.2.11"},
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 		},
 	}
 }
