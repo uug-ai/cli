@@ -119,3 +119,24 @@ func TestCaseShareActiveTokenAndIndexContracts(t *testing.T) {
 		t.Fatalf("index contracts = %+v", contracts)
 	}
 }
+
+func TestResolveOrganisationsBackfillTaskCommentPreservesCommenter(t *testing.T) {
+	organisationID := primitive.NewObjectID()
+	taskID := primitive.NewObjectID()
+	commenterID := primitive.NewObjectID()
+	tasks := map[primitive.ObjectID]bson.Raw{
+		taskID: organisationsBackfillTestRaw(t, bson.D{{Key: "_id", Value: taskID}, {Key: "user_id", Value: organisationID.Hex()}}),
+	}
+	document := organisationsBackfillTestRaw(t, bson.D{
+		{Key: "_id", Value: primitive.NewObjectID()},
+		{Key: "parent_id", Value: taskID.Hex()},
+		{Key: "user_id", Value: commenterID.Hex()},
+	})
+	outcome := resolveOrganisationsBackfillCaseChild(document, "task comment", tasks, map[primitive.ObjectID]bool{organisationID: true}, map[primitive.ObjectID]primitive.ObjectID{})
+	if !outcome.resolved || outcome.resolvedID != organisationID || outcome.resolvedProjectID != organisationID || len(outcome.conflicts) != 0 {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	if outcome.legacyPresent || outcome.legacyUserID == commenterID {
+		t.Fatalf("commenter was reinterpreted as ownership: %+v", outcome)
+	}
+}

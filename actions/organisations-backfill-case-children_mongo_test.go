@@ -114,3 +114,49 @@ func TestInspectOrganisationsBackfillCaseSharesReportsDuplicateActiveTokens(t *t
 		}
 	})
 }
+
+func TestInspectOrganisationsBackfillTaskCommentsIsReadOnly(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+	mt.Run("legacy default parent", func(mt *mtest.T) {
+		organisationID := primitive.NewObjectID()
+		taskID := primitive.NewObjectID()
+		commenterID := primitive.NewObjectID()
+		commentsNamespace := mt.DB.Name() + ".comments"
+		tasksNamespace := mt.DB.Name() + ".tasks"
+		organisationsNamespace := mt.DB.Name() + ".organisation"
+		mt.AddMockResponses(
+			mtest.CreateCursorResponse(0, commentsNamespace, mtest.FirstBatch, bson.D{
+				{Key: "_id", Value: primitive.NewObjectID()},
+				{Key: "parent_id", Value: taskID.Hex()},
+				{Key: "user_id", Value: commenterID.Hex()},
+				{Key: "comment", Value: "evidence note"},
+			}),
+			mtest.CreateCursorResponse(0, tasksNamespace, mtest.FirstBatch, bson.D{{Key: "_id", Value: taskID}, {Key: "user_id", Value: organisationID.Hex()}}),
+			mtest.CreateCursorResponse(0, organisationsNamespace, mtest.FirstBatch, bson.D{{Key: "_id", Value: organisationID}}),
+			mtest.CreateCursorResponse(0, commentsNamespace, mtest.FirstBatch),
+		)
+
+		report, err := inspectOrganisationsBackfillCaseChildren(
+			context.Background(), mt.DB, organisationsBackfillAdapters()["comments"], OrganisationsBackfillConfig{BatchSize: 500},
+			organisationsBackfillCollection{LegacyCandidateCount: map[string]int64{}},
+		)
+		if err != nil {
+			mt.Fatalf("inspect comments: %v", err)
+		}
+		resolution := report.Resolution
+		if resolution == nil || resolution.Resolved != 1 || resolution.ProjectResolved != 1 || resolution.ProposedWrites != 1 || resolution.ProposedProjectWrites != 1 || resolution.Conflicts != 0 {
+			mt.Fatalf("resolution = %+v", resolution)
+		}
+		if len(report.IndexContracts) != 1 || report.IndexContracts[0].Status != "missing" {
+			mt.Fatalf("index contracts = %+v", report.IndexContracts)
+		}
+		if resolution.ObservedFieldTypes["user_id"]["string"] != 1 {
+			mt.Fatalf("commenter provenance evidence = %+v", resolution.ObservedFieldTypes)
+		}
+		for _, event := range mt.GetAllStartedEvents() {
+			if event.CommandName != "find" && event.CommandName != "listIndexes" {
+				mt.Fatalf("comment dry-run issued non-read command %q", event.CommandName)
+			}
+		}
+	})
+}

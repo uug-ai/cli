@@ -53,7 +53,7 @@ func inspectOrganisationsBackfillCaseChildren(
 	}
 	taskIDs := make(map[primitive.ObjectID]struct{})
 	for _, document := range documents {
-		if taskID, state := organisationsBackfillCaseChildTaskID(document, adapter.Collection == "case_shares"); state == organisationsBootstrapFieldValue {
+		if taskID, state := organisationsBackfillCaseChildTaskID(document, adapter.Collection); state == organisationsBootstrapFieldValue {
 			taskIDs[taskID] = struct{}{}
 		}
 	}
@@ -108,6 +108,8 @@ func inspectOrganisationsBackfillCaseChildren(
 		resourceName = "case attachment"
 	} else if adapter.Collection == "case_shares" {
 		resourceName = "case share"
+	} else if adapter.Collection == "comments" {
+		resourceName = "task comment"
 	}
 	activeTokens := make(map[string]int64)
 	for _, document := range documents {
@@ -183,7 +185,13 @@ func resolveOrganisationsBackfillCaseChild(
 	child.documentID = organisationsBackfillDocumentID(document)
 	defer child.enrichConflicts()
 
-	taskID, taskState := organisationsBackfillCaseChildTaskID(document, resourceName == "case share")
+	collectionName := ""
+	if resourceName == "case share" {
+		collectionName = "case_shares"
+	} else if resourceName == "task comment" {
+		collectionName = "comments"
+	}
+	taskID, taskState := organisationsBackfillCaseChildTaskID(document, collectionName)
 	if taskState != organisationsBootstrapFieldValue {
 		child.addConflict("invalid-parent-task", resourceName+" task_id must be a non-zero BSON ObjectID")
 		return outcome
@@ -209,13 +217,17 @@ func resolveOrganisationsBackfillCaseChild(
 	child.resolvedID = expectedOrganisationID
 	child.resolvedProjectID = expectedProjectID
 
-	canonicalID, canonicalState := organisationsBackfillStringObjectIDField(document, "organisation_id")
+	canonicalField := "organisation_id"
+	if resourceName == "task comment" {
+		canonicalField = "organisationId"
+	}
+	canonicalID, canonicalState := organisationsBackfillStringObjectIDField(document, canonicalField)
 	switch canonicalState {
 	case organisationsBootstrapFieldValue:
 		child.canonicalID = canonicalID
 		child.canonicalValid = true
 		if canonicalID != expectedOrganisationID {
-			child.addConflict("parent-organisation-mismatch", resourceName+" organisation_id differs from its parent task")
+			child.addConflict("parent-organisation-mismatch", resourceName+" "+canonicalField+" differs from its parent task")
 		} else {
 			child.resolved = true
 		}
@@ -225,7 +237,7 @@ func resolveOrganisationsBackfillCaseChild(
 		child.proposedWrite = true
 	default:
 		child.canonicalWrong = true
-		child.addConflict("invalid-canonical-organisation", "organisation_id must contain an ObjectID hex string")
+		child.addConflict("invalid-canonical-organisation", canonicalField+" must contain an ObjectID hex string")
 	}
 
 	projectID, projectState := organisationsBootstrapObjectID(document, "projectId")
@@ -248,9 +260,12 @@ func resolveOrganisationsBackfillCaseChild(
 	return outcome
 }
 
-func organisationsBackfillCaseChildTaskID(document bson.Raw, stringID bool) (primitive.ObjectID, organisationsBootstrapFieldState) {
-	if stringID {
+func organisationsBackfillCaseChildTaskID(document bson.Raw, collectionName string) (primitive.ObjectID, organisationsBootstrapFieldState) {
+	if collectionName == "case_shares" {
 		return organisationsBackfillStringObjectIDField(document, "task_id")
+	}
+	if collectionName == "comments" {
+		return organisationsBackfillStringObjectIDField(document, "parent_id")
 	}
 	return organisationsBootstrapObjectID(document, "task_id")
 }
@@ -300,6 +315,10 @@ func inspectOrganisationsBackfillCaseChildIndexes(ctx context.Context, collectio
 		)
 	} else if collectionName == "case_shares" {
 		contracts = caseShareIndexContracts()
+	} else if collectionName == "comments" {
+		contracts = []organisationsBackfillIndexContract{
+			organisationsBackfillNewIndexContract("project-parent-list", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "parent_id", Value: int32(1)}, {Key: "creation_date", Value: int32(-1)}}),
+		}
 	} else {
 		contracts = append(contracts,
 			organisationsBackfillNewIndexContract("project-task-list", bson.D{{Key: "organisation_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "task_id", Value: int32(1)}, {Key: "created_at", Value: int32(1)}}),

@@ -417,6 +417,18 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR528"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR528"},
 		},
+		"comments": {
+			Collection:            "comments",
+			OwnershipScope:        "project-scoped-parent-derived",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"user_id", "author"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR529"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR529"},
+		},
 		"devices": {
 			Collection:       "devices",
 			TargetField:      "organisationId",
