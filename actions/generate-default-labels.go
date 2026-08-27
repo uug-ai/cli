@@ -10,10 +10,16 @@ import (
 	"github.com/gosuri/uiprogress"
 	"github.com/uug-ai/cli/database"
 	"github.com/uug-ai/cli/models"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"gopkg.in/mgo.v2/bson"
 )
+
+type defaultLabelDocument struct {
+	models.Label   `bson:",inline"`
+	OrganisationId string             `bson:"organisationId"`
+	ProjectId      primitive.ObjectID `bson:"projectId"`
+}
 
 func GenerateDefaultLabels(
 	mode string,
@@ -103,7 +109,7 @@ func GenerateDefaultLabels(
 	// generate the new labels to be inserted
 	//
 	bar.Incr()
-	labelNamesArray := strings.Split(labelNames, ",")
+	labelNamesArray := defaultLabelNames(labelNames)
 
 	time.Sleep(time.Second * 2)
 
@@ -119,7 +125,11 @@ func GenerateDefaultLabels(
 
 		labels := GenerateDefaultLabelsForNames(labelNamesArray, owner.Id.Hex())
 		for _, label := range labels {
-			filter := bson.M{"user_id": label.UserId, "name": label.Name}
+			filter, err := defaultLabelMatch(label.OwnerId, label.Name)
+			if err != nil {
+				log.Println("Invalid label owner:", err)
+				continue
+			}
 			count, err := labelsCollection.CountDocuments(context.Background(), filter)
 			if err != nil {
 				log.Println("Error checking for existing label:", err)
@@ -129,7 +139,12 @@ func GenerateDefaultLabels(
 				if mode == "dry-run" {
 					// Nothing to do here..
 				} else if mode == "live" {
-					_, err = labelsCollection.InsertOne(context.Background(), label)
+					document, documentErr := buildDefaultLabelDocument(label)
+					if documentErr != nil {
+						log.Println("Invalid label ownership:", documentErr)
+						continue
+					}
+					_, err = labelsCollection.InsertOne(context.Background(), document)
 				}
 				addedLabels = append(addedLabels, label)
 				if err != nil {
@@ -160,6 +175,39 @@ func GenerateDefaultLabels(
 	log.Println("  +---------------------------------------------+----------------------+")
 	log.Println("")
 	log.Println("Process completed.")
+}
+
+func defaultLabelNames(value string) []string {
+	var names []string
+	for _, name := range strings.Split(value, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return []string{"Incident", "suspicious", "unauthorized"}
+	}
+	return names
+}
+
+func buildDefaultLabelDocument(label models.Label) (defaultLabelDocument, error) {
+	ownerId, err := primitive.ObjectIDFromHex(label.OwnerId)
+	if err != nil || ownerId.IsZero() {
+		return defaultLabelDocument{}, fmt.Errorf("owner_id %q is invalid", label.OwnerId)
+	}
+	return defaultLabelDocument{Label: label, OrganisationId: label.OwnerId, ProjectId: ownerId}, nil
+}
+
+func defaultLabelMatch(ownerId, name string) (bson.M, error) {
+	projectId, err := primitive.ObjectIDFromHex(ownerId)
+	if err != nil || projectId.IsZero() {
+		return nil, fmt.Errorf("owner_id %q is invalid", ownerId)
+	}
+	projectScope := bson.M{"$in": bson.A{projectId, nil}}
+	return bson.M{"$or": []bson.M{
+		{"organisationId": ownerId, "projectId": projectScope, "name": name},
+		{"organisationId": bson.M{"$in": bson.A{nil, ""}}, "owner_id": ownerId, "projectId": projectScope, "name": name},
+	}}, nil
 }
 
 func GetOwnersFromMongodb(client *mongo.Client, DatabaseName string, username string) []models.User {
@@ -205,7 +253,7 @@ func GenerateDefaultLabelsForNames(names []string, userId string) []models.Label
 
 	// Default label names if empty
 	if len(names) == 0 {
-		names = []string{"Incident", "suspicious", "unauthorized"}
+		names = defaultLabelNames("")
 	}
 
 	var labels []models.Label

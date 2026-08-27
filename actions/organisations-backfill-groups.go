@@ -31,7 +31,7 @@ func resolveOrganisationsBackfillGroup(
 	organisations map[primitive.ObjectID]bool,
 	projects map[primitive.ObjectID]primitive.ObjectID,
 ) organisationsBackfillProjectResourceOutcome {
-	return resolveOrganisationsBackfillProjectResource(document, "group", organisations, projects)
+	return resolveOrganisationsBackfillProjectResource(document, "group", "user_id", organisations, projects)
 }
 
 func inspectOrganisationsBackfillGroupIndexes(ctx context.Context, collection *mongo.Collection) ([]organisationsBackfillIndexContract, error) {

@@ -27,6 +27,9 @@ const (
 	organisationsBackfillResolverSite         = "site-tenant"
 	organisationsBackfillResolverGroup        = "group-tenant"
 	organisationsBackfillResolverIO           = "io-actor"
+	organisationsBackfillResolverLabel        = "label-owner"
+	organisationsBackfillResolverCounting     = "counting-source"
+	organisationsBackfillResolverVideowall    = "videowall-tenant"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -245,6 +248,15 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverIO {
 		return inspectOrganisationsBackfillIO(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverLabel {
+		return inspectOrganisationsBackfillProjectResource(ctx, database, adapter, config, report, "label", inspectOrganisationsBackfillLabelIndexes)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverCounting {
+		return inspectOrganisationsBackfillProjectResource(ctx, database, adapter, config, report, "counting", inspectOrganisationsBackfillCountingIndexes)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverVideowall {
+		return inspectOrganisationsBackfillVideowalls(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -380,6 +392,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			LegacyCandidates: []string{"user_id"},
 			PreservedFields:  []string{"user_id"},
 		},
+		"counting": {
+			Collection:            "counting",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"user_id"},
+			PreservedFields:       []string{"username", "device_id"},
+			ResolverKind:          organisationsBackfillResolverCounting,
+			MinimumWriterVersions: []string{"hub-pipeline-analysis:unreleased"},
+			MinimumReaderVersions: []string{"hub-api:unreleased"},
+		},
 		"groups": {
 			Collection:            "groups",
 			OwnershipScope:        "project-scoped",
@@ -406,6 +431,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR524"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR524", "hub-pipeline-notification:unreleased-PR120"},
 		},
+		"labels": {
+			Collection:            "labels",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"owner_id"},
+			PreservedFields:       []string{"user_id"},
+			ResolverKind:          organisationsBackfillResolverLabel,
+			MinimumWriterVersions: []string{"hub-api:unreleased"},
+			MinimumReaderVersions: []string{"hub-api:unreleased"},
+		},
 		"sites": {
 			Collection:            "sites",
 			OwnershipScope:        "project-scoped",
@@ -430,6 +468,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
 			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-monitor:v1.3.14", "hub-cleanup:v1.4.19", "cli:v1.2.23", "hub-monitor-device:unreleased-PR22"},
 		},
+		"videowalls": {
+			Collection:            "videowalls",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"master_user_id"},
+			PreservedFields:       []string{"user_id", "assigned_users"},
+			ResolverKind:          organisationsBackfillResolverVideowall,
+			MinimumWriterVersions: []string{"hub-api:unreleased"},
+			MinimumReaderVersions: []string{"hub-api:unreleased"},
+		},
 	}
 }
 
@@ -437,14 +488,11 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 	return map[string]string{
 		"analysis":      "shared model and canonical BSON type are not declared",
 		"channels":      "persistence and ownership contracts are unverified",
-		"counting":      "persisted shapes require a production audit",
 		"heatmap":       "persisted shapes require a production audit",
-		"labels":        "shared model does not declare organisationId",
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",
 		"settings":      "shared model does not declare a canonical tenant field",
 		"tasks":         "shared model and canonical BSON type are not declared",
-		"videowalls":    "shared model does not declare organisationId",
 		"workflow_runs": "persisted canonical BSON type is not verified",
 	}
 }
