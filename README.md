@@ -182,7 +182,9 @@ belong to the resolved organisation's deterministic default project. Detection
 ownership is derived from the matching analysis document by recording `key`,
 and persisted canonical ownership is checked against that trusted source. A
 missing source or ownership mismatch is a conflict rather than guessed from
-workflow, device, or actor fields.
+workflow, device, or actor fields. The detection writer floor includes Hub
+Pipeline Analysis PR 95, which keeps legacy tolerance limited to the default
+project while requiring exact non-default project matches.
 
 ```sh
 go run . -action check-indexes \

@@ -419,8 +419,8 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			LegacyCandidates:      []string{"key"},
 			PreservedFields:       []string{"key", "source.runId", "workflowId", "deviceId"},
 			ResolverKind:          organisationsBackfillResolverDetection,
-			MinimumWriterVersions: []string{"hub-api:unreleased-workflow-detection-analysis-project-scope", "hub-workflows:unreleased-PR58"},
-			MinimumReaderVersions: []string{"hub-api:unreleased-workflow-detection-analysis-project-scope", "hub-workflows:unreleased-PR58"},
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR534", "hub-pipeline-analysis:unreleased-PR95", "hub-workflows:unreleased-PR58"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR534", "hub-workflows:unreleased-PR58"},
 		},
 		"groups": {
 			Collection:            "groups",
