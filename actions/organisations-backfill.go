@@ -27,6 +27,7 @@ const (
 	organisationsBackfillResolverSite         = "site-tenant"
 	organisationsBackfillResolverGroup        = "group-tenant"
 	organisationsBackfillResolverIO           = "io-actor"
+	organisationsBackfillResolverHeatmap      = "heatmap-tenant"
 	organisationsBackfillResolverLabel        = "label-owner"
 	organisationsBackfillResolverCounting     = "counting-source"
 	organisationsBackfillResolverVideowall    = "videowall-tenant"
@@ -68,6 +69,8 @@ type organisationsBackfillAdapter struct {
 	LegacyCandidates      []string
 	PreservedFields       []string
 	ResolverKind          string
+	LifecycleStatus       string
+	OperationalUse        string
 	MinimumWriterVersions []string
 	MinimumReaderVersions []string
 }
@@ -98,6 +101,8 @@ type organisationsBackfillCollection struct {
 	LegacyCandidates      []string                             `json:"legacyCandidates"`
 	PreservedFields       []string                             `json:"preservedFields"`
 	ResolverKind          string                               `json:"resolverKind,omitempty"`
+	LifecycleStatus       string                               `json:"lifecycleStatus,omitempty"`
+	OperationalUse        string                               `json:"operationalUse,omitempty"`
 	MinimumWriterVersions []string                             `json:"minimumWriterVersions,omitempty"`
 	MinimumReaderVersions []string                             `json:"minimumReaderVersions,omitempty"`
 	Total                 int64                                `json:"total"`
@@ -247,6 +252,9 @@ func inspectOrganisationsBackfillAdapter(
 	}
 	if adapter.ResolverKind == organisationsBackfillResolverIO {
 		return inspectOrganisationsBackfillIO(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverHeatmap {
+		return inspectOrganisationsBackfillHeatmap(ctx, database, adapter, config, report)
 	}
 	if adapter.ResolverKind == organisationsBackfillResolverLabel {
 		return inspectOrganisationsBackfillProjectResource(ctx, database, adapter, config, report, "label", inspectOrganisationsBackfillLabelIndexes)
@@ -418,6 +426,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.56"},
 			MinimumReaderVersions: []string{"hub-api:v1.9.56", "hub-pipeline-notification:v1.3.19"},
 		},
+		"heatmap": {
+			Collection:       "heatmap",
+			OwnershipScope:   "project-scoped",
+			TargetField:      "organisationId",
+			TargetBSONType:   "string",
+			ProjectField:     "projectId",
+			ProjectBSONType:  "objectId",
+			LegacyCandidates: []string{"user_id"},
+			PreservedFields:  []string{"user_id"},
+			ResolverKind:     organisationsBackfillResolverHeatmap,
+			LifecycleStatus:  "inactive",
+			OperationalUse:   "retention-only",
+		},
 		"io": {
 			Collection:            "io",
 			OwnershipScope:        "project-scoped",
@@ -488,7 +509,6 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 	return map[string]string{
 		"analysis":      "shared model and canonical BSON type are not declared",
 		"channels":      "persistence and ownership contracts are unverified",
-		"heatmap":       "persisted shapes require a production audit",
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",
 		"settings":      "shared model does not declare a canonical tenant field",
@@ -518,6 +538,8 @@ func inspectOrganisationsBackfillCollection(
 		LegacyCandidates:      append([]string(nil), adapter.LegacyCandidates...),
 		PreservedFields:       append([]string(nil), adapter.PreservedFields...),
 		ResolverKind:          adapter.ResolverKind,
+		LifecycleStatus:       adapter.LifecycleStatus,
+		OperationalUse:        adapter.OperationalUse,
 		MinimumWriterVersions: append([]string(nil), adapter.MinimumWriterVersions...),
 		MinimumReaderVersions: append([]string(nil), adapter.MinimumReaderVersions...),
 		LegacyCandidateCount:  make(map[string]int64, len(adapter.LegacyCandidates)),
