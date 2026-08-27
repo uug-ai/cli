@@ -45,10 +45,12 @@ type organisationsBackfillConflict struct {
 }
 
 type organisationsBackfillIndexContract struct {
-	Name      string                          `json:"name"`
-	Keys      []organisationsBackfillIndexKey `json:"keys"`
-	Status    string                          `json:"status"`
-	IndexName string                          `json:"indexName,omitempty"`
+	Name                    string                          `json:"name"`
+	Keys                    []organisationsBackfillIndexKey `json:"keys"`
+	Unique                  bool                            `json:"unique,omitempty"`
+	PartialFilterExpression bson.M                          `json:"partialFilterExpression,omitempty"`
+	Status                  string                          `json:"status"`
+	IndexName               string                          `json:"indexName,omitempty"`
 }
 
 type organisationsBackfillIndexKey struct {

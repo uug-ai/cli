@@ -1,0 +1,44 @@
+markers
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, startTimestamp: -1, _id: -1 }, name: 'organisationId_1_projectId_1_startTimestamp_-1__id_-1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, deviceId: 1, name: 1, startTimestamp: 1 }, name: 'organisationId_1_projectId_1_deviceId_1_name_1_startTimestamp_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, mediaKeys: 1 }, name: 'organisationId_1_projectId_1_mediaKeys_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, deviceId: 1, startTimestamp: 1 }, name: 'organisationId_1_projectId_1_deviceId_1_startTimestamp_1' }
+]
+marker_options
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1 }, name: 'organisationId_1_projectId_1_value_1', unique: true },
+  { v: 2, key: { organisationId: 1, projectId: 1, updatedAt: -1, _id: -1 }, name: 'organisationId_1_projectId_1_updatedAt_-1__id_-1' }
+]
+marker_tag_options
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1 }, name: 'organisationId_1_projectId_1_value_1', unique: true },
+  { v: 2, key: { organisationId: 1, projectId: 1, updatedAt: -1, _id: -1 }, name: 'organisationId_1_projectId_1_updatedAt_-1__id_-1' }
+]
+marker_event_options
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1 }, name: 'organisationId_1_projectId_1_value_1', unique: true },
+  { v: 2, key: { organisationId: 1, projectId: 1, updatedAt: -1, _id: -1 }, name: 'organisationId_1_projectId_1_updatedAt_-1__id_-1' }
+]
+marker_category_options
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1 }, name: 'organisationId_1_projectId_1_value_1', unique: true },
+  { v: 2, key: { organisationId: 1, projectId: 1, updatedAt: -1, _id: -1 }, name: 'organisationId_1_projectId_1_updatedAt_-1__id_-1' }
+]
+marker_option_ranges
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, text: 1, start: 1, end: 1 }, name: 'organisationId_1_projectId_1_text_1_start_1_end_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1, deviceId: 1, start: 1 }, name: 'organisationId_1_projectId_1_value_1_deviceId_1_start_1', unique: true, partialFilterExpression: { organisationId: { $type: 'string' }, projectId: { $type: 'objectId' }, value: { $type: 'string' }, deviceId: { $type: 'string' }, start: { $type: 'number' } } },
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1, deviceKey: 1, start: 1, end: 1 }, name: 'organisationId_1_projectId_1_value_1_deviceKey_1_start_1_end_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, start: 1, end: 1 }, name: 'organisationId_1_projectId_1_start_1_end_1' }
+]
+marker_tag_option_ranges
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, text: 1, start: 1, end: 1 }, name: 'organisationId_1_projectId_1_text_1_start_1_end_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1, deviceId: 1, start: 1 }, name: 'organisationId_1_projectId_1_value_1_deviceId_1_start_1', unique: true, partialFilterExpression: { organisationId: { $type: 'string' }, projectId: { $type: 'objectId' }, value: { $type: 'string' }, deviceId: { $type: 'string' }, start: { $type: 'number' } } }
+]
+marker_event_option_ranges
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, text: 1, start: 1, end: 1 }, name: 'organisationId_1_projectId_1_text_1_start_1_end_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, value: 1, deviceId: 1, start: 1 }, name: 'organisationId_1_projectId_1_value_1_deviceId_1_start_1', unique: true, partialFilterExpression: { organisationId: { $type: 'string' }, projectId: { $type: 'objectId' }, value: { $type: 'string' }, deviceId: { $type: 'string' }, start: { $type: 'number' } } }
+]
