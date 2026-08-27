@@ -96,7 +96,7 @@ func inspectOrganisationsBackfillHeatmap(
 			resolution.OrphanUsers++
 		}
 		if config.OrganisationID != "" {
-			addOrganisationsBackfillSiteScopedInventory(&report, outcome.organisationsBackfillProjectResourceOutcome)
+			addOrganisationsBackfillSiteScopedInventory(&report, outcome.organisationsBackfillProjectResourceOutcome, "user_id")
 		}
 	}
 	sort.Slice(resolution.ConflictEntries, func(left, right int) bool {

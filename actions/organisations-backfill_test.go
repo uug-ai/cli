@@ -101,7 +101,7 @@ func TestValidateOrganisationsBackfillConfig(t *testing.T) {
 		{
 			name: "reports blocked adapter",
 			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
-				config.Collection = "videowalls"
+				config.Collection = "channels"
 				return config
 			},
 			wantError: "blocked",
@@ -129,7 +129,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
-	want := []string{"alerts", "devices", "groups", "heatmap", "io", "sites", "subscriptions"}
+	want := []string{"alerts", "counting", "devices", "groups", "heatmap", "io", "labels", "sites", "subscriptions", "videowalls"}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
 	}
@@ -178,6 +178,30 @@ func TestIOAdapterDeclaresProjectScopeAndActorFallback(t *testing.T) {
 	}
 	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "user_id" || len(adapter.PreservedFields) != 1 || adapter.PreservedFields[0] != "user_id" {
 		t.Fatalf("IO actor contract = %+v", adapter)
+	}
+}
+
+func TestLabelsAdapterDeclaresStableOwnerScope(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["labels"]
+	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ResolverKind != organisationsBackfillResolverLabel {
+		t.Fatalf("label ownership scope = %+v", adapter)
+	}
+	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "owner_id" || len(adapter.PreservedFields) != 1 || adapter.PreservedFields[0] != "user_id" {
+		t.Fatalf("label stable owner/provenance contract = %+v", adapter)
+	}
+}
+
+func TestCountingAdapterDeclaresSourceOwnership(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["counting"]
+	if adapter.ResolverKind != organisationsBackfillResolverCounting || len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "user_id" {
+		t.Fatalf("counting ownership contract = %+v", adapter)
+	}
+}
+
+func TestVideowallAdapterDeclaresTenantOwnership(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["videowalls"]
+	if adapter.ResolverKind != organisationsBackfillResolverVideowall || len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "master_user_id" {
+		t.Fatalf("videowall ownership contract = %+v", adapter)
 	}
 }
 
