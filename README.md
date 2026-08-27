@@ -176,6 +176,23 @@ go run . -action check-indexes \
          -index-version migration-hub-workflow-ownership-26-08-2026
 ```
 
+Analysis and detections are also project scoped. Analysis resolves canonical
+`organisationId`, then legacy tenant `userid`, then `user_id`; missing projects
+belong to the resolved organisation's deterministic default project. Detection
+ownership is derived from the matching analysis document by recording `key`,
+and persisted canonical ownership is checked against that trusted source. A
+missing source or ownership mismatch is a conflict rather than guessed from
+workflow, device, or actor fields.
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections analysis,detections \
+         -mode dry-run \
+         -index-version migration-hub-analysis-detection-ownership-27-08-2026
+```
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.

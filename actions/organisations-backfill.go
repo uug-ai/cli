@@ -29,6 +29,8 @@ const (
 	organisationsBackfillResolverIO           = "io-actor"
 	organisationsBackfillResolverWorkflow     = "workflow-definition"
 	organisationsBackfillResolverWorkflowRun  = "workflow-run"
+	organisationsBackfillResolverAnalysis     = "analysis-tenant"
+	organisationsBackfillResolverDetection    = "detection-source"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -253,6 +255,12 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverWorkflowRun {
 		return inspectOrganisationsBackfillWorkflowRuns(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverAnalysis {
+		return inspectOrganisationsBackfillAnalysis(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverDetection {
+		return inspectOrganisationsBackfillDetections(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -368,6 +376,19 @@ func selectOrganisationsBackfillAdapters(collection string, all bool) ([]organis
 
 func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 	return map[string]organisationsBackfillAdapter{
+		"analysis": {
+			Collection:            "analysis",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"userid", "user_id"},
+			PreservedFields:       []string{"userid", "user_id", "key", "deviceid"},
+			ResolverKind:          organisationsBackfillResolverAnalysis,
+			MinimumWriterVersions: []string{"hub-pipeline-analysis:v1.8.6"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-workflow-detection-analysis-project-scope", "hub-pipeline-analysis:v1.8.6"},
+		},
 		"alerts": {
 			Collection:            "alerts",
 			OwnershipScope:        "project-scoped",
@@ -387,6 +408,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			TargetBSONType:   "string",
 			LegacyCandidates: []string{"user_id"},
 			PreservedFields:  []string{"user_id"},
+		},
+		"detections": {
+			Collection:            "detections",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"key"},
+			PreservedFields:       []string{"key", "source.runId", "workflowId", "deviceId"},
+			ResolverKind:          organisationsBackfillResolverDetection,
+			MinimumWriterVersions: []string{"hub-api:unreleased-workflow-detection-analysis-project-scope", "hub-workflows:unreleased-PR58"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-workflow-detection-analysis-project-scope", "hub-workflows:unreleased-PR58"},
 		},
 		"groups": {
 			Collection:            "groups",
@@ -469,7 +503,6 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 
 func organisationsBackfillBlockedAdapters() map[string]string {
 	return map[string]string{
-		"analysis":      "shared model and canonical BSON type are not declared",
 		"channels":      "persistence and ownership contracts are unverified",
 		"counting":      "persisted shapes require a production audit",
 		"heatmap":       "persisted shapes require a production audit",

@@ -129,7 +129,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
-	want := []string{"alerts", "devices", "groups", "io", "sites", "subscriptions", "workflow_runs", "workflows"}
+	want := []string{"alerts", "analysis", "detections", "devices", "groups", "io", "sites", "subscriptions", "workflow_runs", "workflows"}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
 	}
@@ -189,6 +189,17 @@ func TestWorkflowAdaptersDeclareSeparateResolvers(t *testing.T) {
 	runs := organisationsBackfillAdapters()["workflow_runs"]
 	if runs.ResolverKind != organisationsBackfillResolverWorkflowRun || runs.ProjectBSONType != "objectId" {
 		t.Fatalf("workflow run adapter = %+v", runs)
+	}
+}
+
+func TestAnalysisAndDetectionAdaptersDeclareProjectScope(t *testing.T) {
+	analysis := organisationsBackfillAdapters()["analysis"]
+	if analysis.ResolverKind != organisationsBackfillResolverAnalysis || analysis.ProjectBSONType != "objectId" {
+		t.Fatalf("analysis adapter = %+v", analysis)
+	}
+	detections := organisationsBackfillAdapters()["detections"]
+	if detections.ResolverKind != organisationsBackfillResolverDetection || detections.ProjectBSONType != "objectId" {
+		t.Fatalf("detections adapter = %+v", detections)
 	}
 }
 
