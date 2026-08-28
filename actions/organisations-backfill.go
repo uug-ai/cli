@@ -29,6 +29,10 @@ const (
 	organisationsBackfillResolverIO           = "io-actor"
 	organisationsBackfillResolverTask         = "task-tenant"
 	organisationsBackfillResolverCaseChild    = "case-parent"
+	organisationsBackfillResolverHeatmap      = "heatmap-tenant"
+	organisationsBackfillResolverLabel        = "label-owner"
+	organisationsBackfillResolverCounting     = "counting-source"
+	organisationsBackfillResolverVideowall    = "videowall-tenant"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -67,6 +71,8 @@ type organisationsBackfillAdapter struct {
 	LegacyCandidates      []string
 	PreservedFields       []string
 	ResolverKind          string
+	LifecycleStatus       string
+	OperationalUse        string
 	MinimumWriterVersions []string
 	MinimumReaderVersions []string
 }
@@ -97,6 +103,8 @@ type organisationsBackfillCollection struct {
 	LegacyCandidates      []string                             `json:"legacyCandidates"`
 	PreservedFields       []string                             `json:"preservedFields"`
 	ResolverKind          string                               `json:"resolverKind,omitempty"`
+	LifecycleStatus       string                               `json:"lifecycleStatus,omitempty"`
+	OperationalUse        string                               `json:"operationalUse,omitempty"`
 	MinimumWriterVersions []string                             `json:"minimumWriterVersions,omitempty"`
 	MinimumReaderVersions []string                             `json:"minimumReaderVersions,omitempty"`
 	Total                 int64                                `json:"total"`
@@ -252,6 +260,18 @@ func inspectOrganisationsBackfillAdapter(
 	}
 	if adapter.ResolverKind == organisationsBackfillResolverCaseChild {
 		return inspectOrganisationsBackfillCaseChildren(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverHeatmap {
+		return inspectOrganisationsBackfillHeatmap(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverLabel {
+		return inspectOrganisationsBackfillProjectResource(ctx, database, adapter, config, report, "label", inspectOrganisationsBackfillLabelIndexes)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverCounting {
+		return inspectOrganisationsBackfillProjectResource(ctx, database, adapter, config, report, "counting", inspectOrganisationsBackfillCountingIndexes)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverVideowall {
+		return inspectOrganisationsBackfillVideowalls(ctx, database, adapter, config, report)
 	}
 	return report, nil
 }
@@ -436,6 +456,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			LegacyCandidates: []string{"user_id"},
 			PreservedFields:  []string{"user_id"},
 		},
+		"counting": {
+			Collection:            "counting",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"user_id"},
+			PreservedFields:       []string{"username", "device_id"},
+			ResolverKind:          organisationsBackfillResolverCounting,
+			MinimumWriterVersions: []string{"hub-pipeline-analysis:unreleased"},
+			MinimumReaderVersions: []string{"hub-api:unreleased"},
+		},
 		"groups": {
 			Collection:            "groups",
 			OwnershipScope:        "project-scoped",
@@ -449,6 +482,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.56"},
 			MinimumReaderVersions: []string{"hub-api:v1.9.56", "hub-pipeline-notification:v1.3.19"},
 		},
+		"heatmap": {
+			Collection:       "heatmap",
+			OwnershipScope:   "project-scoped",
+			TargetField:      "organisationId",
+			TargetBSONType:   "string",
+			ProjectField:     "projectId",
+			ProjectBSONType:  "objectId",
+			LegacyCandidates: []string{"user_id"},
+			PreservedFields:  []string{"user_id"},
+			ResolverKind:     organisationsBackfillResolverHeatmap,
+			LifecycleStatus:  "inactive",
+			OperationalUse:   "retention-only",
+		},
 		"io": {
 			Collection:            "io",
 			OwnershipScope:        "project-scoped",
@@ -461,6 +507,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			ResolverKind:          organisationsBackfillResolverIO,
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR524"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR524", "hub-pipeline-notification:unreleased-PR120"},
+		},
+		"labels": {
+			Collection:            "labels",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"owner_id"},
+			PreservedFields:       []string{"user_id"},
+			ResolverKind:          organisationsBackfillResolverLabel,
+			MinimumWriterVersions: []string{"hub-api:unreleased"},
+			MinimumReaderVersions: []string{"hub-api:unreleased"},
 		},
 		"sites": {
 			Collection:            "sites",
@@ -499,6 +558,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 		},
+		"videowalls": {
+			Collection:            "videowalls",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"master_user_id"},
+			PreservedFields:       []string{"user_id", "assigned_users"},
+			ResolverKind:          organisationsBackfillResolverVideowall,
+			MinimumWriterVersions: []string{"hub-api:unreleased"},
+			MinimumReaderVersions: []string{"hub-api:unreleased"},
+		},
 	}
 }
 
@@ -506,13 +578,10 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 	return map[string]string{
 		"analysis":      "shared model and canonical BSON type are not declared",
 		"channels":      "persistence and ownership contracts are unverified",
-		"counting":      "persisted shapes require a production audit",
-		"heatmap":       "persisted shapes require a production audit",
-		"labels":        "shared model does not declare organisationId",
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",
 		"settings":      "shared model does not declare a canonical tenant field",
-		"videowalls":    "shared model does not declare organisationId",
+
 		"workflow_runs": "persisted canonical BSON type is not verified",
 	}
 }
@@ -538,6 +607,8 @@ func inspectOrganisationsBackfillCollection(
 		LegacyCandidates:      append([]string(nil), adapter.LegacyCandidates...),
 		PreservedFields:       append([]string(nil), adapter.PreservedFields...),
 		ResolverKind:          adapter.ResolverKind,
+		LifecycleStatus:       adapter.LifecycleStatus,
+		OperationalUse:        adapter.OperationalUse,
 		MinimumWriterVersions: append([]string(nil), adapter.MinimumWriterVersions...),
 		MinimumReaderVersions: append([]string(nil), adapter.MinimumReaderVersions...),
 		LegacyCandidateCount:  make(map[string]int64, len(adapter.LegacyCandidates)),

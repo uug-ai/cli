@@ -129,7 +129,7 @@ func inspectOrganisationsBackfillCaseChildren(
 			resolution.OrphanParents++
 		}
 		if config.OrganisationID != "" {
-			addOrganisationsBackfillSiteScopedInventory(&report, outcome.organisationsBackfillProjectResourceOutcome)
+			addOrganisationsBackfillSiteScopedInventory(&report, outcome.organisationsBackfillProjectResourceOutcome, "")
 		}
 	}
 	for _, count := range activeTokens {
@@ -204,7 +204,7 @@ func resolveOrganisationsBackfillCaseChild(
 		return outcome
 	}
 
-	parentOutcome := resolveOrganisationsBackfillProjectResource(parent, "task", organisations, projects)
+	parentOutcome := resolveOrganisationsBackfillProjectResource(parent, "task", "user_id", organisations, projects)
 	if len(parentOutcome.conflicts) > 0 || !parentOutcome.projectResolved {
 		child.addConflict("parent-ownership-conflict", "parent task ownership is unresolved or conflicting")
 		return outcome

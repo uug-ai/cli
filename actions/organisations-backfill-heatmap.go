@@ -9,12 +9,12 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type organisationsBackfillIOOutcome struct {
+type organisationsBackfillHeatmapOutcome struct {
 	organisationsBackfillProjectResourceOutcome
 	orphanUser bool
 }
 
-func inspectOrganisationsBackfillIO(
+func inspectOrganisationsBackfillHeatmap(
 	ctx context.Context,
 	database *mongo.Database,
 	adapter organisationsBackfillAdapter,
@@ -86,8 +86,8 @@ func inspectOrganisationsBackfillIO(
 		})
 	}
 	for _, document := range documents {
-		outcome := resolveOrganisationsBackfillIO(document, users, organisations, projects)
-		if !organisationsBackfillIOInScope(outcome, scopeID) {
+		outcome := resolveOrganisationsBackfillHeatmap(document, users, organisations, projects)
+		if !organisationsBackfillHeatmapInScope(outcome, scopeID) {
 			continue
 		}
 		observeOrganisationsBackfillDocument(&resolution, document)
@@ -111,16 +111,16 @@ func inspectOrganisationsBackfillIO(
 		resolution.ConflictEntries = resolution.ConflictEntries[:organisationsBackfillConflictLimit]
 	}
 	report.Resolution = &resolution
-	report.IndexContracts, err = inspectOrganisationsBackfillIOIndexes(ctx, database.Collection(adapter.Collection))
+	report.IndexContracts, err = inspectOrganisationsBackfillHeatmapIndexes(ctx, database.Collection(adapter.Collection))
 	return report, err
 }
 
-func resolveOrganisationsBackfillIO(
+func resolveOrganisationsBackfillHeatmap(
 	document bson.Raw,
 	users map[primitive.ObjectID]bson.Raw,
 	organisations map[primitive.ObjectID]bool,
 	projects map[primitive.ObjectID]primitive.ObjectID,
-) (outcome organisationsBackfillIOOutcome) {
+) (outcome organisationsBackfillHeatmapOutcome) {
 	resource := &outcome.organisationsBackfillProjectResourceOutcome
 	resource.documentID = organisationsBackfillDocumentID(document)
 	defer resource.enrichConflicts()
@@ -167,7 +167,7 @@ func resolveOrganisationsBackfillIO(
 	switch legacyState {
 	case organisationsBootstrapFieldEmpty:
 		resource.zeroCandidate = true
-		resource.addConflict("zero-candidate", "IO has neither canonical organisationId nor legacy user_id actor")
+		resource.addConflict("zero-candidate", "heatmap has neither canonical organisationId nor legacy user_id")
 	case organisationsBootstrapFieldWrong:
 		resource.invalidLegacy = true
 		resource.addConflict("invalid-legacy-user-id", "user_id must contain an ObjectID hex string")
@@ -175,7 +175,7 @@ func resolveOrganisationsBackfillIO(
 		user, exists := users[legacyID]
 		if !exists {
 			outcome.orphanUser = true
-			resource.addConflict("orphan-user", "legacy user_id actor does not resolve to a user")
+			resource.addConflict("orphan-user", "legacy user_id does not resolve to a user")
 			return outcome
 		}
 		userResolution := resolveOrganisationsBackfillUser(user)
@@ -186,7 +186,7 @@ func resolveOrganisationsBackfillIO(
 		resource.resolvedID = userResolution.organisationID
 		if !organisations[resource.resolvedID] {
 			resource.orphanOrganisation = true
-			resource.addConflict("orphan-organisation", "organisation resolved from legacy actor does not exist")
+			resource.addConflict("orphan-organisation", "organisation resolved from legacy user_id does not exist")
 			return outcome
 		}
 		resource.resolved = true
@@ -195,7 +195,7 @@ func resolveOrganisationsBackfillIO(
 	return outcome
 }
 
-func organisationsBackfillIOInScope(outcome organisationsBackfillIOOutcome, scopeID primitive.ObjectID) bool {
+func organisationsBackfillHeatmapInScope(outcome organisationsBackfillHeatmapOutcome, scopeID primitive.ObjectID) bool {
 	if scopeID.IsZero() {
 		return true
 	}
@@ -205,7 +205,7 @@ func organisationsBackfillIOInScope(outcome organisationsBackfillIOOutcome, scop
 	return outcome.resolvedID == scopeID
 }
 
-func inspectOrganisationsBackfillIOIndexes(ctx context.Context, collection *mongo.Collection) ([]organisationsBackfillIndexContract, error) {
+func inspectOrganisationsBackfillHeatmapIndexes(ctx context.Context, collection *mongo.Collection) ([]organisationsBackfillIndexContract, error) {
 	cursor, err := collection.Indexes().List(ctx)
 	if err != nil {
 		return nil, err
@@ -219,11 +219,9 @@ func inspectOrganisationsBackfillIOIndexes(ctx context.Context, collection *mong
 		return nil, err
 	}
 	contracts := []organisationsBackfillIndexContract{
-		organisationsBackfillNewIndexContract("canonical-project-device-list", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "device", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("legacy-project-device-list", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "device", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("canonical-project-hash-mutation", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "hash", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("legacy-project-hash-mutation", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "hash", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("heartbeat-device-hash-candidate", bson.D{{Key: "device", Value: int32(1)}, {Key: "hash", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("current-legacy-retention", bson.D{{Key: "user_id", Value: int32(1)}, {Key: "timestamp", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("cleanup-canonical-retention", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "timestamp", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("cleanup-global-retention", bson.D{{Key: "timestamp", Value: int32(1)}}),
 	}
 	for index := range contracts {
 		contracts[index].Status = "missing"
