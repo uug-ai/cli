@@ -27,6 +27,7 @@ type organisationsBackfillProjectResourceOutcome struct {
 	resolvedID           primitive.ObjectID
 	resolved             bool
 	zeroCandidate        bool
+	multipleCandidates   bool
 	orphanOrganisation   bool
 	proposedWrite        bool
 	conflicts            []organisationsBackfillConflict
@@ -60,6 +61,7 @@ func inspectOrganisationsBackfillProjectResource(
 	inspectIndexes func(context.Context, *mongo.Collection) ([]organisationsBackfillIndexContract, error),
 ) (organisationsBackfillCollection, error) {
 	var scopeID primitive.ObjectID
+	legacyField := adapter.LegacyCandidates[0]
 	if config.OrganisationID != "" {
 		scopeID, _ = primitive.ObjectIDFromHex(config.OrganisationID)
 	}
@@ -74,7 +76,7 @@ func inspectOrganisationsBackfillProjectResource(
 		if id, state := organisationsBackfillStringObjectIDField(document, "organisationId"); state == organisationsBootstrapFieldValue {
 			organisationIDs[id] = struct{}{}
 		} else if state == organisationsBootstrapFieldEmpty {
-			if legacyID, legacyState := organisationsBackfillStringObjectIDField(document, "user_id"); legacyState == organisationsBootstrapFieldValue {
+			if legacyID, legacyState := organisationsBackfillStringObjectIDField(document, legacyField); legacyState == organisationsBootstrapFieldValue {
 				organisationIDs[legacyID] = struct{}{}
 			}
 		}
@@ -112,14 +114,14 @@ func inspectOrganisationsBackfillProjectResource(
 		})
 	}
 	for _, document := range documents {
-		outcome := resolveOrganisationsBackfillProjectResource(document, resourceName, organisations, projects)
+		outcome := resolveOrganisationsBackfillProjectResource(document, resourceName, legacyField, organisations, projects)
 		if !organisationsBackfillSiteInScope(outcome, scopeID) {
 			continue
 		}
 		observeOrganisationsBackfillDocument(&resolution, document)
 		addOrganisationsBackfillSiteOutcome(&resolution, outcome)
 		if config.OrganisationID != "" {
-			addOrganisationsBackfillSiteScopedInventory(&report, outcome)
+			addOrganisationsBackfillSiteScopedInventory(&report, outcome, legacyField)
 		}
 	}
 	sort.Slice(resolution.ConflictEntries, func(left, right int) bool {
@@ -143,12 +145,13 @@ func resolveOrganisationsBackfillSite(
 	organisations map[primitive.ObjectID]bool,
 	projects map[primitive.ObjectID]primitive.ObjectID,
 ) (outcome organisationsBackfillProjectResourceOutcome) {
-	return resolveOrganisationsBackfillProjectResource(document, "site", organisations, projects)
+	return resolveOrganisationsBackfillProjectResource(document, "site", "user_id", organisations, projects)
 }
 
 func resolveOrganisationsBackfillProjectResource(
 	document bson.Raw,
 	resourceName string,
+	legacyField string,
 	organisations map[primitive.ObjectID]bool,
 	projects map[primitive.ObjectID]primitive.ObjectID,
 ) (outcome organisationsBackfillProjectResourceOutcome) {
@@ -156,7 +159,7 @@ func resolveOrganisationsBackfillProjectResource(
 	defer outcome.enrichConflicts()
 	defer outcome.resolveProject(projects)
 
-	legacyID, legacyState := organisationsBackfillStringObjectIDField(document, "user_id")
+	legacyID, legacyState := organisationsBackfillStringObjectIDField(document, legacyField)
 	if legacyState != organisationsBootstrapFieldEmpty {
 		outcome.legacyPresent = true
 	}
@@ -197,15 +200,15 @@ func resolveOrganisationsBackfillProjectResource(
 	switch legacyState {
 	case organisationsBootstrapFieldEmpty:
 		outcome.zeroCandidate = true
-		outcome.addConflict("zero-candidate", resourceName+" has neither canonical organisationId nor legacy user_id")
+		outcome.addConflict("zero-candidate", resourceName+" has neither canonical organisationId nor legacy "+legacyField)
 	case organisationsBootstrapFieldWrong:
 		outcome.invalidLegacy = true
-		outcome.addConflict("invalid-legacy-user-id", "user_id must contain an ObjectID hex string")
+		outcome.addConflict("invalid-legacy-owner-id", legacyField+" must contain an ObjectID hex string")
 	case organisationsBootstrapFieldValue:
 		outcome.resolvedID = legacyID
 		if !organisations[legacyID] {
 			outcome.orphanOrganisation = true
-			outcome.addConflict("orphan-organisation", "legacy user_id organisation does not exist")
+			outcome.addConflict("orphan-organisation", "legacy "+legacyField+" organisation does not exist")
 			return outcome
 		}
 		outcome.resolved = true
@@ -301,6 +304,9 @@ func addOrganisationsBackfillSiteOutcome(report *organisationsBackfillResolution
 	if outcome.zeroCandidate {
 		report.ZeroCandidate++
 	}
+	if outcome.multipleCandidates {
+		report.MultipleCandidates++
+	}
 	if outcome.invalidLegacy {
 		report.InvalidLegacy++
 	}
@@ -320,7 +326,7 @@ func addOrganisationsBackfillSiteOutcome(report *organisationsBackfillResolution
 	report.ConflictEntries = append(report.ConflictEntries, outcome.conflicts...)
 }
 
-func addOrganisationsBackfillSiteScopedInventory(report *organisationsBackfillCollection, outcome organisationsBackfillProjectResourceOutcome) {
+func addOrganisationsBackfillSiteScopedInventory(report *organisationsBackfillCollection, outcome organisationsBackfillProjectResourceOutcome, legacyField string) {
 	report.Total++
 	if outcome.canonicalValid {
 		report.CanonicalPresent++
@@ -340,8 +346,8 @@ func addOrganisationsBackfillSiteScopedInventory(report *organisationsBackfillCo
 	if outcome.projectWrong {
 		report.ProjectWrongType++
 	}
-	if outcome.legacyPresent {
-		report.LegacyCandidateCount["user_id"]++
+	if outcome.legacyPresent && legacyField != "" {
+		report.LegacyCandidateCount[legacyField]++
 	}
 }
 

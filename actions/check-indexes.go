@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -181,7 +182,7 @@ func CheckIndexes(
 			continue
 		}
 
-		existing, err := listIndexKeys(ctx, db.Collection(collName))
+		existing, err := listIndexes(ctx, db.Collection(collName))
 		if err != nil {
 			fmt.Printf("[error] list indexes for %s: %v\n", collName, err)
 			continue
@@ -190,8 +191,14 @@ func CheckIndexes(
 		// Compare
 		var missing []IndexSpec
 		for _, s := range specs {
-			normalized := normalizeKey(s.Key)
-			if _, found := existing[normalized]; !found {
+			found := false
+			for _, candidate := range existing {
+				if indexSpecMatches(s, candidate) {
+					found = true
+					break
+				}
+			}
+			if !found {
 				missing = append(missing, s)
 				allMissing = append(allMissing, missEntry{coll: collName, spec: s})
 			}
@@ -303,25 +310,35 @@ func parseCSV(s string) []string {
 	return out
 }
 
-// listIndexKeys returns a set keyed by ordered key spec like "name:1.user_id:1".
-func listIndexKeys(ctx context.Context, coll *mongo.Collection) (map[string]struct{}, error) {
+// listIndexes returns the full contracts needed to distinguish an ordinary
+// index from a unique or partial index with the same ordered keys.
+func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, error) {
 	cur, err := coll.Indexes().List(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer cur.Close(ctx)
 
-	out := make(map[string]struct{})
+	var out []IndexSpec
 	for cur.Next(ctx) {
 		var doc struct {
-			Key bson.D `bson:"key"`
+			Name                    string `bson:"name"`
+			Key                     bson.D `bson:"key"`
+			Unique                  bool   `bson:"unique"`
+			PartialFilterExpression bson.M `bson:"partialFilterExpression"`
 		}
 		if err := cur.Decode(&doc); err != nil || len(doc.Key) == 0 {
 			continue
 		}
-		out[normalizeKey(doc.Key)] = struct{}{}
+		out = append(out, IndexSpec{Name: doc.Name, Key: doc.Key, Unique: doc.Unique, PartialFilterExpression: doc.PartialFilterExpression})
 	}
 	return out, cur.Err()
+}
+
+func indexSpecMatches(required, actual IndexSpec) bool {
+	return normalizeKey(required.Key) == normalizeKey(actual.Key) &&
+		required.Unique == actual.Unique &&
+		reflect.DeepEqual(required.PartialFilterExpression, actual.PartialFilterExpression)
 }
 
 // normalizeKey builds an order-preserving string like "field1:1.field2:-1".

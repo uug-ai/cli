@@ -55,7 +55,7 @@ func inspectOrganisationsBackfillAliasedProjectResource(ctx context.Context, dat
 		observeOrganisationsBackfillDocument(&resolution, document)
 		addOrganisationsBackfillSiteOutcome(&resolution, outcome)
 		if config.OrganisationID != "" {
-			addOrganisationsBackfillSiteScopedInventory(&report, outcome)
+			addOrganisationsBackfillSiteScopedInventory(&report, outcome, "")
 		}
 	}
 	sortOrganisationsBackfillConflicts(&resolution)
