@@ -155,6 +155,46 @@ go run . -action check-indexes \
          -index-version migration-hub-alert-ownership-21-08-2026
 ```
 
+Workflows and workflow runs have separate project-scoped resolvers. Definitions
+use canonical `organisationId`, then `organisation_id`, then stable creator
+`user_id` only when both organisation fields are absent. Runs use canonical
+`organisationId`, then legacy tenant `userid`; accidental `user_id` is inventoried
+but never becomes ownership. Explicit projects must belong to the resolved
+organisation. Runs also validate case/media source ownership and database
+workflow ownership when those relationships can be resolved; a missing config
+workflow definition is not a conflict.
+
+The minimum runtime is Hub API PR 532 and hub-workflows PR 58. Cleanup remains
+unverified. Audit the ordered definition and run index families with:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections workflows,workflow_runs \
+         -mode dry-run \
+         -index-version migration-hub-workflow-ownership-26-08-2026
+```
+
+Analysis and detections are also project scoped. Analysis resolves canonical
+`organisationId`, then legacy tenant `userid`, then `user_id`; missing projects
+belong to the resolved organisation's deterministic default project. Detection
+ownership is derived from the matching analysis document by recording `key`,
+and persisted canonical ownership is checked against that trusted source. A
+missing source or ownership mismatch is a conflict rather than guessed from
+workflow, device, or actor fields. The detection writer floor includes Hub
+Pipeline Analysis PR 95, which keeps legacy tolerance limited to the default
+project while requiring exact non-default project matches.
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections analysis,detections \
+         -mode dry-run \
+         -index-version migration-hub-analysis-detection-ownership-27-08-2026
+```
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.
