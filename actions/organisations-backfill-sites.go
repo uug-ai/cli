@@ -27,6 +27,7 @@ type organisationsBackfillProjectResourceOutcome struct {
 	resolvedID           primitive.ObjectID
 	resolved             bool
 	zeroCandidate        bool
+	multipleCandidates   bool
 	orphanOrganisation   bool
 	proposedWrite        bool
 	conflicts            []organisationsBackfillConflict
@@ -303,6 +304,9 @@ func addOrganisationsBackfillSiteOutcome(report *organisationsBackfillResolution
 	if outcome.zeroCandidate {
 		report.ZeroCandidate++
 	}
+	if outcome.multipleCandidates {
+		report.MultipleCandidates++
+	}
 	if outcome.invalidLegacy {
 		report.InvalidLegacy++
 	}
@@ -342,7 +346,7 @@ func addOrganisationsBackfillSiteScopedInventory(report *organisationsBackfillCo
 	if outcome.projectWrong {
 		report.ProjectWrongType++
 	}
-	if outcome.legacyPresent {
+	if outcome.legacyPresent && legacyField != "" {
 		report.LegacyCandidateCount[legacyField]++
 	}
 }

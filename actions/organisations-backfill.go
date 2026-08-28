@@ -18,19 +18,21 @@ import (
 )
 
 const (
-	organisationsBackfillAdapterVersion       = "v1"
-	organisationsBackfillExitOperational      = 1
-	organisationsBackfillExitData             = 2
-	organisationsBackfillExitUsage            = 64
-	organisationsBackfillResolverSubscription = "subscription-user"
-	organisationsBackfillResolverAlert        = "alert-tenant"
-	organisationsBackfillResolverSite         = "site-tenant"
-	organisationsBackfillResolverGroup        = "group-tenant"
-	organisationsBackfillResolverIO           = "io-actor"
-	organisationsBackfillResolverHeatmap      = "heatmap-tenant"
-	organisationsBackfillResolverLabel        = "label-owner"
-	organisationsBackfillResolverCounting     = "counting-source"
-	organisationsBackfillResolverVideowall    = "videowall-tenant"
+	organisationsBackfillAdapterVersion          = "v1"
+	organisationsBackfillExitOperational         = 1
+	organisationsBackfillExitData                = 2
+	organisationsBackfillExitUsage               = 64
+	organisationsBackfillResolverSubscription    = "subscription-user"
+	organisationsBackfillResolverAlert           = "alert-tenant"
+	organisationsBackfillResolverSite            = "site-tenant"
+	organisationsBackfillResolverGroup           = "group-tenant"
+	organisationsBackfillResolverIO              = "io-actor"
+	organisationsBackfillResolverHeatmap         = "heatmap-tenant"
+	organisationsBackfillResolverLabel           = "label-owner"
+	organisationsBackfillResolverCounting        = "counting-source"
+	organisationsBackfillResolverVideowall       = "videowall-tenant"
+	organisationsBackfillResolverMarker          = "marker-media-parent"
+	organisationsBackfillResolverMarkerCanonical = "marker-canonical-only"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -265,6 +267,12 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverVideowall {
 		return inspectOrganisationsBackfillVideowalls(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverMarker {
+		return inspectOrganisationsBackfillMarkers(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverMarkerCanonical {
+		return inspectOrganisationsBackfillMarkerCanonical(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -465,6 +473,26 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased"},
 			MinimumReaderVersions: []string{"hub-api:unreleased"},
 		},
+		"markers": {
+			Collection:            "markers",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"mediaKeys", "mediaIds", "deviceId"},
+			PreservedFields:       []string{"deviceId", "siteId", "groupId", "audit", "metadata"},
+			ResolverKind:          organisationsBackfillResolverMarker,
+			MinimumWriterVersions: []string{"hub-api:unreleased", "ingest:unreleased", "hub-workflows:unreleased"},
+			MinimumReaderVersions: []string{"hub-api:unreleased", "hub-pipeline-sequence:unreleased", "hub-cleanup:unreleased"},
+		},
+		"marker_options":             markerCanonicalAdapter("marker_options", false),
+		"marker_tag_options":         markerCanonicalAdapter("marker_tag_options", false),
+		"marker_event_options":       markerCanonicalAdapter("marker_event_options", false),
+		"marker_category_options":    markerCanonicalAdapter("marker_category_options", false),
+		"marker_option_ranges":       markerCanonicalAdapter("marker_option_ranges", true),
+		"marker_tag_option_ranges":   markerCanonicalAdapter("marker_tag_option_ranges", true),
+		"marker_event_option_ranges": markerCanonicalAdapter("marker_event_option_ranges", true),
 		"sites": {
 			Collection:            "sites",
 			OwnershipScope:        "project-scoped",
@@ -503,6 +531,27 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumReaderVersions: []string{"hub-api:unreleased"},
 		},
 	}
+}
+
+func markerCanonicalAdapter(collection string, lifecycleDerived bool) organisationsBackfillAdapter {
+	adapter := organisationsBackfillAdapter{
+		Collection:            collection,
+		OwnershipScope:        "project-scoped",
+		TargetField:           "organisationId",
+		TargetBSONType:        "string",
+		ProjectField:          "projectId",
+		ProjectBSONType:       "objectId",
+		LegacyCandidates:      []string{},
+		PreservedFields:       []string{"value", "text"},
+		ResolverKind:          organisationsBackfillResolverMarkerCanonical,
+		MinimumWriterVersions: []string{"ingest:unreleased"},
+		MinimumReaderVersions: []string{"hub-api:unreleased", "hub-cleanup:unreleased"},
+	}
+	if lifecycleDerived {
+		adapter.LifecycleStatus = "active"
+		adapter.OperationalUse = "derived-query-projection"
+	}
+	return adapter
 }
 
 func organisationsBackfillBlockedAdapters() map[string]string {
