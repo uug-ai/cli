@@ -35,6 +35,10 @@ const (
 	organisationsBackfillResolverVideowall       = "videowall-tenant"
 	organisationsBackfillResolverMarker          = "marker-media-parent"
 	organisationsBackfillResolverMarkerCanonical = "marker-canonical-only"
+	organisationsBackfillResolverWorkflow        = "workflow-definition"
+	organisationsBackfillResolverWorkflowRun     = "workflow-run"
+	organisationsBackfillResolverAnalysis        = "analysis-tenant"
+	organisationsBackfillResolverDetection       = "detection-source"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -281,6 +285,18 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverMarkerCanonical {
 		return inspectOrganisationsBackfillMarkerCanonical(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverWorkflow {
+		return inspectOrganisationsBackfillWorkflows(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverWorkflowRun {
+		return inspectOrganisationsBackfillWorkflowRuns(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverAnalysis {
+		return inspectOrganisationsBackfillAnalysis(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverDetection {
+		return inspectOrganisationsBackfillDetections(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -396,6 +412,19 @@ func selectOrganisationsBackfillAdapters(collection string, all bool) ([]organis
 
 func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 	return map[string]organisationsBackfillAdapter{
+		"analysis": {
+			Collection:            "analysis",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"userid", "user_id"},
+			PreservedFields:       []string{"userid", "user_id", "key", "deviceid"},
+			ResolverKind:          organisationsBackfillResolverAnalysis,
+			MinimumWriterVersions: []string{"hub-pipeline-analysis:v1.8.6"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-workflow-detection-analysis-project-scope", "hub-pipeline-analysis:v1.8.6"},
+		},
 		"alerts": {
 			Collection:            "alerts",
 			OwnershipScope:        "project-scoped",
@@ -463,6 +492,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			TargetBSONType:   "string",
 			LegacyCandidates: []string{"user_id"},
 			PreservedFields:  []string{"user_id"},
+		},
+		"detections": {
+			Collection:            "detections",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"key"},
+			PreservedFields:       []string{"key", "source.runId", "workflowId", "deviceId"},
+			ResolverKind:          organisationsBackfillResolverDetection,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR534", "hub-pipeline-analysis:unreleased-PR95", "hub-workflows:unreleased-PR58"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR534", "hub-workflows:unreleased-PR58"},
 		},
 		"counting": {
 			Collection:            "counting",
@@ -586,6 +628,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 		},
+		"workflow_runs": {
+			Collection:            "workflow_runs",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"userid", "user_id"},
+			PreservedFields:       []string{"userid", "user_id", "workflowid", "sourceref", "key"},
+			ResolverKind:          organisationsBackfillResolverWorkflowRun,
+			MinimumWriterVersions: []string{"hub-workflows:unreleased-PR58"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR532", "hub-workflows:unreleased-PR58", "hub-cleanup:unverified"},
+		},
 		"videowalls": {
 			Collection:            "videowalls",
 			OwnershipScope:        "project-scoped",
@@ -598,6 +653,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			ResolverKind:          organisationsBackfillResolverVideowall,
 			MinimumWriterVersions: []string{"hub-api:unreleased"},
 			MinimumReaderVersions: []string{"hub-api:unreleased"},
+		},
+		"workflows": {
+			Collection:            "workflows",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"organisation_id", "user_id"},
+			PreservedFields:       []string{"user_id", "userId", "created_by", "updated_by", "audit"},
+			ResolverKind:          organisationsBackfillResolverWorkflow,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR532"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR532", "hub-workflows:unreleased-PR58", "hub-cleanup:unverified"},
 		},
 	}
 }
@@ -625,13 +693,11 @@ func markerCanonicalAdapter(collection string, lifecycleDerived bool) organisati
 
 func organisationsBackfillBlockedAdapters() map[string]string {
 	return map[string]string{
-		"analysis":      "shared model and canonical BSON type are not declared",
 		"channels":      "persistence and ownership contracts are unverified",
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",
 		"settings":      "shared model does not declare a canonical tenant field",
 
-		"workflow_runs": "persisted canonical BSON type is not verified",
 	}
 }
 

@@ -130,10 +130,10 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
 	want := []string{
-		"alerts", "case_attachments", "case_media", "case_shares", "comments", "counting", "devices", "groups", "heatmap", "io", "labels",
+		"alerts", "analysis", "case_attachments", "case_media", "case_shares", "comments", "counting", "detections", "devices", "groups", "heatmap", "io", "labels",
 		"marker_category_options", "marker_event_option_ranges", "marker_event_options",
 		"marker_option_ranges", "marker_options", "marker_tag_option_ranges",
-		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "videowalls",
+		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "videowalls", "workflow_runs", "workflows",
 	}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
@@ -203,6 +203,28 @@ func TestCaseAdaptersDeclareParentDerivedProjectScope(t *testing.T) {
 	comment := organisationsBackfillAdapters()["comments"]
 	if comment.OwnershipScope != "project-scoped-parent-derived" || comment.TargetField != "organisationId" || comment.ResolverKind != organisationsBackfillResolverCaseChild {
 		t.Fatalf("comment ownership scope = %+v", comment)
+	}
+}
+
+func TestWorkflowAdaptersDeclareSeparateResolvers(t *testing.T) {
+	definitions := organisationsBackfillAdapters()["workflows"]
+	if definitions.ResolverKind != organisationsBackfillResolverWorkflow || definitions.ProjectBSONType != "objectId" {
+		t.Fatalf("workflow adapter = %+v", definitions)
+	}
+	runs := organisationsBackfillAdapters()["workflow_runs"]
+	if runs.ResolverKind != organisationsBackfillResolverWorkflowRun || runs.ProjectBSONType != "objectId" {
+		t.Fatalf("workflow run adapter = %+v", runs)
+	}
+}
+
+func TestAnalysisAndDetectionAdaptersDeclareProjectScope(t *testing.T) {
+	analysis := organisationsBackfillAdapters()["analysis"]
+	if analysis.ResolverKind != organisationsBackfillResolverAnalysis || analysis.ProjectBSONType != "objectId" {
+		t.Fatalf("analysis adapter = %+v", analysis)
+	}
+	detections := organisationsBackfillAdapters()["detections"]
+	if detections.ResolverKind != organisationsBackfillResolverDetection || detections.ProjectBSONType != "objectId" {
+		t.Fatalf("detections adapter = %+v", detections)
 	}
 }
 
