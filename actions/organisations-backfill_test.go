@@ -130,10 +130,10 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
 	want := []string{
-		"alerts", "analysis", "counting", "detections", "devices", "groups", "heatmap", "io", "labels",
+		"alerts", "analysis", "case_attachments", "case_media", "case_shares", "comments", "counting", "detections", "devices", "groups", "heatmap", "io", "labels",
 		"marker_category_options", "marker_event_option_ranges", "marker_event_options",
 		"marker_option_ranges", "marker_options", "marker_tag_option_ranges",
-		"marker_tag_options", "markers", "sites", "subscriptions", "videowalls", "workflow_runs", "workflows",
+		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "videowalls", "workflow_runs", "workflows",
 	}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
@@ -183,6 +183,26 @@ func TestIOAdapterDeclaresProjectScopeAndActorFallback(t *testing.T) {
 	}
 	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "user_id" || len(adapter.PreservedFields) != 1 || adapter.PreservedFields[0] != "user_id" {
 		t.Fatalf("IO actor contract = %+v", adapter)
+	}
+}
+
+func TestCaseAdaptersDeclareParentDerivedProjectScope(t *testing.T) {
+	for _, collection := range []string{"case_media", "case_attachments"} {
+		adapter := organisationsBackfillAdapters()[collection]
+		if adapter.OwnershipScope != "project-scoped-parent-derived" || adapter.TargetField != "organisation_id" || adapter.ProjectField != "projectId" || adapter.ResolverKind != organisationsBackfillResolverCaseChild {
+			t.Fatalf("%s ownership scope = %+v", collection, adapter)
+		}
+	}
+	if adapter := organisationsBackfillAdapters()["tasks"]; adapter.ResolverKind != organisationsBackfillResolverTask || adapter.TargetField != "organisationId" {
+		t.Fatalf("task ownership scope = %+v", adapter)
+	}
+	share := organisationsBackfillAdapters()["case_shares"]
+	if share.OwnershipScope != "project-scoped-parent-derived-capability" || share.TargetField != "organisation_id" || share.ResolverKind != organisationsBackfillResolverCaseChild {
+		t.Fatalf("case share ownership scope = %+v", share)
+	}
+	comment := organisationsBackfillAdapters()["comments"]
+	if comment.OwnershipScope != "project-scoped-parent-derived" || comment.TargetField != "organisationId" || comment.ResolverKind != organisationsBackfillResolverCaseChild {
+		t.Fatalf("comment ownership scope = %+v", comment)
 	}
 }
 

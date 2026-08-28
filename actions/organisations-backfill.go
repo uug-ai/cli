@@ -18,15 +18,17 @@ import (
 )
 
 const (
-	organisationsBackfillAdapterVersion       = "v1"
-	organisationsBackfillExitOperational      = 1
-	organisationsBackfillExitData             = 2
-	organisationsBackfillExitUsage            = 64
-	organisationsBackfillResolverSubscription = "subscription-user"
-	organisationsBackfillResolverAlert        = "alert-tenant"
-	organisationsBackfillResolverSite         = "site-tenant"
-	organisationsBackfillResolverGroup        = "group-tenant"
-	organisationsBackfillResolverIO           = "io-actor"
+	organisationsBackfillAdapterVersion          = "v1"
+	organisationsBackfillExitOperational         = 1
+	organisationsBackfillExitData                = 2
+	organisationsBackfillExitUsage               = 64
+	organisationsBackfillResolverSubscription    = "subscription-user"
+	organisationsBackfillResolverAlert           = "alert-tenant"
+	organisationsBackfillResolverSite            = "site-tenant"
+	organisationsBackfillResolverGroup           = "group-tenant"
+	organisationsBackfillResolverIO              = "io-actor"
+	organisationsBackfillResolverTask            = "task-tenant"
+	organisationsBackfillResolverCaseChild       = "case-parent"
 	organisationsBackfillResolverHeatmap         = "heatmap-tenant"
 	organisationsBackfillResolverLabel           = "label-owner"
 	organisationsBackfillResolverCounting        = "counting-source"
@@ -259,6 +261,12 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverIO {
 		return inspectOrganisationsBackfillIO(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverTask {
+		return inspectOrganisationsBackfillTasks(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverCaseChild {
+		return inspectOrganisationsBackfillCaseChildren(ctx, database, adapter, config, report)
+	}
 	if adapter.ResolverKind == organisationsBackfillResolverHeatmap {
 		return inspectOrganisationsBackfillHeatmap(ctx, database, adapter, config, report)
 	}
@@ -430,6 +438,54 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR514", "hub-pipeline-notification:unreleased-PR116", "hub-pipeline-analysis:unreleased-PR91"},
 		},
+		"case_attachments": {
+			Collection:            "case_attachments",
+			OwnershipScope:        "project-scoped-parent-derived",
+			TargetField:           "organisation_id",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"created_by"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+		},
+		"case_media": {
+			Collection:            "case_media",
+			OwnershipScope:        "project-scoped-parent-derived",
+			TargetField:           "organisation_id",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"created_by", "source_media_id", "origin_attachment_id"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+		},
+		"case_shares": {
+			Collection:            "case_shares",
+			OwnershipScope:        "project-scoped-parent-derived-capability",
+			TargetField:           "organisation_id",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"user_id", "user_email", "email", "token"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR528"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR528"},
+		},
+		"comments": {
+			Collection:            "comments",
+			OwnershipScope:        "project-scoped-parent-derived",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"user_id", "author"},
+			ResolverKind:          organisationsBackfillResolverCaseChild,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR529"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR529"},
+		},
 		"devices": {
 			Collection:       "devices",
 			TargetField:      "organisationId",
@@ -559,6 +615,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:v1.9.58"},
 			MinimumReaderVersions: []string{"hub-api:v1.9.58", "hub-pipeline-monitor:v1.3.14", "hub-cleanup:v1.4.19", "cli:v1.2.23", "hub-monitor-device:unreleased-PR22"},
 		},
+		"tasks": {
+			Collection:            "tasks",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"user_id"},
+			PreservedFields:       []string{"reporter_id", "assignees"},
+			ResolverKind:          organisationsBackfillResolverTask,
+			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+		},
 		"workflow_runs": {
 			Collection:            "workflow_runs",
 			OwnershipScope:        "project-scoped",
@@ -628,7 +697,7 @@ func organisationsBackfillBlockedAdapters() map[string]string {
 		"notifications": "shape-specific canonical models and writers are missing",
 		"sequences":     "shared model and canonical BSON type are not declared",
 		"settings":      "shared model does not declare a canonical tenant field",
-		"tasks":         "shared model and canonical BSON type are not declared",
+
 	}
 }
 
