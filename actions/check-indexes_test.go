@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -78,6 +79,21 @@ func TestExtractUnique(t *testing.T) {
 	}
 	if extractUnique("{ v: 2, key: { slug: 1 }, name: 'slug_1' }") != false {
 		t.Fatal("absent unique reported as true")
+	}
+}
+
+func TestIndexSpecMatchesOptions(t *testing.T) {
+	keys := bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}}
+	partial := bson.M{"projectId": bson.M{"$type": "objectId"}}
+	required := IndexSpec{Key: keys, Unique: true, PartialFilterExpression: partial}
+	if !indexSpecMatches(required, IndexSpec{Key: keys, Unique: true, PartialFilterExpression: partial}) {
+		t.Fatal("exact index contract did not match")
+	}
+	if indexSpecMatches(required, IndexSpec{Key: keys, PartialFilterExpression: partial}) {
+		t.Fatal("non-unique index satisfied unique contract")
+	}
+	if indexSpecMatches(required, IndexSpec{Key: keys, Unique: true}) {
+		t.Fatal("full index satisfied partial contract")
 	}
 }
 
@@ -334,6 +350,42 @@ func TestDeviceScopeIndexFileDeclaresCanonicalAndLegacyContracts(t *testing.T) {
 	}}
 	if got := canonical["users"]; !reflect.DeepEqual(got, wantUsers) {
 		t.Fatalf("cloud-key user indexes = %#v, want %#v", got, wantUsers)
+	}
+}
+
+func TestMarkerOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-marker-ownership-27-08-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+
+	wantCollections := []string{
+		"marker_category_options", "marker_event_option_ranges", "marker_event_options",
+		"marker_option_ranges", "marker_options", "marker_tag_option_ranges",
+		"marker_tag_options", "markers",
+	}
+	gotCollections := make([]string, 0, len(canonical))
+	for collection := range canonical {
+		gotCollections = append(gotCollections, collection)
+	}
+	sort.Strings(gotCollections)
+	if !reflect.DeepEqual(gotCollections, wantCollections) {
+		t.Fatalf("marker index collections = %#v, want %#v", gotCollections, wantCollections)
+	}
+
+	markerSpecs := canonical["markers"]
+	if len(markerSpecs) != 4 || normalizeKey(markerSpecs[0].Key) != "organisationId:1.projectId:1.startTimestamp:-1._id:-1" || normalizeKey(markerSpecs[3].Key) != "organisationId:1.projectId:1.deviceId:1.startTimestamp:1" {
+		t.Fatalf("marker index specs = %#v", markerSpecs)
+	}
+	for _, collection := range []string{"marker_options", "marker_tag_options", "marker_event_options", "marker_category_options"} {
+		specs := canonical[collection]
+		if len(specs) != 2 || !specs[0].Unique || normalizeKey(specs[0].Key) != "organisationId:1.projectId:1.value:1" || normalizeKey(specs[1].Key) != "organisationId:1.projectId:1.updatedAt:-1._id:-1" {
+			t.Fatalf("%s index specs = %#v", collection, specs)
+		}
+	}
+	if specs := canonical["marker_option_ranges"]; len(specs) != 4 || normalizeKey(specs[2].Key) != "organisationId:1.projectId:1.value:1.deviceKey:1.start:1.end:1" {
+		t.Fatalf("marker range index specs = %#v", specs)
 	}
 }
 

@@ -129,7 +129,12 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
-	want := []string{"alerts", "case_attachments", "case_media", "case_shares", "comments", "counting", "devices", "groups", "heatmap", "io", "labels", "sites", "subscriptions", "tasks", "videowalls"}
+	want := []string{
+		"alerts", "case_attachments", "case_media", "case_shares", "comments", "counting", "devices", "groups", "heatmap", "io", "labels",
+		"marker_category_options", "marker_event_option_ranges", "marker_event_options",
+		"marker_option_ranges", "marker_options", "marker_tag_option_ranges",
+		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "videowalls",
+	}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
 	}
