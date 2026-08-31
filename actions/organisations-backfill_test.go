@@ -130,7 +130,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 		t.Fatalf("selectOrganisationsBackfillAdapters() error = %v", err)
 	}
 	want := []string{
-		"alerts", "analysis", "case_attachments", "case_media", "case_shares", "comments", "counting", "detections", "devices", "groups", "heatmap", "io", "labels",
+		"alerts", "analysis", "audit_events", "case_attachments", "case_media", "case_shares", "comments", "counting", "detections", "devices", "groups", "heatmap", "io", "labels",
 		"marker_category_options", "marker_event_option_ranges", "marker_event_options",
 		"marker_option_ranges", "marker_options", "marker_tag_option_ranges",
 		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "videowalls", "workflow_runs", "workflows",
