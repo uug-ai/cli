@@ -257,7 +257,7 @@ func TestTokensAdapterDeclaresProjectScopeAndPreservedCredentials(t *testing.T) 
 	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" || adapter.ResolverKind != organisationsBackfillResolverToken {
 		t.Fatalf("token ownership scope = %+v", adapter)
 	}
-	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "userId" || len(adapter.MinimumReaderVersions) != 1 || adapter.MinimumReaderVersions[0] != "hub-api:unreleased-PR530" {
+	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "userId" || len(adapter.MinimumReaderVersions) != 1 || adapter.MinimumReaderVersions[0] != "hub-api:v1.9.63" {
 		t.Fatalf("token adapter contract = %+v", adapter)
 	}
 	preserved := strings.Join(adapter.PreservedFields, ",")

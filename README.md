@@ -142,7 +142,7 @@ explicit projects must belong to that organisation. Token credentials, scopes,
 expiration, and audit provenance are preserved. The read-only report includes
 optional normalization writes, observed shapes, conflicts, and ordered
 `{organisationId, projectId, _id}`, `{userId, projectId, _id}`, and `{_id}`
-index contracts. Runtime requires Hub API PR 530 or later.
+index contracts. Runtime requires Hub API v1.9.63 or later.
 
 Use `-organisation-id` with `-collection tokens` for a scoped canary. The
 canary includes canonical tokens and canonical-missing tokens whose stable

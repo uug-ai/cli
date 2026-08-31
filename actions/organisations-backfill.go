@@ -642,8 +642,8 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			LegacyCandidates:      []string{"userId"},
 			PreservedFields:       []string{"name", "description", "expiration", "scopes", "token", "userId", "audit"},
 			ResolverKind:          organisationsBackfillResolverToken,
-			MinimumWriterVersions: []string{"hub-api:unreleased-PR530"},
-			MinimumReaderVersions: []string{"hub-api:unreleased-PR530"},
+			MinimumWriterVersions: []string{"hub-api:v1.9.63"},
+			MinimumReaderVersions: []string{"hub-api:v1.9.63"},
 		},
 		"workflow_runs": {
 			Collection:            "workflow_runs",
