@@ -21,7 +21,7 @@ func TestInspectOrganisationsBackfillWorkflowRunsIsReadOnly(t *testing.T) {
 			mtest.CreateCursorResponse(0, runNamespace, mtest.FirstBatch, bson.D{{Key: "_id", Value: runID}, {Key: "userid", Value: organisationID.Hex()}, {Key: "key", Value: "media-1"}, {Key: "workflowid", Value: "config-workflow"}}),
 			mtest.CreateCursorResponse(0, organisationNamespace, mtest.FirstBatch, bson.D{{Key: "_id", Value: organisationID}}),
 			mtest.CreateCursorResponse(0, mediaNamespace, mtest.FirstBatch, bson.D{{Key: "key", Value: "media-1"}, {Key: "organisationId", Value: organisationID.Hex()}}),
-			mtest.CreateCursorResponse(0, runNamespace, mtest.FirstBatch, bson.D{{Key: "name", Value: "organisationId_1_projectId_1_key_1"}, {Key: "key", Value: bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "key", Value: int32(1)}}}}),
+			mtest.CreateCursorResponse(0, runNamespace, mtest.FirstBatch, bson.D{{Key: "name", Value: "organisationId_1_projectId_1_sourceref_1_origin_1_start_-1"}, {Key: "key", Value: bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "sourceref", Value: int32(1)}, {Key: "origin", Value: int32(1)}, {Key: "start", Value: int32(-1)}}}}),
 		)
 		report, err := inspectOrganisationsBackfillWorkflowRuns(context.Background(), mt.DB, organisationsBackfillAdapters()["workflow_runs"], OrganisationsBackfillConfig{BatchSize: 500}, organisationsBackfillCollection{LegacyCandidateCount: map[string]int64{"userid": 1, "user_id": 0}})
 		if err != nil {
@@ -30,7 +30,7 @@ func TestInspectOrganisationsBackfillWorkflowRunsIsReadOnly(t *testing.T) {
 		if report.Resolution == nil || report.Resolution.Resolved != 1 || report.Resolution.ProjectResolved != 1 || report.Resolution.Conflicts != 0 {
 			mt.Fatalf("resolution = %+v", report.Resolution)
 		}
-		if len(report.IndexContracts) != 4 || report.IndexContracts[2].Status != "exact" {
+		if len(report.IndexContracts) != 8 || report.IndexContracts[0].Status != "exact" {
 			mt.Fatalf("index contracts = %+v", report.IndexContracts)
 		}
 		assertOrganisationsBackfillReadOnlyCommands(mt)
