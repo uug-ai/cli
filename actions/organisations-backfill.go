@@ -39,6 +39,7 @@ const (
 	organisationsBackfillResolverWorkflowRun     = "workflow-run"
 	organisationsBackfillResolverAnalysis        = "analysis-tenant"
 	organisationsBackfillResolverDetection       = "detection-source"
+	organisationsBackfillResolverToken           = "access-token-creator"
 	organisationsBackfillResolverAuditEvents     = "audit-event-target"
 )
 
@@ -299,6 +300,9 @@ func inspectOrganisationsBackfillAdapter(
 	}
 	if adapter.ResolverKind == organisationsBackfillResolverDetection {
 		return inspectOrganisationsBackfillDetections(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverToken {
+		return inspectOrganisationsBackfillTokens(ctx, database, adapter, config, report)
 	}
 	if adapter.ResolverKind == organisationsBackfillResolverAuditEvents {
 		return inspectOrganisationsBackfillAuditEvents(ctx, database, adapter, config, report)
@@ -645,6 +649,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			ResolverKind:          organisationsBackfillResolverTask,
 			MinimumWriterVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-PR526", "hub-pipeline-export:unreleased-PR30"},
+		},
+		"tokens": {
+			Collection:            "tokens",
+			OwnershipScope:        "project-scoped",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"userId"},
+			PreservedFields:       []string{"name", "description", "expiration", "scopes", "token", "userId", "audit"},
+			ResolverKind:          organisationsBackfillResolverToken,
+			MinimumWriterVersions: []string{"hub-api:v1.9.63"},
+			MinimumReaderVersions: []string{"hub-api:v1.9.63"},
 		},
 		"workflow_runs": {
 			Collection:            "workflow_runs",

@@ -133,7 +133,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 		"alerts", "analysis", "audit_events", "case_attachments", "case_media", "case_shares", "comments", "counting", "detections", "devices", "groups", "heatmap", "io", "labels",
 		"marker_category_options", "marker_event_option_ranges", "marker_event_options",
 		"marker_option_ranges", "marker_options", "marker_tag_option_ranges",
-		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "videowalls", "workflow_runs", "workflows",
+		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "tokens", "videowalls", "workflow_runs", "workflows",
 	}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
@@ -249,6 +249,22 @@ func TestVideowallAdapterDeclaresTenantOwnership(t *testing.T) {
 	adapter := organisationsBackfillAdapters()["videowalls"]
 	if adapter.ResolverKind != organisationsBackfillResolverVideowall || len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "master_user_id" {
 		t.Fatalf("videowall ownership contract = %+v", adapter)
+	}
+}
+
+func TestTokensAdapterDeclaresProjectScopeAndPreservedCredentials(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["tokens"]
+	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" || adapter.ResolverKind != organisationsBackfillResolverToken {
+		t.Fatalf("token ownership scope = %+v", adapter)
+	}
+	if len(adapter.LegacyCandidates) != 1 || adapter.LegacyCandidates[0] != "userId" || len(adapter.MinimumReaderVersions) != 1 || adapter.MinimumReaderVersions[0] != "hub-api:v1.9.63" {
+		t.Fatalf("token adapter contract = %+v", adapter)
+	}
+	preserved := strings.Join(adapter.PreservedFields, ",")
+	for _, field := range []string{"name", "description", "token", "scopes", "expiration", "userId", "audit"} {
+		if !strings.Contains(preserved, field) {
+			t.Fatalf("token preserved fields %q do not include %q", preserved, field)
+		}
 	}
 }
 
