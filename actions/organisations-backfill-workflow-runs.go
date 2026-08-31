@@ -289,9 +289,13 @@ func validateOrganisationsBackfillRelatedOwnership(resource *organisationsBackfi
 func inspectOrganisationsBackfillWorkflowRunIndexes(ctx context.Context, collection *mongo.Collection) ([]organisationsBackfillIndexContract, error) {
 	return inspectOrganisationsBackfillOrderedIndexes(ctx, collection, []organisationsBackfillIndexContract{
 		organisationsBackfillNewIndexContract("canonical-status", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "sourceref", Value: int32(1)}, {Key: "origin", Value: int32(1)}, {Key: "start", Value: int32(-1)}}),
-		organisationsBackfillNewIndexContract("legacy-userid-status-rollback", bson.D{{Key: "userid", Value: int32(1)}, {Key: "sourceref", Value: int32(1)}, {Key: "origin", Value: int32(1)}, {Key: "start", Value: int32(-1)}}),
-		organisationsBackfillNewIndexContract("canonical-grouping", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "key", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("legacy-userid-grouping", bson.D{{Key: "userid", Value: int32(1)}, {Key: "key", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("legacy-userid-status", bson.D{{Key: "userid", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "sourceref", Value: int32(1)}, {Key: "origin", Value: int32(1)}, {Key: "start", Value: int32(-1)}}),
+		organisationsBackfillNewIndexContract("canonical-recording-retention", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "recordingtimestamp", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("canonical-start-retention", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "start", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("legacy-userid-recording-retention", bson.D{{Key: "userid", Value: int32(1)}, {Key: "recordingtimestamp", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("legacy-userid-start-retention", bson.D{{Key: "userid", Value: int32(1)}, {Key: "start", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("global-recording-retention", bson.D{{Key: "recordingtimestamp", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("global-start-retention", bson.D{{Key: "start", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
 	})
 }
 

@@ -11,7 +11,11 @@ workflows
 workflow_runs
 [
   { v: 2, key: { organisationId: 1, projectId: 1, sourceref: 1, origin: 1, start: -1 }, name: 'organisationId_1_projectId_1_sourceref_1_origin_1_start_-1' },
-  { v: 2, key: { userid: 1, sourceref: 1, origin: 1, start: -1 }, name: 'userid_1_sourceref_1_origin_1_start_-1' },
-  { v: 2, key: { organisationId: 1, projectId: 1, key: 1 }, name: 'organisationId_1_projectId_1_key_1' },
-  { v: 2, key: { userid: 1, key: 1 }, name: 'userid_1_key_1' },
+  { v: 2, key: { userid: 1, projectId: 1, sourceref: 1, origin: 1, start: -1 }, name: 'userid_1_projectId_1_sourceref_1_origin_1_start_-1' },
+  { v: 2, key: { organisationId: 1, recordingtimestamp: 1, _id: 1 }, name: 'organisationId_1_recordingtimestamp_1__id_1' },
+  { v: 2, key: { organisationId: 1, start: 1, _id: 1 }, name: 'organisationId_1_start_1__id_1' },
+  { v: 2, key: { userid: 1, recordingtimestamp: 1, _id: 1 }, name: 'userid_1_recordingtimestamp_1__id_1' },
+  { v: 2, key: { userid: 1, start: 1, _id: 1 }, name: 'userid_1_start_1__id_1' },
+  { v: 2, key: { recordingtimestamp: 1, _id: 1 }, name: 'recordingtimestamp_1__id_1' },
+  { v: 2, key: { start: 1, _id: 1 }, name: 'start_1__id_1' },
 ]

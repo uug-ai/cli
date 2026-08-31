@@ -189,8 +189,12 @@ organisation. Runs also validate case/media source ownership and database
 workflow ownership when those relationships can be resolved; a missing config
 workflow definition is not a conflict.
 
-The minimum runtime is Hub API PR 532 and hub-workflows PR 58. Cleanup remains
-unverified. Audit the ordered definition and run index families with:
+Workflow-run project stamping starts at hub-workflows v1.0.25. The complete
+reader floor is Hub API PR 557, hub-workflows PR 61, and Hub Cleanup PR 44.
+The run adapter reports the active project-scoped status query plus canonical,
+legacy, and global recording/start retention indexes; obsolete grouping indexes
+are no longer part of the contract. Audit the ordered definition and run index
+families with:
 
 ```sh
 go run . -action check-indexes \

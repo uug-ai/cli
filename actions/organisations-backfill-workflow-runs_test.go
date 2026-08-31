@@ -1,11 +1,26 @@
 package actions
 
 import (
+	"reflect"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+func TestWorkflowRunAdapterUsesStableLegacyOwnerAndRuntimeFloors(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["workflow_runs"]
+	if !reflect.DeepEqual(adapter.LegacyCandidates, []string{"userid"}) {
+		t.Fatalf("workflow run legacy ownership = %#v", adapter.LegacyCandidates)
+	}
+	if !reflect.DeepEqual(adapter.MinimumWriterVersions, []string{"hub-workflows:v1.0.25"}) {
+		t.Fatalf("workflow run writer floors = %#v", adapter.MinimumWriterVersions)
+	}
+	wantReaders := []string{"hub-api:unreleased-PR557", "hub-workflows:unreleased-PR61", "hub-cleanup:unreleased-PR44"}
+	if !reflect.DeepEqual(adapter.MinimumReaderVersions, wantReaders) {
+		t.Fatalf("workflow run reader floors = %#v, want %#v", adapter.MinimumReaderVersions, wantReaders)
+	}
+}
 
 func TestResolveOrganisationsBackfillWorkflowRunRelationships(t *testing.T) {
 	organisationID := primitive.NewObjectID()
