@@ -40,6 +40,7 @@ const (
 	organisationsBackfillResolverAnalysis        = "analysis-tenant"
 	organisationsBackfillResolverDetection       = "detection-source"
 	organisationsBackfillResolverToken           = "access-token-creator"
+	organisationsBackfillResolverAuditEvents     = "audit-event-target"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -102,31 +103,32 @@ type organisationsBackfillScope struct {
 }
 
 type organisationsBackfillCollection struct {
-	OwnershipScope        string                               `json:"ownershipScope"`
-	TargetField           string                               `json:"targetField"`
-	TargetBSONType        string                               `json:"targetBsonType"`
-	ProjectField          string                               `json:"projectField,omitempty"`
-	ProjectBSONType       string                               `json:"projectBsonType,omitempty"`
-	LegacyCandidates      []string                             `json:"legacyCandidates"`
-	PreservedFields       []string                             `json:"preservedFields"`
-	ResolverKind          string                               `json:"resolverKind,omitempty"`
-	LifecycleStatus       string                               `json:"lifecycleStatus,omitempty"`
-	OperationalUse        string                               `json:"operationalUse,omitempty"`
-	MinimumWriterVersions []string                             `json:"minimumWriterVersions,omitempty"`
-	MinimumReaderVersions []string                             `json:"minimumReaderVersions,omitempty"`
-	Total                 int64                                `json:"total"`
-	CanonicalPresent      int64                                `json:"canonicalPresent"`
-	CanonicalMissing      int64                                `json:"canonicalMissing"`
-	CanonicalWrongType    int64                                `json:"canonicalWrongType"`
-	CanonicalInvalidHex   int64                                `json:"canonicalInvalidHex"`
-	ProjectPresent        int64                                `json:"projectPresent,omitempty"`
-	ProjectMissing        int64                                `json:"projectMissing,omitempty"`
-	ProjectWrongType      int64                                `json:"projectWrongType,omitempty"`
-	LegacyCandidateCount  map[string]int64                     `json:"legacyCandidateCount"`
-	Indexes               []string                             `json:"indexes"`
-	TargetIndexCovered    bool                                 `json:"targetIndexCovered"`
-	IndexContracts        []organisationsBackfillIndexContract `json:"indexContracts,omitempty"`
-	Resolution            *organisationsBackfillResolution     `json:"resolution,omitempty"`
+	OwnershipScope        string                                     `json:"ownershipScope"`
+	TargetField           string                                     `json:"targetField"`
+	TargetBSONType        string                                     `json:"targetBsonType"`
+	ProjectField          string                                     `json:"projectField,omitempty"`
+	ProjectBSONType       string                                     `json:"projectBsonType,omitempty"`
+	LegacyCandidates      []string                                   `json:"legacyCandidates"`
+	PreservedFields       []string                                   `json:"preservedFields"`
+	ResolverKind          string                                     `json:"resolverKind,omitempty"`
+	LifecycleStatus       string                                     `json:"lifecycleStatus,omitempty"`
+	OperationalUse        string                                     `json:"operationalUse,omitempty"`
+	MinimumWriterVersions []string                                   `json:"minimumWriterVersions,omitempty"`
+	MinimumReaderVersions []string                                   `json:"minimumReaderVersions,omitempty"`
+	Total                 int64                                      `json:"total"`
+	CanonicalPresent      int64                                      `json:"canonicalPresent"`
+	CanonicalMissing      int64                                      `json:"canonicalMissing"`
+	CanonicalWrongType    int64                                      `json:"canonicalWrongType"`
+	CanonicalInvalidHex   int64                                      `json:"canonicalInvalidHex"`
+	ProjectPresent        int64                                      `json:"projectPresent,omitempty"`
+	ProjectMissing        int64                                      `json:"projectMissing,omitempty"`
+	ProjectWrongType      int64                                      `json:"projectWrongType,omitempty"`
+	LegacyCandidateCount  map[string]int64                           `json:"legacyCandidateCount"`
+	Indexes               []string                                   `json:"indexes"`
+	TargetIndexCovered    bool                                       `json:"targetIndexCovered"`
+	IndexContracts        []organisationsBackfillIndexContract       `json:"indexContracts,omitempty"`
+	Resolution            *organisationsBackfillResolution           `json:"resolution,omitempty"`
+	AuditEventResolution  *organisationsBackfillAuditEventResolution `json:"auditEventResolution,omitempty"`
 }
 
 type organisationsBackfillError struct {
@@ -217,7 +219,8 @@ func OrganisationsBackfill(config OrganisationsBackfillConfig) error {
 			return &organisationsBackfillError{code: organisationsBackfillExitOperational, err: fmt.Errorf("inspect %s: %w", adapter.Collection, err)}
 		}
 		if collectionReport.CanonicalWrongType > 0 || collectionReport.CanonicalInvalidHex > 0 || collectionReport.ProjectWrongType > 0 ||
-			(collectionReport.Resolution != nil && collectionReport.Resolution.Conflicts > 0) {
+			(collectionReport.Resolution != nil && collectionReport.Resolution.Conflicts > 0) ||
+			(collectionReport.AuditEventResolution != nil && collectionReport.AuditEventResolution.Conflicts > 0) {
 			hasDataConflict = true
 			report.PreflightStatus = "blocked"
 		}
@@ -300,6 +303,9 @@ func inspectOrganisationsBackfillAdapter(
 	}
 	if adapter.ResolverKind == organisationsBackfillResolverToken {
 		return inspectOrganisationsBackfillTokens(ctx, database, adapter, config, report)
+	}
+	if adapter.ResolverKind == organisationsBackfillResolverAuditEvents {
+		return inspectOrganisationsBackfillAuditEvents(ctx, database, adapter, config, report)
 	}
 	return report, nil
 }
@@ -428,6 +434,18 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			ResolverKind:          organisationsBackfillResolverAnalysis,
 			MinimumWriterVersions: []string{"hub-pipeline-analysis:v1.8.6"},
 			MinimumReaderVersions: []string{"hub-api:unreleased-workflow-detection-analysis-project-scope", "hub-pipeline-analysis:v1.8.6"},
+		},
+		"audit_events": {
+			Collection:            "audit_events",
+			OwnershipScope:        "organisation-owned-with-optional-project-context",
+			TargetField:           "organisationId",
+			TargetBSONType:        "objectId",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			PreservedFields:       []string{"actorId", "actorName", "metadata"},
+			ResolverKind:          organisationsBackfillResolverAuditEvents,
+			MinimumWriterVersions: []string{"models:unreleased-PR228", "hub-api:unreleased-PR531", "hub-pipeline-notification:unreleased-PR122"},
+			MinimumReaderVersions: []string{"hub-api:unreleased-PR531"},
 		},
 		"alerts": {
 			Collection:            "alerts",

@@ -220,6 +220,21 @@ go run . -action check-indexes \
          -index-version migration-hub-analysis-detection-ownership-27-08-2026
 ```
 
+`audit_events` requires canonical BSON ObjectID `organisationId` and treats
+`actorId` only as provenance. Organisation, membership, role, subscription,
+and user actions remain organisation-only. Case, workflow, device, media, and
+notification actions resolve project context from their authoritative target;
+notification events may resolve through their referenced media source. Missing
+or deleted targets, unknown action/target combinations, malformed metadata, and
+target/source ownership disagreements are conflicts. A valid agreeing
+`metadata.projectId` is evidence only. The report proposes only optional
+`projectId` writes and never proposes organisation ownership from an actor.
+
+The adapter reports BSON field types/shapes and exact ordered coverage for
+`{organisationId,timestamp:-1}`, `{organisationId,actorId,timestamp:-1}`,
+`{organisationId,targetType,targetId,timestamp:-1}`, and
+`{organisationId,projectId,timestamp:-1}`.
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.
