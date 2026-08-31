@@ -38,6 +38,13 @@ func TestAuditEventTargetOwnershipRequiresCanonicalPair(t *testing.T) {
 	}
 }
 
+func TestAuditEventTargetIDPreservesCase(t *testing.T) {
+	document := organisationsBackfillTestRaw(t, bson.D{{Key: "targetId", Value: "Camera/ABC-123"}})
+	if got := rawString(document, "targetId"); got != "Camera/ABC-123" {
+		t.Fatalf("targetId = %q", got)
+	}
+}
+
 func TestResolveOrganisationsBackfillAuditEventDoesNotUseActorOwnership(t *testing.T) {
 	resolution := organisationsBackfillAuditEventResolution{ObservedFieldTypes: map[string]map[string]int64{}, ObservedShapes: map[string]int64{}}
 	resolveOrganisationsBackfillAuditEvent(context.Background(), nil, organisationsBackfillTestRaw(t, bson.D{

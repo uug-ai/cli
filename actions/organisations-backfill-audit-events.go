@@ -103,7 +103,7 @@ func resolveOrganisationsBackfillAuditEvent(ctx context.Context, database *mongo
 	resolution.Scanned++
 	documentID := organisationsBackfillDocumentID(document)
 	targetType := auditString(document, "targetType")
-	targetID := auditString(document, "targetId")
+	targetID := rawString(document, "targetId")
 	action := auditString(document, "action")
 	eventOrganisation, organisationState := organisationsBootstrapObjectID(document, "organisationId")
 	if organisationState != organisationsBootstrapFieldValue {
