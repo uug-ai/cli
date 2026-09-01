@@ -239,19 +239,6 @@ media
     key: { organisationId: 1, deviceKey: 1, startTimestamp: -1, _id: -1 },
     name: 'organisationId_1_deviceKey_1_startTimestamp_-1__id_-1'
   },
-  {
-    v: 2,
-    key: {
-      organisationId: 1,
-      markerNames: 1,
-      deviceKey: 1,
-      startTimestamp: 1,
-      endTimestamp: 1,
-      tagNames: 1,
-      eventNames: 1
-    },
-    name: 'organisationId_1_markerNames_1_deviceKey_1_startTimestamp_1_endTimestamp_1_tagNames_1_eventNames_1'
-  }
 ]
 alerts
 [
