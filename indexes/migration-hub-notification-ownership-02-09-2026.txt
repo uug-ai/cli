@@ -1,0 +1,10 @@
+notifications
+[
+  { v: 2, key: { user_id: 1 }, name: 'user_id_1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, timestamp: -1 }, name: 'organisationId_1_projectId_1_timestamp_-1' },
+  { v: 2, key: { alert_master_user: 1, projectId: 1, timestamp: -1 }, name: 'alert_master_user_1_projectId_1_timestamp_-1' },
+  { v: 2, key: { userid: 1, projectId: 1, timestamp: -1 }, name: 'userid_1_projectId_1_timestamp_-1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, userid: 1, media_key: 1 }, name: 'organisationId_1_projectId_1_userid_1_media_key_1' },
+  { v: 2, key: { alert_master_user: 1, projectId: 1, userid: 1, media_key: 1 }, name: 'alert_master_user_1_projectId_1_userid_1_media_key_1' },
+  { v: 2, key: { timestamp: 1 }, name: 'timestamp_1' },
+]

@@ -41,6 +41,7 @@ const (
 	organisationsBackfillResolverDetection       = "detection-source"
 	organisationsBackfillResolverToken           = "access-token-creator"
 	organisationsBackfillResolverAuditEvents     = "audit-event-target"
+	organisationsBackfillResolverNotification    = "notification-shape"
 )
 
 type OrganisationsBackfillConfig struct {
@@ -129,6 +130,7 @@ type organisationsBackfillCollection struct {
 	IndexContracts        []organisationsBackfillIndexContract       `json:"indexContracts,omitempty"`
 	Resolution            *organisationsBackfillResolution           `json:"resolution,omitempty"`
 	AuditEventResolution  *organisationsBackfillAuditEventResolution `json:"auditEventResolution,omitempty"`
+	NotificationShapes    *organisationsBackfillNotificationShapes   `json:"notificationShapes,omitempty"`
 }
 
 type organisationsBackfillError struct {
@@ -307,6 +309,9 @@ func inspectOrganisationsBackfillAdapter(
 	if adapter.ResolverKind == organisationsBackfillResolverAuditEvents {
 		return inspectOrganisationsBackfillAuditEvents(ctx, database, adapter, config, report)
 	}
+	if adapter.ResolverKind == organisationsBackfillResolverNotification {
+		return inspectOrganisationsBackfillNotifications(ctx, database, adapter, config, report)
+	}
 	return report, nil
 }
 
@@ -413,6 +418,9 @@ func selectOrganisationsBackfillAdapters(collection string, all bool) ([]organis
 	}
 	if adapter, ok := registry[collection]; ok {
 		return []organisationsBackfillAdapter{adapter}, nil
+	}
+	if reason, excluded := organisationsBackfillExcludedAdapters()[collection]; excluded {
+		return nil, fmt.Errorf("collection %q is excluded: %s", collection, reason)
 	}
 	if reason, blocked := organisationsBackfillBlockedAdapters()[collection]; blocked {
 		return nil, fmt.Errorf("collection %q is blocked: %s", collection, reason)
@@ -606,6 +614,19 @@ func organisationsBackfillAdapters() map[string]organisationsBackfillAdapter {
 			MinimumWriterVersions: []string{"hub-api:unreleased", "ingest:unreleased", "hub-workflows:unreleased"},
 			MinimumReaderVersions: []string{"hub-api:unreleased", "hub-pipeline-sequence:unreleased", "hub-cleanup:unreleased"},
 		},
+		"notifications": {
+			Collection:            "notifications",
+			OwnershipScope:        "mixed-personal-mailbox-and-project-scoped-flat-event",
+			TargetField:           "organisationId",
+			TargetBSONType:        "string",
+			ProjectField:          "projectId",
+			ProjectBSONType:       "objectId",
+			LegacyCandidates:      []string{"alert_master_user", "userid"},
+			PreservedFields:       []string{"user_id", "userid", "alert_user", "email", "data"},
+			ResolverKind:          organisationsBackfillResolverNotification,
+			MinimumWriterVersions: []string{"hub-pipeline-notification:v1.3.22"},
+			MinimumReaderVersions: []string{"hub-api:v1.9.61", "hub-pipeline-notification:v1.3.22", "hub-cleanup:v1.4.20"},
+		},
 		"marker_options":             markerCanonicalAdapter("marker_options", false),
 		"marker_tag_options":         markerCanonicalAdapter("marker_tag_options", false),
 		"marker_event_options":       markerCanonicalAdapter("marker_event_options", false),
@@ -727,11 +748,14 @@ func markerCanonicalAdapter(collection string, lifecycleDerived bool) organisati
 }
 
 func organisationsBackfillBlockedAdapters() map[string]string {
+	return map[string]string{}
+}
+
+func organisationsBackfillExcludedAdapters() map[string]string {
 	return map[string]string{
-		"channels":      "persistence and ownership contracts are unverified",
-		"notifications": "shape-specific canonical models and writers are missing",
-		"sequences":     "shared model and canonical BSON type are not declared",
-		"settings":      "shared model does not declare a canonical tenant field",
+		"channels":  "notification channels are embedded configuration, not a standalone collection",
+		"sequences": "the deprecated collection is no longer written and is retained only for legacy reads and cleanup",
+		"settings":  "settings are platform-global configuration without tenant ownership",
 	}
 }
 

@@ -224,6 +224,36 @@ go run . -action check-indexes \
          -index-version migration-hub-analysis-detection-ownership-27-08-2026
 ```
 
+The `notifications` collection contains two unrelated shapes. Personal mailbox
+envelopes have `{user_id, data: [...]}` and are counted but excluded from tenant
+normalization. Flat notification events are project scoped and resolve canonical
+`organisationId`, then `alert_master_user`, then the persisted recipient
+`userid` through its stable primary owner. `alert_user`, email, and message data
+remain provenance or payload and never become ownership candidates. Unknown
+shapes block an unscoped audit rather than being guessed.
+
+```sh
+go run . -action organisations-backfill \
+         -mode dry-run \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collection notifications \
+         -adapter-version v1 \
+         -report-file organisations-backfill-notifications.json
+
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections notifications \
+         -mode dry-run \
+         -index-version migration-hub-notification-ownership-02-09-2026
+```
+
+`channels` is embedded configuration rather than a standalone collection,
+`settings` is platform-global, and the deprecated `sequences` collection is no
+longer written. They are explicit exclusions from organisation backfill rather
+than incomplete adapters.
+
 `audit_events` requires canonical BSON ObjectID `organisationId` and treats
 `actorId` only as provenance. Organisation, membership, role, subscription,
 and user actions remain organisation-only. Case, workflow, device, media, and
