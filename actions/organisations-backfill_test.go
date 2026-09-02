@@ -99,12 +99,12 @@ func TestValidateOrganisationsBackfillConfig(t *testing.T) {
 			wantError: "invalid organisation-id",
 		},
 		{
-			name: "reports blocked adapter",
+			name: "reports excluded collection",
 			mutate: func(config OrganisationsBackfillConfig) OrganisationsBackfillConfig {
 				config.Collection = "channels"
 				return config
 			},
-			wantError: "blocked",
+			wantError: "excluded",
 		},
 	}
 
@@ -133,7 +133,7 @@ func TestSelectOrganisationsBackfillAdaptersAllIsDeterministic(t *testing.T) {
 		"alerts", "analysis", "audit_events", "case_attachments", "case_media", "case_shares", "comments", "counting", "detections", "devices", "groups", "heatmap", "io", "labels",
 		"marker_category_options", "marker_event_option_ranges", "marker_event_options",
 		"marker_option_ranges", "marker_options", "marker_tag_option_ranges",
-		"marker_tag_options", "markers", "sites", "subscriptions", "tasks", "tokens", "videowalls", "workflow_runs", "workflows",
+		"marker_tag_options", "markers", "notifications", "sites", "subscriptions", "tasks", "tokens", "videowalls", "workflow_runs", "workflows",
 	}
 	if len(adapters) != len(want) {
 		t.Fatalf("len(adapters) = %d, want %d", len(adapters), len(want))
@@ -159,6 +159,22 @@ func TestAlertsAdapterDeclaresProjectScope(t *testing.T) {
 	adapter := organisationsBackfillAdapters()["alerts"]
 	if adapter.OwnershipScope != "project-scoped" || adapter.ProjectField != "projectId" || adapter.ProjectBSONType != "objectId" {
 		t.Fatalf("alert ownership scope = %+v", adapter)
+	}
+}
+
+func TestNotificationsAdapterDeclaresMixedShapeScope(t *testing.T) {
+	adapter := organisationsBackfillAdapters()["notifications"]
+	if adapter.OwnershipScope != "mixed-personal-mailbox-and-project-scoped-flat-event" || adapter.ProjectField != "projectId" || adapter.ResolverKind != organisationsBackfillResolverNotification {
+		t.Fatalf("notification ownership scope = %+v", adapter)
+	}
+}
+
+func TestOrganisationsBackfillExcludedCollections(t *testing.T) {
+	excluded := organisationsBackfillExcludedAdapters()
+	for _, collection := range []string{"channels", "sequences", "settings"} {
+		if excluded[collection] == "" {
+			t.Errorf("collection %q is not documented as excluded", collection)
+		}
 	}
 }
 
