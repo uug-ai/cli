@@ -1,4 +1,6 @@
 launch.json
+.env.local
+
 # local temp
 /tmp/
 

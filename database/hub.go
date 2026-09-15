@@ -841,6 +841,7 @@ func CreateMediaIndexes(ctx context.Context, col *mongo.Collection) {
 		{Keys: bson.D{{Key: "deviceId", Value: 1}}},
 		{Keys: bson.D{{Key: "deviceKey", Value: 1}}},
 		{Keys: bson.D{{Key: "organisationId", Value: 1}}},
+		{Keys: bson.D{{Key: "organisationId", Value: 1}, {Key: "projectId", Value: 1}, {Key: "startTimestamp", Value: -1}, {Key: "_id", Value: -1}}},
 		{Keys: bson.D{{Key: "metadata.tags", Value: 1}}},
 		{Keys: bson.D{{Key: "metadata.detections", Value: 1}}},
 		{Keys: bson.D{{Key: "duration", Value: 1}}},
