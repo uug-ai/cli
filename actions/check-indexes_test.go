@@ -389,6 +389,22 @@ func TestMarkerOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
 	}
 }
 
+func TestMediaProjectScopeIndexFileDeclaresOrderedContract(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-media-project-scope-11-09-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+
+	specs := canonical["media"]
+	if len(specs) != 1 || normalizeKey(specs[0].Key) != "organisationId:1.projectId:1.startTimestamp:-1._id:-1" {
+		t.Fatalf("media index specs = %#v", specs)
+	}
+	if specs[0].Unique {
+		t.Fatal("media project scope index must be non-unique")
+	}
+}
+
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
 	t.Helper()
 	for _, s := range specs {
