@@ -107,6 +107,36 @@ func TestPrintInspectionGroupsSources(t *testing.T) {
 	}
 }
 
+func TestPrintReplayGroupsDestinations(t *testing.T) {
+	var output bytes.Buffer
+	printReplay(&output, sharedqueue.DeadLetterReplayResult{
+		Scanned:  3,
+		Matched:  3,
+		Planned:  3,
+		Retained: 3,
+		Destinations: map[string]int{
+			"kcloud-sequence-queue": 1,
+			"kcloud-event-queue":    2,
+		},
+	}, false)
+	text := output.String()
+	for _, expected := range []string{
+		"Mode: dry-run",
+		"REPLAY DESTINATION",
+		"kcloud-event-queue",
+		"kcloud-sequence-queue",
+		"Planned: 3",
+		"No messages were moved",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output %q does not contain %q", text, expected)
+		}
+	}
+	if strings.Index(text, "kcloud-event-queue") > strings.Index(text, "kcloud-sequence-queue") {
+		t.Fatalf("destinations are not sorted: %q", text)
+	}
+}
+
 func TestSeedDeadLettersDryRunGroupsSources(t *testing.T) {
 	result, err := seedDeadLetters(context.Background(), nil, dlqCommandConfig{
 		deadLetterQueue: "deadletter",
