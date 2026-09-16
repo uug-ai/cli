@@ -9,6 +9,7 @@ This repository contains CLI tools for performing specific automations.
 - `organisations-bootstrap`: Bootstrapping Phase 3 organisation identity and memberships in ordered stages.
 - `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
+- `dlq`: Inspecting, replaying, and safely seeding dead-letter queues across supported providers.
 
 
 ## Run
@@ -50,6 +51,78 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
    ```
 
 ## Usage
+
+### Dead-letter queue administration
+
+The `dlq` command supports RabbitMQ, SQS, Kafka, and Azure Event Hubs through
+the shared `uug-ai/queue` administrative API.
+
+Inspect a bounded number of messages and group them by their recorded source:
+
+```sh
+go run . dlq inspect \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --limit 100
+```
+
+Replay is a dry run by default:
+
+```sh
+go run . dlq replay \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --source kcloud-monitor-queue \
+  --limit 100
+```
+
+Add `--execute` to publish and settle matched messages. Envelope messages use
+their recorded source unless `--destination` overrides it. Legacy raw messages
+always require an explicit destination:
+
+```sh
+go run . dlq replay \
+  --provider sqs \
+  --dead-letter dead-letter-queue \
+  --destination kcloud-monitor-queue \
+  --limit 100 \
+  --execute
+```
+
+Replay refuses to target the configured dead-letter destination and always
+publishes before settling the source message. Kafka and Azure Event Hubs do not
+allow source-filtered executed replays because their offsets are committed
+contiguously.
+
+Provider connection flags use matching environment variables where possible:
+
+| Provider | Required settings |
+| --- | --- |
+| RabbitMQ | `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`; optional `RABBITMQ_VHOST` |
+| Kafka | `KAFKA_BROKER`; optional SASL settings and `KAFKA_GROUP_ID` |
+| Azure Event Hubs | `AZURE_EVENTHUB_CONNECTION_STRING` and an existing dedicated `KAFKA_GROUP_ID`; optional namespace |
+| SQS | `AWS_REGION` and the standard AWS credential chain |
+
+Run `go run . dlq inspect --help`, `go run . dlq replay --help`, or
+`go run . dlq seed --help` for all flags.
+
+#### Seeding synthetic messages
+
+Use the guarded seed command only with non-production queues. It is a dry run
+unless `--execute` is present:
+
+```sh
+go run . dlq seed \
+  --provider rabbitmq \
+  --dead-letter test-dead-letter-queue \
+  --sources test-monitor-queue,test-analysis-queue \
+  --count 10
+
+go run . dlq seed ... --execute
+```
+
+Synthetic payloads contain only a sequence number and source name. Replaying
+them publishes those payloads to their recorded source destinations.
 
 ### Organisation identity bootstrap
 
