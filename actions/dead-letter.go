@@ -306,6 +306,19 @@ func printReplay(output io.Writer, result sharedqueue.DeadLetterReplayResult, ex
 		mode = "executed"
 	}
 	fmt.Fprintf(output, "Mode: %s\n", mode)
+	destinations := make([]string, 0, len(result.Destinations))
+	for destination := range result.Destinations {
+		destinations = append(destinations, destination)
+	}
+	sort.Strings(destinations)
+	if len(destinations) > 0 {
+		writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(writer, "REPLAY DESTINATION\tMESSAGES")
+		for _, destination := range destinations {
+			fmt.Fprintf(writer, "%s\t%d\n", destination, result.Destinations[destination])
+		}
+		writer.Flush()
+	}
 	fmt.Fprintf(output, "Scanned: %d\nMatched: %d\nPlanned: %d\nReplayed: %d\nRetained: %d\nLegacy/unknown: %d\nUnroutable: %d\n",
 		result.Scanned,
 		result.Matched,

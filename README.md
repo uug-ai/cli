@@ -76,9 +76,11 @@ go run . dlq replay \
   --limit 100
 ```
 
-Add `--execute` to publish and settle matched messages. Envelope messages use
-their recorded source unless `--destination` overrides it. Legacy raw messages
-always require an explicit destination:
+Add `--execute` to publish and settle matched messages. New envelope messages
+use their recorded replay destination, which pipeline workers set to their
+router. Envelopes written before this metadata was introduced fall back to
+their recorded source. `--destination` overrides either choice, and legacy raw
+messages always require an explicit destination:
 
 ```sh
 go run . dlq replay \
@@ -92,7 +94,8 @@ go run . dlq replay \
 Replay refuses to target the configured dead-letter destination and always
 publishes before settling the source message. Kafka and Azure Event Hubs do not
 allow source-filtered executed replays because their offsets are committed
-contiguously.
+contiguously. Dry runs show planned message counts grouped by replay
+destination.
 
 Provider connection flags use matching environment variables where possible:
 
