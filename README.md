@@ -9,7 +9,7 @@ This repository contains CLI tools for performing specific automations.
 - `organisations-bootstrap`: Bootstrapping Phase 3 organisation identity and memberships in ordered stages.
 - `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
-- `dlq`: Inspecting, replaying, and safely seeding dead-letter queues across supported providers.
+- `dlq`: Inspecting, replaying, recovering, and safely seeding dead-letter queues across supported providers.
 
 
 ## Run
@@ -97,6 +97,51 @@ allow source-filtered executed replays because their offsets are committed
 contiguously. Dry runs show planned message counts grouped by replay
 destination.
 
+Recover pipeline events whose signed URLs expired without rerunning completed
+stages:
+
+```sh
+go run . dlq recover \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --source kcloud-sequence-queue \
+  --destination kcloud-event-queue \
+  --limit 30000 \
+  --batch-size 500 \
+  --batch-delay 2s
+```
+
+Recovery is also a dry run by default. It validates up to `--limit` messages,
+groups recoverable messages by their current `events[0]` stage, and neither
+requests URLs nor moves messages. Add `--execute` to process the same bounded
+scan in `--batch-size` chunks, with `--batch-delay` between chunks and
+`--timeout` applied to each chunk. Before each executed batch, the command
+requests fresh signed URLs from Vault's bulk endpoint and changes only
+`payload.signedUrl`. Every other event field, including completed stage data and
+the remaining stage list, is preserved. Malformed or non-pipeline messages are
+reported as unrecoverable and remain in the dead-letter queue while other valid
+messages continue. The explicit destination should be the pipeline router so it
+can dispatch each event from its own current stage.
+
+Vault request failures and incomplete bulk responses stop the run before that
+batch is published. Batches completed earlier in the same run remain replayed
+and can be excluded by a subsequent bounded retry.
+
+Executed recovery requires `KERBEROS_STORAGE_URI`,
+`KERBEROS_STORAGE_ACCESS_KEY`, and `KERBEROS_STORAGE_SECRET`. An event's
+recorded provider is used when present; `KERBEROS_STORAGE_PROVIDER` is the
+fallback. The matching command flags can override these environment variables.
+Vault must use HTTPS; plaintext HTTP is accepted for loopback development, or
+with the explicit `--vault-allow-insecure-http` override. Redirects are rejected
+so Vault credentials cannot be forwarded to another origin.
+
+Each provider holds retained messages for the entire bounded operation so a
+message is scanned at most once. Kafka retains a skipped message and subsequent
+messages from the same partition because committing a later offset would also
+commit the skipped message; other partitions continue. Choose `--limit` as both
+a work and memory safety bound because providers retain settlement metadata
+until the operation finishes.
+
 Provider connection flags use matching environment variables where possible:
 
 | Provider | Required settings |
@@ -106,8 +151,8 @@ Provider connection flags use matching environment variables where possible:
 | Azure Event Hubs | `AZURE_EVENTHUB_CONNECTION_STRING` and an existing dedicated `KAFKA_GROUP_ID`; optional namespace |
 | SQS | `AWS_REGION` and the standard AWS credential chain |
 
-Run `go run . dlq inspect --help`, `go run . dlq replay --help`, or
-`go run . dlq seed --help` for all flags.
+Run `go run . dlq inspect --help`, `go run . dlq replay --help`,
+`go run . dlq recover --help`, or `go run . dlq seed --help` for all flags.
 
 #### Seeding synthetic messages
 

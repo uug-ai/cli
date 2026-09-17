@@ -1,0 +1,437 @@
+package actions
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	sharedqueue "github.com/uug-ai/queue/pkg/queue"
+)
+
+type fakeVaultURLRefresher struct {
+	calls    [][]vaultMediaURLRequest
+	response map[string]string
+	err      error
+}
+
+func (f *fakeVaultURLRefresher) RefreshSignedURLs(_ context.Context, media []vaultMediaURLRequest) (map[string]string, error) {
+	f.calls = append(f.calls, append([]vaultMediaURLRequest(nil), media...))
+	if f.err != nil {
+		return nil, f.err
+	}
+	urls := make(map[string]string, len(media))
+	for _, item := range media {
+		if value := f.response[item.Filename]; value != "" {
+			urls[item.Filename] = value
+		} else {
+			urls[item.Filename] = "https://vault.test/" + item.Filename
+		}
+	}
+	return urls, nil
+}
+
+type scriptedRecoveryAdmin struct {
+	messages []sharedqueue.DeadLetterMessage
+	requests []sharedqueue.DeadLetterReplayRequest
+	payloads [][]byte
+}
+
+func (*scriptedRecoveryAdmin) InspectDeadLetters(context.Context, sharedqueue.DeadLetterInspectRequest) (sharedqueue.DeadLetterInspectResult, error) {
+	return sharedqueue.DeadLetterInspectResult{}, nil
+}
+
+func (f *scriptedRecoveryAdmin) ReplayDeadLetters(ctx context.Context, request sharedqueue.DeadLetterReplayRequest) (sharedqueue.DeadLetterReplayResult, error) {
+	f.requests = append(f.requests, request)
+	count := request.Limit
+	if count > len(f.messages) {
+		count = len(f.messages)
+	}
+	result := sharedqueue.DeadLetterReplayResult{
+		Scanned:      count,
+		Matched:      count,
+		Planned:      count,
+		Destinations: map[string]int{request.Destination: count},
+	}
+	if !request.Execute {
+		result.Retained = count
+	}
+	batchSize := request.BatchSize
+	if batchSize == 0 || batchSize > count {
+		batchSize = count
+	}
+	for start := 0; start < count; start += batchSize {
+		end := start + batchSize
+		if end > count {
+			end = count
+		}
+		transformations, err := request.Transform(ctx, f.messages[start:end])
+		if err != nil {
+			return result, err
+		}
+		for _, transformation := range transformations {
+			if transformation.Skip {
+				result.Skipped++
+				result.Planned--
+				if request.Execute {
+					result.Retained++
+				}
+				continue
+			}
+			f.payloads = append(f.payloads, transformation.Payload)
+			if request.Execute {
+				result.Replayed++
+			}
+		}
+	}
+	result.Destinations[request.Destination] = result.Planned
+	return result, nil
+}
+
+func (*scriptedRecoveryAdmin) PublishDeadLetter(context.Context, []byte, sharedqueue.DeadLetterMetadata) error {
+	return nil
+}
+
+func TestTransformPipelineRecoveryBatchRefreshesOnlySignedURL(t *testing.T) {
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "azure", map[string]any{
+		"topLevel": map[string]any{"keep": true},
+	})
+	refresher := &fakeVaultURLRefresher{response: map[string]string{
+		"recording.mp4": "https://vault.test/fresh",
+	}}
+	result := deadLetterRecoveryResult{}
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"24h",
+		refresher,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refresher.calls) != 1 || len(refresher.calls[0]) != 1 {
+		t.Fatalf("Vault calls = %+v", refresher.calls)
+	}
+	request := refresher.calls[0][0]
+	if request.Filename != "recording.mp4" || request.Provider != "azure" || request.URIExpiryTime != "24h" {
+		t.Fatalf("Vault request = %+v", request)
+	}
+
+	var event map[string]any
+	if err := json.Unmarshal(transformations[0].Payload, &event); err != nil {
+		t.Fatal(err)
+	}
+	payload := event["payload"].(map[string]any)
+	if payload["signedUrl"] != "https://vault.test/fresh" || payload["unknown"] != "preserved" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if !reflect.DeepEqual(event["topLevel"], map[string]any{"keep": true}) {
+		t.Fatalf("top-level extension = %+v", event["topLevel"])
+	}
+	if result.Candidates != 1 || result.Refreshed != 1 || result.ByStage["sequence"] != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchDryRunValidatesWithoutVault(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	message := recoveryTestMessage("message-1", "analysis", "recording.mp4", "", nil)
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		false,
+		"fallback-provider",
+		"",
+		nil,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(transformations[0].Payload) != string(message.Payload) {
+		t.Fatal("dry-run changed the payload")
+	}
+	if result.Candidates != 1 || result.Refreshed != 0 || result.ByStage["analysis"] != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchUsesEventStorageProviderFallback(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{}
+	message := recoveryTestMessage("message-1", "analysis", "recording.mp4", "", map[string]any{
+		"provider": "s3",
+	})
+	_, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"default-provider",
+		"",
+		refresher,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refresher.calls) != 1 || len(refresher.calls[0]) != 1 ||
+		refresher.calls[0][0].Provider != "s3" {
+		t.Fatalf("Vault calls = %+v", refresher.calls)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchSkipsMissingStage(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	message := recoveryTestMessage("message-1", "", "recording.mp4", "azure", nil)
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		false,
+		"",
+		"",
+		nil,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transformations) != 1 || !transformations[0].Skip || result.Candidates != 0 {
+		t.Fatalf("transformations=%+v result=%+v", transformations, result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchContinuesPastInvalidMessage(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{}
+	messages := []sharedqueue.DeadLetterMessage{
+		recoveryTestMessage("message-1", "sequence", "one.mp4", "azure", nil),
+		recoveryTestMessage("message-2", "", "poison.mp4", "azure", nil),
+		recoveryTestMessage("message-3", "analysis", "three.mp4", "azure", nil),
+	}
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		messages,
+		true,
+		"",
+		"",
+		refresher,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transformations) != 3 || transformations[0].Skip || !transformations[1].Skip || transformations[2].Skip {
+		t.Fatalf("transformations = %+v", transformations)
+	}
+	if len(refresher.calls) != 1 || len(refresher.calls[0]) != 2 {
+		t.Fatalf("Vault calls = %+v", refresher.calls)
+	}
+	if result.Candidates != 2 || result.Refreshed != 2 ||
+		result.ByStage["sequence"] != 1 || result.ByStage["analysis"] != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestVaultHTTPURLRefresherUsesBulkEndpointWithoutLeakingSecrets(t *testing.T) {
+	const (
+		accessKey = "access-value"
+		secret    = "secret-value"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/storage/bulk" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		if request.Header.Get("X-Kerberos-Storage-AccessKey") != accessKey ||
+			request.Header.Get("X-Kerberos-Storage-SecretAccessKey") != secret {
+			t.Errorf("authentication headers are missing")
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var media []vaultMediaURLRequest
+		if err := json.Unmarshal(body, &media); err != nil {
+			t.Fatal(err)
+		}
+		if len(media) != 1 || media[0].Filename != "recording.mp4" {
+			t.Errorf("media = %+v", media)
+		}
+		_, _ = writer.Write([]byte(`{"data":"{\"recording.mp4\":\"https://vault.test/fresh\"}"}`))
+	}))
+	defer server.Close()
+
+	refresher, err := newVaultHTTPURLRefresher(server.URL+"/api", accessKey, secret, false, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	urls, err := refresher.RefreshSignedURLs(context.Background(), []vaultMediaURLRequest{{Filename: "recording.mp4"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if urls["recording.mp4"] != "https://vault.test/fresh" {
+		t.Fatalf("URLs = %+v", urls)
+	}
+
+	failingServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusUnauthorized)
+		_, _ = writer.Write([]byte("credentials: " + accessKey + " " + secret))
+	}))
+	defer failingServer.Close()
+	failingRefresher, err := newVaultHTTPURLRefresher(failingServer.URL, accessKey, secret, false, failingServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = failingRefresher.RefreshSignedURLs(context.Background(), []vaultMediaURLRequest{{Filename: "recording.mp4"}})
+	if err == nil {
+		t.Fatal("expected Vault error")
+	}
+	if strings.Contains(err.Error(), accessKey) || strings.Contains(err.Error(), secret) {
+		t.Fatalf("error leaked credentials: %v", err)
+	}
+
+	redirectTargetCalled := false
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirectTargetCalled = true
+	}))
+	defer redirectTarget.Close()
+	redirectSource := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, redirectTarget.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirectSource.Close()
+	redirectRefresher, err := newVaultHTTPURLRefresher(redirectSource.URL, accessKey, secret, false, redirectSource.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = redirectRefresher.RefreshSignedURLs(context.Background(), []vaultMediaURLRequest{{Filename: "recording.mp4"}})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 307") {
+		t.Fatalf("redirect error = %v", err)
+	}
+	if redirectTargetCalled {
+		t.Fatal("Vault client followed a redirect with credential headers")
+	}
+}
+
+func TestVaultBulkEndpointRequiresHTTPSOutsideLoopback(t *testing.T) {
+	_, err := vaultBulkEndpoint("http://vault.internal/api", false)
+	if err == nil || !strings.Contains(err.Error(), "must use HTTPS") {
+		t.Fatalf("error = %v", err)
+	}
+	endpoint, err := vaultBulkEndpoint("http://vault.internal/api", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "http://vault.internal/api/storage/bulk" {
+		t.Fatalf("endpoint = %q", endpoint)
+	}
+}
+
+func TestValidateRecoveryConfigAllowsSourceFilteredSQSExecution(t *testing.T) {
+	err := validateRecoveryConfig(dlqCommandConfig{
+		provider:       "sqs",
+		source:         "sequence",
+		destination:    "event",
+		limit:          100,
+		batchSize:      10,
+		timeout:        time.Minute,
+		execute:        true,
+		vaultURI:       "https://vault.example/api",
+		vaultAccessKey: "access",
+		vaultSecret:    "secret",
+	})
+	if err != nil {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRecoverDeadLettersProcessesBoundedBatches(t *testing.T) {
+	admin := &scriptedRecoveryAdmin{}
+	for index := 0; index < 5; index++ {
+		admin.messages = append(admin.messages, recoveryTestMessage(
+			"message-"+string(rune('a'+index)),
+			"sequence",
+			"recording-"+string(rune('a'+index))+".mp4",
+			"azure",
+			nil,
+		))
+	}
+	refresher := &fakeVaultURLRefresher{}
+	result, err := recoverDeadLetters(context.Background(), admin, refresher, dlqCommandConfig{
+		limit:       5,
+		batchSize:   2,
+		batchDelay:  3 * time.Second,
+		timeout:     time.Second,
+		destination: "kcloud-event-queue",
+		execute:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(admin.requests) != 1 {
+		t.Fatalf("replay calls = %d", len(admin.requests))
+	}
+	request := admin.requests[0]
+	if request.Limit != 5 || request.BatchSize != 2 || request.BatchDelay != 3*time.Second ||
+		request.BatchTimeout != time.Second || request.Destination != "kcloud-event-queue" {
+		t.Fatalf("replay request = %+v", request)
+	}
+	if result.Batches != 3 || result.Replay.Scanned != 5 || result.Replay.Replayed != 5 ||
+		result.Candidates != 5 || result.Refreshed != 5 || len(refresher.calls) != 3 {
+		t.Fatalf("result = %+v, Vault calls = %d", result, len(refresher.calls))
+	}
+}
+
+func TestRecoverDeadLettersDryRunScansConfiguredLimit(t *testing.T) {
+	admin := &scriptedRecoveryAdmin{
+		messages: []sharedqueue.DeadLetterMessage{
+			recoveryTestMessage("message-1", "sequence", "one.mp4", "azure", nil),
+			recoveryTestMessage("message-2", "analysis", "two.mp4", "azure", nil),
+			recoveryTestMessage("message-3", "notification", "three.mp4", "azure", nil),
+		},
+	}
+	result, err := recoverDeadLetters(context.Background(), admin, nil, dlqCommandConfig{
+		limit:       3,
+		batchSize:   2,
+		timeout:     time.Second,
+		destination: "kcloud-event-queue",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(admin.requests) != 1 || result.Batches != 2 ||
+		result.Replay.Scanned != 3 || result.Replay.Replayed != 0 || result.Candidates != 3 ||
+		result.ByStage["sequence"] != 1 || result.ByStage["analysis"] != 1 ||
+		result.ByStage["notification"] != 1 {
+		t.Fatalf("result = %+v, requests = %+v", result, admin.requests)
+	}
+}
+
+func recoveryTestMessage(id, stage, fileName, provider string, extra map[string]any) sharedqueue.DeadLetterMessage {
+	event := map[string]any{
+		"events": []string{stage, "notification"},
+		"source": provider,
+		"payload": map[string]any{
+			"key":       fileName,
+			"signedUrl": "https://vault.test/expired",
+			"unknown":   "preserved",
+		},
+		"monitorStage": map[string]any{
+			"user": map[string]any{"email": "user@example.com"},
+		},
+	}
+	for key, value := range extra {
+		event[key] = value
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		panic(err)
+	}
+	return sharedqueue.DeadLetterMessage{ID: id, Payload: payload}
+}
