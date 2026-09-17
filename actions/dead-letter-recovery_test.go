@@ -21,6 +21,12 @@ type fakeVaultURLRefresher struct {
 	err      error
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
 func (f *fakeVaultURLRefresher) RefreshSignedURLs(_ context.Context, media []vaultMediaURLRequest) (map[string]string, error) {
 	f.calls = append(f.calls, append([]vaultMediaURLRequest(nil), media...))
 	if f.err != nil {
@@ -312,6 +318,65 @@ func TestTransformPipelineRecoveryBatchContinuesPastInvalidMessage(t *testing.T)
 	if result.Candidates != 2 || result.Refreshed != 2 ||
 		result.ByStage["sequence"] != 1 || result.ByStage["analysis"] != 1 {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchCategorizesProviderConflicts(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	messages := []sharedqueue.DeadLetterMessage{
+		recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", map[string]any{
+			"monitorStage": recoveryTestMonitorStage(map[string]any{"audit": map[string]any{"legacy": true}}),
+		}),
+		recoveryTestMessage("message-2", "sequence", "recording.mp4", "s3", map[string]any{
+			"monitorStage": recoveryTestMonitorStage(map[string]any{"audit": []any{}}),
+		}),
+	}
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		messages,
+		false,
+		"",
+		"",
+		nil,
+		defaultPipelineRecoverySafetyPolicy(),
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !transformations[0].Skip || !transformations[1].Skip ||
+		result.ByFailure["conflicting-file-provider"] != 2 ||
+		result.Candidates != 0 || result.AuditRemoved != 0 {
+		t.Fatalf("transformations=%+v result=%+v", transformations, result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchDiscardsCountersWhenVaultBatchFails(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{err: errors.New("Vault unavailable")}
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", map[string]any{
+		"date": time.Now().Add(-time.Hour).Unix(),
+		"monitorStage": recoveryTestMonitorStage(map[string]any{
+			"audit": map[string]any{"legacy": true},
+		}),
+	})
+	_, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
+		&result,
+	)
+	if err == nil {
+		t.Fatal("expected Vault failure")
+	}
+	if result.Candidates != 0 || result.AuditRemoved != 0 ||
+		result.TailSuppressed != 0 || result.Refreshed != 0 ||
+		len(result.ByStage) != 0 || len(result.ByFailure) != 0 {
+		t.Fatalf("failed batch changed aggregate counters: %+v", result)
 	}
 }
 
@@ -762,6 +827,40 @@ func TestVaultBulkEndpointRequiresHTTPSOutsideLoopback(t *testing.T) {
 	}
 }
 
+func TestVaultHTTPURLRefresherDoesNotExposeTransportURL(t *testing.T) {
+	const sensitiveMarker = "sensitive-vault-host"
+	client := &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("dial https://" + sensitiveMarker + "/api/storage/bulk failed")
+		}),
+	}
+	refresher, err := newVaultHTTPURLRefresher(
+		"https://vault.example/api",
+		"access",
+		"secret",
+		false,
+		client,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = refresher.RefreshSignedURLs(context.Background(), []vaultMediaURLRequest{{Filename: "recording.mp4"}})
+	if err == nil {
+		t.Fatal("expected transport failure")
+	}
+	if strings.Contains(err.Error(), sensitiveMarker) || strings.Contains(err.Error(), "vault.example") {
+		t.Fatalf("transport error exposed Vault URL: %v", err)
+	}
+
+	_, err = vaultBulkEndpoint("https://vault.example/%zz-"+sensitiveMarker, false)
+	if err == nil {
+		t.Fatal("expected URI parse failure")
+	}
+	if strings.Contains(err.Error(), sensitiveMarker) || strings.Contains(err.Error(), "vault.example") {
+		t.Fatalf("parse error exposed Vault URL: %v", err)
+	}
+}
+
 func TestValidateRecoveryConfigAllowsSourceFilteredSQSExecution(t *testing.T) {
 	err := validateRecoveryConfig(dlqCommandConfig{
 		provider:       "sqs",
@@ -777,6 +876,28 @@ func TestValidateRecoveryConfigAllowsSourceFilteredSQSExecution(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateRecoveryConfigAllowsCredentialFreeOnDemandExecution(t *testing.T) {
+	config := dlqCommandConfig{
+		provider:    "rabbitmq",
+		destination: "event",
+		limit:       100,
+		batchSize:   10,
+		timeout:     time.Minute,
+		execute:     true,
+	}
+	if err := validateRecoveryConfig(config); err != nil {
+		t.Fatalf("error = %v", err)
+	}
+	if recoveryVaultConfigured(config) {
+		t.Fatal("credential-free recovery configured a Vault client")
+	}
+
+	config.vaultURI = "https://vault.example/api"
+	if err := validateRecoveryConfig(config); err == nil {
+		t.Fatal("partial Vault configuration was accepted")
 	}
 }
 

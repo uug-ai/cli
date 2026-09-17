@@ -154,13 +154,17 @@ Vault request failures and incomplete bulk responses stop the run before that
 batch is published. Batches completed earlier in the same run remain replayed
 and can be excluded by a subsequent bounded retry.
 
-Executed recovery requires `KERBEROS_STORAGE_URI`,
-`KERBEROS_STORAGE_ACCESS_KEY`, and `KERBEROS_STORAGE_SECRET`. An event's
-recorded provider is used when present; `KERBEROS_STORAGE_PROVIDER` is the
-fallback. The matching command flags can override these environment variables.
-Vault must use HTTPS; plaintext HTTP is accepted for loopback development, or
-with the explicit `--vault-allow-insecure-http` override. Redirects are rejected
-so Vault credentials cannot be forwarded to another origin.
+Executed recovery of persistent events requires `KERBEROS_STORAGE_URI`,
+`KERBEROS_STORAGE_ACCESS_KEY`, and `KERBEROS_STORAGE_SECRET`. An on-demand-only
+recovery can omit all three because it makes no Vault request; if a persistent
+candidate is encountered without them, that batch stops before publication.
+Provide all three settings together when any is configured. An event's recorded
+provider is used when present; `KERBEROS_STORAGE_PROVIDER` is the fallback. The
+matching command flags can override these environment variables. Vault must use
+HTTPS; plaintext HTTP is accepted for loopback development, or with the
+explicit `--vault-allow-insecure-http` override. Redirects are rejected so Vault
+credentials cannot be forwarded to another origin, and transport errors do not
+print the Vault endpoint.
 
 Each provider holds retained messages for the entire bounded operation so a
 message is scanned at most once. Kafka retains a skipped message and subsequent

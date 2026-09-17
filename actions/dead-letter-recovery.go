@@ -115,17 +115,21 @@ func validateRecoveryConfig(config dlqCommandConfig) error {
 		return fmt.Errorf("--historical-tail-max-age cannot be negative")
 	}
 	if config.execute {
-		if config.vaultURI == "" {
-			return fmt.Errorf("--vault-uri is required with --execute")
+		configuredVaultValues := 0
+		for _, value := range []string{config.vaultURI, config.vaultAccessKey, config.vaultSecret} {
+			if value != "" {
+				configuredVaultValues++
+			}
 		}
-		if config.vaultAccessKey == "" {
-			return fmt.Errorf("--vault-access-key is required with --execute")
-		}
-		if config.vaultSecret == "" {
-			return fmt.Errorf("--vault-secret is required with --execute")
+		if configuredVaultValues != 0 && configuredVaultValues != 3 {
+			return fmt.Errorf("--vault-uri, --vault-access-key, and --vault-secret must be provided together")
 		}
 	}
 	return nil
+}
+
+func recoveryVaultConfigured(config dlqCommandConfig) bool {
+	return config.vaultURI != "" && config.vaultAccessKey != "" && config.vaultSecret != ""
 }
 
 func newVaultHTTPURLRefresher(baseURI, accessKey, secret string, allowInsecureHTTP bool, client *http.Client) (*vaultHTTPURLRefresher, error) {
@@ -157,7 +161,7 @@ func newVaultHTTPURLRefresher(baseURI, accessKey, secret string, allowInsecureHT
 func vaultBulkEndpoint(baseURI string, allowInsecureHTTP bool) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(baseURI))
 	if err != nil {
-		return "", fmt.Errorf("parse Vault URI: %w", err)
+		return "", fmt.Errorf("Vault URI is invalid")
 	}
 	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return "", fmt.Errorf("Vault URI must be an absolute HTTP or HTTPS URL")
@@ -200,7 +204,7 @@ func (v *vaultHTTPURLRefresher) RefreshSignedURLs(ctx context.Context, media []v
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, v.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("create Vault bulk URL request: %w", err)
+		return nil, fmt.Errorf("create Vault bulk URL request")
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Kerberos-Storage-AccessKey", v.accessKey)
@@ -208,7 +212,10 @@ func (v *vaultHTTPURLRefresher) RefreshSignedURLs(ctx context.Context, media []v
 
 	response, err := v.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request Vault bulk URLs: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("request Vault bulk URLs: %w", ctxErr)
+		}
+		return nil, fmt.Errorf("request Vault bulk URLs failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
@@ -256,14 +263,15 @@ func transformPipelineRecoveryBatch(
 	parsed := make([]*pipelineRecoveryMessage, len(messages))
 	requestByFile := make(map[string]*pipelineRecoveryRequest)
 	conflictingFiles := make(map[string]struct{})
+	batchResult := deadLetterRecoveryResult{
+		ByStage:   make(map[string]int),
+		ByFailure: make(map[string]int),
+	}
 	for index, message := range messages {
 		recoveryMessage, err := parsePipelineRecoveryMessage(message, fallbackProvider, safety)
 		if err != nil {
 			transformations[index].Skip = true
-			if result.ByFailure == nil {
-				result.ByFailure = make(map[string]int)
-			}
-			result.ByFailure[pipelineRecoveryFailureReason(err)]++
+			batchResult.ByFailure[pipelineRecoveryFailureReason(err)]++
 			continue
 		}
 		parsed[index] = &recoveryMessage
@@ -295,6 +303,7 @@ func transformPipelineRecoveryBatch(
 			for _, index := range grouped.indexes {
 				transformations[index].Skip = true
 				parsed[index] = nil
+				batchResult.ByFailure["conflicting-file-provider"]++
 			}
 			continue
 		}
@@ -309,16 +318,13 @@ func transformPipelineRecoveryBatch(
 			continue
 		}
 		if recoveryMessage.auditRemoved {
-			result.AuditRemoved++
+			batchResult.AuditRemoved++
 		}
 		if recoveryMessage.tailSuppressed {
-			result.TailSuppressed++
+			batchResult.TailSuppressed++
 		}
-		result.Candidates++
-		if result.ByStage == nil {
-			result.ByStage = make(map[string]int)
-		}
-		result.ByStage[recoveryMessage.stage]++
+		batchResult.Candidates++
+		batchResult.ByStage[recoveryMessage.stage]++
 		if !execute {
 			transformations[index].Payload = append([]byte(nil), messages[index].Payload...)
 		} else if recoveryMessage.onDemand {
@@ -333,10 +339,11 @@ func transformPipelineRecoveryBatch(
 			}
 		}
 		if recoveryMessage.onDemand {
-			result.Bypassed++
+			batchResult.Bypassed++
 		}
 	}
 	if !execute || len(requests) == 0 {
+		mergeDeadLetterRecoveryResult(result, batchResult)
 		return transformations, nil
 	}
 	if refresher == nil {
@@ -363,9 +370,30 @@ func transformPipelineRecoveryBatch(
 			return nil, err
 		}
 		transformations[index].Payload = payload
-		result.Refreshed++
+		batchResult.Refreshed++
 	}
+	mergeDeadLetterRecoveryResult(result, batchResult)
 	return transformations, nil
+}
+
+func mergeDeadLetterRecoveryResult(target *deadLetterRecoveryResult, batch deadLetterRecoveryResult) {
+	target.Candidates += batch.Candidates
+	target.Refreshed += batch.Refreshed
+	target.Bypassed += batch.Bypassed
+	target.AuditRemoved += batch.AuditRemoved
+	target.TailSuppressed += batch.TailSuppressed
+	if target.ByStage == nil {
+		target.ByStage = make(map[string]int)
+	}
+	for stage, count := range batch.ByStage {
+		target.ByStage[stage] += count
+	}
+	if target.ByFailure == nil {
+		target.ByFailure = make(map[string]int)
+	}
+	for reason, count := range batch.ByFailure {
+		target.ByFailure[reason] += count
+	}
 }
 
 func parsePipelineRecoveryMessage(message sharedqueue.DeadLetterMessage, fallbackProvider string, safety pipelineRecoverySafetyPolicy) (pipelineRecoveryMessage, error) {

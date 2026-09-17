@@ -123,7 +123,7 @@ func RunDLQ(args []string, stdout, stderr io.Writer) int {
 
 	if action == "recover" {
 		var refresher vaultURLRefresher
-		if config.execute {
+		if config.execute && recoveryVaultConfigured(config) {
 			refresher, err = newVaultHTTPURLRefresher(config.vaultURI, config.vaultAccessKey, config.vaultSecret, config.vaultAllowHTTP, &http.Client{
 				Timeout: config.timeout,
 			})
