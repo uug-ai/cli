@@ -30,6 +30,8 @@ type dlqCommandConfig struct {
 	idleTimeout     time.Duration
 	batchSize       int
 	batchDelay      time.Duration
+	debug           bool
+	debugOutput     io.Writer
 
 	vaultURI       string
 	vaultAccessKey string
@@ -122,6 +124,9 @@ func RunDLQ(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if action == "recover" {
+		if config.debug {
+			config.debugOutput = stdout
+		}
 		var refresher vaultURLRefresher
 		if config.execute && recoveryVaultConfigured(config) {
 			refresher, err = newVaultHTTPURLRefresher(config.vaultURI, config.vaultAccessKey, config.vaultSecret, config.vaultAllowHTTP, &http.Client{
@@ -241,6 +246,7 @@ func parseDLQFlags(action string, args []string, stderr io.Writer) (dlqCommandCo
 		flags.DurationVar(&config.historicalTailMaxAge, "historical-tail-max-age", defaultHistoricalTailMaxAge, "recording age after which throttler and notification stages are suppressed")
 		flags.BoolVar(&config.allowHistoricalTail, "allow-historical-tail", false, "preserve throttler and notification stages for historical recordings (unsafe)")
 		flags.BoolVar(&config.legacyUserOwnership, "legacy-user-ownership", false, "require canonical ownership to match monitor user ID for legacy workers")
+		flags.BoolVar(&config.debug, "debug", false, "print a redacted payload and recovery plan before each message is processed")
 	}
 	if action == "seed" {
 		flags.StringVar(&config.sources, "sources", "kcloud-monitor-queue,kcloud-analysis-queue", "comma-separated source queues to distribute synthetic messages across")

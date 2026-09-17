@@ -83,6 +83,33 @@ type pipelineRecoverySafetyPolicy struct {
 	historicalTailMaxAge time.Duration
 	allowHistoricalTail  bool
 	legacyUserOwnership  bool
+	debugger             *pipelineRecoveryDebugger
+}
+
+type pipelineRecoveryDebugger struct {
+	output      io.Writer
+	destination string
+	execute     bool
+}
+
+type pipelineRecoveryDebugRecord struct {
+	Type      string                    `json:"type"`
+	MessageID string                    `json:"messageId"`
+	Legacy    bool                      `json:"legacy"`
+	Payload   map[string]any            `json:"payload"`
+	Recovery  pipelineRecoveryDebugPlan `json:"recovery"`
+}
+
+type pipelineRecoveryDebugPlan struct {
+	Mode                      string   `json:"mode"`
+	Status                    string   `json:"status"`
+	Reason                    string   `json:"reason,omitempty"`
+	Destination               string   `json:"destination"`
+	CurrentStage              string   `json:"currentStage,omitempty"`
+	ResultingStages           []string `json:"resultingStages,omitempty"`
+	SignedURLAction           string   `json:"signedUrlAction,omitempty"`
+	AuditSanitization         bool     `json:"auditSanitization"`
+	HistoricalTailSuppression bool     `json:"historicalTailSuppression"`
 }
 
 type pipelineRecoveryValidationError struct {
@@ -96,6 +123,163 @@ func (e *pipelineRecoveryValidationError) Error() string {
 
 func (e *pipelineRecoveryValidationError) Unwrap() error {
 	return e.err
+}
+
+func newPipelineRecoveryDebugRecord(message sharedqueue.DeadLetterMessage, debugger *pipelineRecoveryDebugger) pipelineRecoveryDebugRecord {
+	mode := "dry-run"
+	if debugger.execute {
+		mode = "execute"
+	}
+	return pipelineRecoveryDebugRecord{
+		Type:      "dlq-recovery-debug",
+		MessageID: message.ID,
+		Legacy:    message.Legacy,
+		Payload:   pipelineRecoveryDebugPayload(message.Payload),
+		Recovery: pipelineRecoveryDebugPlan{
+			Mode:        mode,
+			Status:      "retained",
+			Destination: debugger.destination,
+		},
+	}
+}
+
+func pipelineRecoveryDebugPayload(encoded []byte) map[string]any {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &root); err != nil || root == nil {
+		return map[string]any{
+			"redaction": "payload unavailable because it is not a JSON object",
+			"sizeBytes": len(encoded),
+		}
+	}
+
+	debug := copyPipelineRecoveryDebugFields(root,
+		"request",
+		"operation",
+		"events",
+		"provider",
+		"source",
+		"traceId",
+		"date",
+	)
+	debug["redaction"] = "sensitive, personal, and unbounded fields omitted"
+
+	if eventStage, ok := pipelineRecoveryDebugObject(root["eventStage"],
+		"name",
+		"organisationId",
+		"projectId",
+	); ok {
+		if sourceDevice, ok := pipelineRecoveryDebugObjectField(root["eventStage"], "sourceDevice",
+			"deviceId",
+			"deviceKey",
+			"organisationId",
+			"projectId",
+		); ok {
+			eventStage["sourceDevice"] = sourceDevice
+		}
+		debug["eventStage"] = eventStage
+	}
+
+	if monitorStage, ok := pipelineRecoveryDebugObject(root["monitorStage"],
+		"name",
+		"organisationId",
+		"projectId",
+	); ok {
+		if user, ok := pipelineRecoveryDebugObjectField(root["monitorStage"], "user", "id"); ok {
+			monitorStage["user"] = user
+		}
+		debug["monitorStage"] = monitorStage
+	}
+
+	if payload, ok := pipelineRecoveryDebugObject(root["payload"],
+		"key",
+		"fileSize",
+		"duration",
+		"is_fragmented",
+	); ok {
+		var original map[string]json.RawMessage
+		if json.Unmarshal(root["payload"], &original) == nil {
+			if _, present := original["signedUrl"]; present {
+				payload["signedUrl"] = "<redacted>"
+			}
+			for _, field := range []string{"bytes_ranges", "bytes_range_on_time"} {
+				if _, present := original[field]; present {
+					payload[field] = "<omitted>"
+				}
+			}
+			if metadata, ok := pipelineRecoveryDebugObject(original["metadata"],
+				"event-timestamp",
+				"duration",
+				"event-numberofchanges",
+				"uploadtime",
+				"event-microseconds",
+				"productid",
+				"event-instancename",
+				"event-regioncoordinates",
+				"fps",
+			); ok {
+				payload["metadata"] = metadata
+			}
+		}
+		debug["payload"] = payload
+	}
+	return debug
+}
+
+func copyPipelineRecoveryDebugFields(object map[string]json.RawMessage, fields ...string) map[string]any {
+	result := make(map[string]any, len(fields))
+	for _, field := range fields {
+		raw, ok := object[field]
+		if !ok {
+			continue
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err == nil {
+			result[field] = value
+		}
+	}
+	return result
+}
+
+func pipelineRecoveryDebugObject(raw json.RawMessage, fields ...string) (map[string]any, bool) {
+	var object map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil {
+		return nil, false
+	}
+	return copyPipelineRecoveryDebugFields(object, fields...), true
+}
+
+func pipelineRecoveryDebugObjectField(raw json.RawMessage, field string, fields ...string) (map[string]any, bool) {
+	var object map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil {
+		return nil, false
+	}
+	return pipelineRecoveryDebugObject(object[field], fields...)
+}
+
+func pipelineRecoveryDebugStages(root map[string]json.RawMessage) []string {
+	var stages []string
+	if json.Unmarshal(root["events"], &stages) != nil {
+		return nil
+	}
+	return stages
+}
+
+func (d *pipelineRecoveryDebugger) write(records []pipelineRecoveryDebugRecord) error {
+	if d == nil || len(records) == 0 {
+		return nil
+	}
+	if d.output == nil {
+		return fmt.Errorf("recovery debug output is unavailable")
+	}
+	encoder := json.NewEncoder(d.output)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	for _, record := range records {
+		if err := encoder.Encode(record); err != nil {
+			return fmt.Errorf("write recovery debug output: %w", err)
+		}
+	}
+	return nil
 }
 
 func validateRecoveryConfig(config dlqCommandConfig) error {
@@ -263,15 +447,26 @@ func transformPipelineRecoveryBatch(
 	parsed := make([]*pipelineRecoveryMessage, len(messages))
 	requestByFile := make(map[string]*pipelineRecoveryRequest)
 	conflictingFiles := make(map[string]struct{})
+	var debugRecords []pipelineRecoveryDebugRecord
+	if safety.debugger != nil {
+		debugRecords = make([]pipelineRecoveryDebugRecord, len(messages))
+	}
 	batchResult := deadLetterRecoveryResult{
 		ByStage:   make(map[string]int),
 		ByFailure: make(map[string]int),
 	}
 	for index, message := range messages {
+		if safety.debugger != nil {
+			debugRecords[index] = newPipelineRecoveryDebugRecord(message, safety.debugger)
+		}
 		recoveryMessage, err := parsePipelineRecoveryMessage(message, fallbackProvider, safety)
 		if err != nil {
 			transformations[index].Skip = true
-			batchResult.ByFailure[pipelineRecoveryFailureReason(err)]++
+			reason := pipelineRecoveryFailureReason(err)
+			batchResult.ByFailure[reason]++
+			if safety.debugger != nil {
+				debugRecords[index].Recovery.Reason = reason
+			}
 			continue
 		}
 		parsed[index] = &recoveryMessage
@@ -304,6 +499,9 @@ func transformPipelineRecoveryBatch(
 				transformations[index].Skip = true
 				parsed[index] = nil
 				batchResult.ByFailure["conflicting-file-provider"]++
+				if safety.debugger != nil {
+					debugRecords[index].Recovery.Reason = "conflicting-file-provider"
+				}
 			}
 			continue
 		}
@@ -323,6 +521,18 @@ func transformPipelineRecoveryBatch(
 		if recoveryMessage.tailSuppressed {
 			batchResult.TailSuppressed++
 		}
+		if safety.debugger != nil {
+			signedURLAction := "refresh-from-vault"
+			if recoveryMessage.onDemand {
+				signedURLAction = "preserve-on-demand"
+			}
+			debugRecords[index].Recovery.Status = "planned"
+			debugRecords[index].Recovery.CurrentStage = recoveryMessage.stage
+			debugRecords[index].Recovery.ResultingStages = pipelineRecoveryDebugStages(recoveryMessage.root)
+			debugRecords[index].Recovery.SignedURLAction = signedURLAction
+			debugRecords[index].Recovery.AuditSanitization = recoveryMessage.auditRemoved
+			debugRecords[index].Recovery.HistoricalTailSuppression = recoveryMessage.tailSuppressed
+		}
 		batchResult.Candidates++
 		batchResult.ByStage[recoveryMessage.stage]++
 		if !execute {
@@ -341,6 +551,9 @@ func transformPipelineRecoveryBatch(
 		if recoveryMessage.onDemand {
 			batchResult.Bypassed++
 		}
+	}
+	if err := safety.debugger.write(debugRecords); err != nil {
+		return nil, err
 	}
 	if !execute || len(requests) == 0 {
 		mergeDeadLetterRecoveryResult(result, batchResult)
@@ -833,6 +1046,13 @@ func isJSONNull(raw json.RawMessage) bool {
 func recoverDeadLetters(ctx context.Context, admin sharedqueue.DeadLetterAdmin, refresher vaultURLRefresher, config dlqCommandConfig) (deadLetterRecoveryResult, error) {
 	result := deadLetterRecoveryResult{ByStage: make(map[string]int)}
 	safety := pipelineRecoverySafetyPolicyFromConfig(config)
+	if config.debug {
+		safety.debugger = &pipelineRecoveryDebugger{
+			output:      config.debugOutput,
+			destination: config.destination,
+			execute:     config.execute,
+		}
+	}
 	batchResult, err := admin.ReplayDeadLetters(ctx, sharedqueue.DeadLetterReplayRequest{
 		Limit:        config.limit,
 		BatchSize:    config.batchSize,

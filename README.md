@@ -263,6 +263,84 @@ between executed batches, and `--timeout` applies separately to each batch.
 If a later batch fails, earlier successful batches remain completed; the failed
 batch is not published and its counters are not reported as completed work.
 
+##### Debug individual recovery messages
+
+Add `--debug` to print one redacted JSON object for each matched message. Debug
+records are written to standard output immediately before the normal recovery
+summary; the CLI does not create an output file. This is useful for inspecting
+the next eligible message or preparing a one-message canary:
+
+```sh
+go run . dlq recover \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --destination kcloud-event-queue \
+  --limit 1 \
+  --batch-size 1 \
+  --legacy-user-ownership \
+  --debug
+```
+
+This command remains a dry run because it does not include `--execute`. It does
+not contact Vault, publish, or settle the message. Repeat the reviewed command
+with `--execute` to perform the canary.
+
+Each debug record includes:
+
+- `messageId`: the provider's identifier for the fetched DLQ message;
+- `legacy`: whether the DLQ entry is a raw message without a recognized
+  `uug.ai/dead-letter/v1` envelope; it does not describe the pipeline payload
+  version;
+- `payload`: an allowlisted, redacted view of the original pipeline payload;
+- `recovery.mode`: `dry-run` or `execute`;
+- `recovery.status`: `planned` when validation succeeded, or `retained` when
+  validation rejected the message;
+- `recovery.reason`: the categorized validation reason for a retained message;
+  and
+- the destination, current/resulting stages, signed URL action, and planned
+  audit or historical-tail transformations for a valid candidate.
+
+For example, a message that cannot safely pass through workers using legacy
+user ownership is reported without being moved:
+
+```json
+{
+  "type": "dlq-recovery-debug",
+  "messageId": "1",
+  "legacy": false,
+  "payload": {
+    "events": ["sequence", "analysis", "throttler", "notification"],
+    "traceId": "61589a01b4308daf54a0ed1df4897748",
+    "redaction": "sensitive, personal, and unbounded fields omitted"
+  },
+  "recovery": {
+    "mode": "dry-run",
+    "status": "retained",
+    "reason": "legacy-owner-conflict",
+    "destination": "kcloud-event-queue",
+    "auditSanitization": false,
+    "historicalTailSuppression": false
+  }
+}
+```
+
+A `planned` status means that the message passed local recovery validation. It
+does not mean that Vault refresh, publication, or downstream processing has
+completed. In execute mode, the record is written before the batch requests
+Vault URLs or publishes to the replay destination.
+
+Debug output deliberately omits or redacts credentials, user contact details,
+signed URLs, byte-range data, device cloud keys, and unknown fields. It is not
+a raw payload backup and should still be handled as operationally sensitive
+because file names, device identifiers, and ownership identifiers remain
+visible.
+
+Debug mode does not pause for operator confirmation, change settlement
+behavior, or verify that downstream processing completed. It is an observability
+option, not an interactive probe. If writing the debug record fails, the batch
+stops before its Vault request or replay publish and its DLQ messages remain
+retained.
+
 ##### URL refresh behavior
 
 For `request == "persist"`, each executed batch calls Vault's
