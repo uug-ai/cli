@@ -112,20 +112,43 @@ go run . dlq recover \
 ```
 
 Recovery is also a dry run by default. It validates up to `--limit` messages,
-groups recoverable messages by their current `events[0]` stage, and neither
-requests URLs nor moves messages. Add `--execute` to process the same bounded
-scan in `--batch-size` chunks, with `--batch-delay` between chunks and
-`--timeout` applied to each chunk. Before each executed batch, the command
-requests fresh signed URLs from Vault's bulk endpoint and changes only
-`payload.signedUrl`. Every other event field, including completed stage data and
-the remaining stage list, is preserved. Malformed or non-pipeline messages are
-reported as unrecoverable and remain in the dead-letter queue while other valid
-messages continue. The explicit destination should be the pipeline router so it
-can dispatch each event from its own current stage.
+groups recoverable messages by their current `events[0]` stage, reports planned
+safety normalizations, and neither requests URLs nor moves messages. Add
+`--execute` to process the same bounded scan in `--batch-size` chunks, with
+`--batch-delay` between chunks and `--timeout` applied to each chunk. Before
+each executed batch, the command requests fresh signed URLs from Vault's bulk
+endpoint and replaces `payload.signedUrl`.
 
-Events whose `request` is exactly `ondemand` bypass Vault URL refresh and are
-replayed byte-for-byte. Their existing URL refers to the on-demand Vault flow
-and does not use the persistent-recording provider configuration.
+Recovery validates every stage token before publishing, validates embedded
+storage and signed URLs, and removes the monitor user's embedded `audit`
+snapshot. Pipeline model generations disagree on that transient field's shape,
+and no resumed stage uses it. Unknown fields at every edited JSON level remain
+preserved.
+
+By default, recordings older than `--historical-tail-max-age` (15 minutes)
+resume only through stages before `throttler` and `notification`. This prevents
+a stale monitor snapshot from regressing throttle state and avoids replaying a
+notification that the notification service will reject as expired. A message
+already positioned at either unsafe tail stage remains in the dead-letter
+queue. `--allow-historical-tail` preserves those stages, but should only be
+used after reviewing the downstream side effects.
+
+Legacy workers may ignore canonical monitor ownership and scope persistence
+from `monitorStage.user.id`. Use `--legacy-user-ownership` for those deployments
+to retain events whose non-empty canonical organisation/project matches that
+legacy owner and reject conflicts. The command never synthesizes or overwrites
+canonical ownership.
+
+Malformed or non-pipeline messages are grouped by an unrecoverable reason and
+remain in the dead-letter queue while other valid messages continue. The
+explicit destination should be the pipeline router so it can dispatch each
+event from its own current stage.
+
+Events whose `request` is exactly `ondemand` bypass Vault URL refresh. They are
+replayed byte-for-byte when no safety normalization is needed; otherwise only
+the safety normalization is applied. Their existing URL refers to the
+on-demand Vault flow and does not use the persistent-recording provider
+configuration.
 
 Vault request failures and incomplete bulk responses stop the run before that
 batch is published. Batches completed earlier in the same run remain replayed

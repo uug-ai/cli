@@ -74,11 +74,15 @@ func TestParseRecoveryBatchFlags(t *testing.T) {
 		"--limit", "30000",
 		"--batch-size", "500",
 		"--batch-delay", "2s",
+		"--historical-tail-max-age", "30m",
+		"--legacy-user-ownership",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("parseDLQFlags: %v", err)
 	}
-	if config.execute || config.limit != 30000 || config.batchSize != 500 || config.batchDelay != 2*time.Second {
+	if config.execute || config.limit != 30000 || config.batchSize != 500 ||
+		config.batchDelay != 2*time.Second || config.historicalTailMaxAge != 30*time.Minute ||
+		config.allowHistoricalTail || !config.legacyUserOwnership {
 		t.Fatalf("config = %+v", config)
 	}
 	if err := validateRecoveryConfig(config); err != nil {

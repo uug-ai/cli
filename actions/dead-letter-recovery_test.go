@@ -113,6 +113,7 @@ func TestTransformPipelineRecoveryBatchRefreshesOnlySignedURL(t *testing.T) {
 		"",
 		"24h",
 		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
 		&result,
 	)
 	if err != nil {
@@ -152,6 +153,7 @@ func TestTransformPipelineRecoveryBatchDryRunValidatesWithoutVault(t *testing.T)
 		"fallback-provider",
 		"",
 		nil,
+		defaultPipelineRecoverySafetyPolicy(),
 		&result,
 	)
 	if err != nil {
@@ -178,6 +180,7 @@ func TestTransformPipelineRecoveryBatchUsesEventStorageProviderFallback(t *testi
 		"default-provider",
 		"",
 		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
 		&result,
 	)
 	if err != nil {
@@ -202,6 +205,7 @@ func TestTransformPipelineRecoveryBatchBypassesOnDemandURLRefresh(t *testing.T) 
 		"",
 		"",
 		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
 		&result,
 	)
 	if err != nil {
@@ -236,6 +240,7 @@ func TestTransformPipelineRecoveryBatchRefreshesPersistAndBypassesOnDemand(t *te
 		"",
 		"",
 		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
 		&result,
 	)
 	if err != nil {
@@ -266,6 +271,7 @@ func TestTransformPipelineRecoveryBatchSkipsMissingStage(t *testing.T) {
 		"",
 		"",
 		nil,
+		defaultPipelineRecoverySafetyPolicy(),
 		&result,
 	)
 	if err != nil {
@@ -291,6 +297,7 @@ func TestTransformPipelineRecoveryBatchContinuesPastInvalidMessage(t *testing.T)
 		"",
 		"",
 		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
 		&result,
 	)
 	if err != nil {
@@ -304,6 +311,360 @@ func TestTransformPipelineRecoveryBatchContinuesPastInvalidMessage(t *testing.T)
 	}
 	if result.Candidates != 2 || result.Refreshed != 2 ||
 		result.ByStage["sequence"] != 1 || result.ByStage["analysis"] != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchRemovesEmbeddedUserAudit(t *testing.T) {
+	for _, audit := range []any{
+		map[string]any{"createdAt": "legacy"},
+		[]any{map[string]any{"create": map[string]any{"createdAt": 1}}},
+	} {
+		t.Run(reflect.TypeOf(audit).String(), func(t *testing.T) {
+			result := deadLetterRecoveryResult{}
+			refresher := &fakeVaultURLRefresher{}
+			message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", map[string]any{
+				"monitorStage": recoveryTestMonitorStage(map[string]any{
+					"audit":       audit,
+					"futureField": map[string]any{"keep": true},
+				}),
+			})
+
+			transformations, err := transformPipelineRecoveryBatch(
+				context.Background(),
+				[]sharedqueue.DeadLetterMessage{message},
+				true,
+				"",
+				"",
+				refresher,
+				defaultPipelineRecoverySafetyPolicy(),
+				&result,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var event map[string]any
+			if err := json.Unmarshal(transformations[0].Payload, &event); err != nil {
+				t.Fatal(err)
+			}
+			user := event["monitorStage"].(map[string]any)["user"].(map[string]any)
+			if _, present := user["audit"]; present {
+				t.Fatalf("audit was not removed: %+v", user)
+			}
+			if !reflect.DeepEqual(user["futureField"], map[string]any{"keep": true}) {
+				t.Fatalf("future user field was not preserved: %+v", user)
+			}
+			if result.AuditRemoved != 1 || result.Candidates != 1 || result.Refreshed != 1 {
+				t.Fatalf("result = %+v", result)
+			}
+		})
+	}
+}
+
+func TestTransformPipelineRecoveryBatchDryRunReportsAuditRemovalWithoutChangingPayload(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", map[string]any{
+		"monitorStage": recoveryTestMonitorStage(map[string]any{
+			"audit": map[string]any{"createdAt": "legacy"},
+		}),
+	})
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		false,
+		"",
+		"",
+		nil,
+		defaultPipelineRecoverySafetyPolicy(),
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(transformations[0].Payload) != string(message.Payload) {
+		t.Fatal("dry-run changed the payload")
+	}
+	if result.AuditRemoved != 1 || result.Candidates != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchSuppressesHistoricalTail(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{}
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", map[string]any{
+		"date":   time.Now().Add(-time.Hour).Unix(),
+		"events": []string{"sequence", "analysis", "throttler", "notification"},
+	})
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		Stages []string `json:"events"`
+	}
+	if err := json.Unmarshal(transformations[0].Payload, &event); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(event.Stages, []string{"sequence", "analysis"}) {
+		t.Fatalf("stages = %v", event.Stages)
+	}
+	if result.TailSuppressed != 1 || result.Candidates != 1 || result.Refreshed != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchRetainsHistoricalTailAtCurrentStage(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{}
+	message := recoveryTestMessage("message-1", "notification", "recording.mp4", "ceph", map[string]any{
+		"date":         time.Now().Add(-time.Hour).Unix(),
+		"events":       []string{"notification"},
+		"monitorStage": recoveryTestMonitorStage(map[string]any{"audit": map[string]any{"legacy": true}}),
+	})
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !transformations[0].Skip || len(refresher.calls) != 0 ||
+		result.ByFailure["historical-tail-current"] != 1 ||
+		result.AuditRemoved != 0 || result.TailSuppressed != 0 {
+		t.Fatalf("transformations=%+v result=%+v calls=%+v", transformations, result, refresher.calls)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchAllowsHistoricalTailExplicitly(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{}
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", map[string]any{
+		"date": time.Now().Add(-time.Hour).Unix(),
+	})
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		pipelineRecoverySafetyPolicy{
+			historicalTailMaxAge: defaultHistoricalTailMaxAge,
+			allowHistoricalTail:  true,
+		},
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		Stages []string `json:"events"`
+	}
+	if err := json.Unmarshal(transformations[0].Payload, &event); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(event.Stages, []string{"sequence", "notification"}) ||
+		result.TailSuppressed != 0 {
+		t.Fatalf("event=%+v result=%+v", event, result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchRejectsUnsafeStageAndOwnership(t *testing.T) {
+	tests := []struct {
+		name   string
+		extra  map[string]any
+		reason string
+	}{
+		{
+			name:   "empty later stage",
+			extra:  map[string]any{"events": []string{"sequence", ""}},
+			reason: "invalid-stage",
+		},
+		{
+			name:   "terminal stage",
+			extra:  map[string]any{"events": []string{"sequence", "end"}},
+			reason: "invalid-stage",
+		},
+		{
+			name: "signed URL whitespace",
+			extra: map[string]any{
+				"request": "ondemand",
+				"payload": map[string]any{
+					"key":       "recording.mp4",
+					"signedUrl": " https://vault.test/recording.mp4 ",
+				},
+			},
+			reason: "invalid-signed-url",
+		},
+		{
+			name: "legacy owner conflict",
+			extra: map[string]any{
+				"monitorStage": map[string]any{
+					"organisationId": "bbbbbbbbbbbbbbbbbbbbbbbb",
+					"projectId":      "bbbbbbbbbbbbbbbbbbbbbbbb",
+					"user": map[string]any{
+						"id":    recoveryTestUserID,
+						"email": "user@example.com",
+					},
+				},
+			},
+			reason: "legacy-owner-conflict",
+		},
+		{
+			name: "malformed embedded storage URI",
+			extra: map[string]any{
+				"monitorStage": recoveryTestMonitorStage(map[string]any{
+					"storage": map[string]any{"uri": "[https://vault.test](https://vault.test)"},
+				}),
+			},
+			reason: "invalid-storage-uri",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := deadLetterRecoveryResult{}
+			refresher := &fakeVaultURLRefresher{}
+			message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", test.extra)
+			safety := defaultPipelineRecoverySafetyPolicy()
+			if test.reason == "legacy-owner-conflict" {
+				safety.legacyUserOwnership = true
+			}
+			transformations, err := transformPipelineRecoveryBatch(
+				context.Background(),
+				[]sharedqueue.DeadLetterMessage{message},
+				true,
+				"",
+				"",
+				refresher,
+				safety,
+				&result,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !transformations[0].Skip || len(refresher.calls) != 0 || result.ByFailure[test.reason] != 1 {
+				t.Fatalf("transformations=%+v result=%+v calls=%+v", transformations, result, refresher.calls)
+			}
+		})
+	}
+}
+
+func TestTransformPipelineRecoveryBatchRejectsInvalidVaultSignedURL(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{response: map[string]string{
+		"recording.mp4": "[https://vault.test/fresh](https://vault.test/fresh)",
+	}}
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", nil)
+	_, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		defaultPipelineRecoverySafetyPolicy(),
+		&result,
+	)
+	if err == nil || !strings.Contains(err.Error(), "invalid signed URL") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchSafelyNormalizesLegacySequenceEvent(t *testing.T) {
+	recordingTimestamp := time.Now().Add(-time.Hour).Unix()
+	event := map[string]any{
+		"request":   "persist",
+		"operation": "event",
+		"events":    []string{"sequence", "analysis", "throttler", "notification"},
+		"date":      recordingTimestamp,
+		"source":    "ceph",
+		"provider":  "kstorage",
+		"monitorStage": map[string]any{
+			"name":           "monitor",
+			"organisationId": recoveryTestUserID,
+			"projectId":      recoveryTestUserID,
+			"user": map[string]any{
+				"id":    recoveryTestUserID,
+				"email": "user@example.com",
+				"audit": map[string]any{
+					"createdAt": "0001-01-01T00:00:00Z",
+					"updatedAt": "0001-01-01T00:00:00Z",
+				},
+				"storage": map[string]any{"uri": "http://vault.internal/api"},
+			},
+		},
+		"payload": map[string]any{
+			"key":           "user@example.com/recording.mp4",
+			"signedUrl":     "https://vault.test/expired",
+			"is_fragmented": false,
+			"metadata": map[string]any{
+				"event-timestamp": recordingTimestamp,
+				"duration":        "30000",
+				"productid":       "device-key",
+			},
+		},
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := sharedqueue.DeadLetterMessage{ID: "message-1", Payload: payload}
+	refresher := &fakeVaultURLRefresher{response: map[string]string{
+		"user@example.com/recording.mp4": "https://vault.test/fresh",
+	}}
+	result := deadLetterRecoveryResult{}
+	safety := defaultPipelineRecoverySafetyPolicy()
+	safety.legacyUserOwnership = true
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		safety,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transformations[0].Skip {
+		t.Fatal("legacy sequence event was retained")
+	}
+	var recovered map[string]any
+	if err := json.Unmarshal(transformations[0].Payload, &recovered); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(recovered["events"], []any{"sequence", "analysis"}) {
+		t.Fatalf("stages = %+v", recovered["events"])
+	}
+	user := recovered["monitorStage"].(map[string]any)["user"].(map[string]any)
+	if _, present := user["audit"]; present {
+		t.Fatalf("audit was not removed: %+v", user)
+	}
+	recoveredPayload := recovered["payload"].(map[string]any)
+	if recoveredPayload["signedUrl"] != "https://vault.test/fresh" ||
+		recoveredPayload["is_fragmented"] != false {
+		t.Fatalf("payload = %+v", recoveredPayload)
+	}
+	if result.AuditRemoved != 1 || result.TailSuppressed != 1 ||
+		result.Candidates != 1 || result.Refreshed != 1 {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -484,15 +845,14 @@ func TestRecoverDeadLettersDryRunScansConfiguredLimit(t *testing.T) {
 func recoveryTestMessage(id, stage, fileName, provider string, extra map[string]any) sharedqueue.DeadLetterMessage {
 	event := map[string]any{
 		"events": []string{stage, "notification"},
+		"date":   time.Now().Unix(),
 		"source": provider,
 		"payload": map[string]any{
 			"key":       fileName,
 			"signedUrl": "https://vault.test/expired",
 			"unknown":   "preserved",
 		},
-		"monitorStage": map[string]any{
-			"user": map[string]any{"email": "user@example.com"},
-		},
+		"monitorStage": recoveryTestMonitorStage(nil),
 	}
 	for key, value := range extra {
 		event[key] = value
@@ -502,4 +862,21 @@ func recoveryTestMessage(id, stage, fileName, provider string, extra map[string]
 		panic(err)
 	}
 	return sharedqueue.DeadLetterMessage{ID: id, Payload: payload}
+}
+
+const recoveryTestUserID = "aaaaaaaaaaaaaaaaaaaaaaaa"
+
+func recoveryTestMonitorStage(userExtra map[string]any) map[string]any {
+	user := map[string]any{
+		"id":    recoveryTestUserID,
+		"email": "user@example.com",
+	}
+	for key, value := range userExtra {
+		user[key] = value
+	}
+	return map[string]any{
+		"organisationId": recoveryTestUserID,
+		"projectId":      recoveryTestUserID,
+		"user":           user,
+	}
 }

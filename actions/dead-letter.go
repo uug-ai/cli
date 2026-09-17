@@ -38,6 +38,10 @@ type dlqCommandConfig struct {
 	vaultURLExpiry string
 	vaultAllowHTTP bool
 
+	historicalTailMaxAge time.Duration
+	allowHistoricalTail  bool
+	legacyUserOwnership  bool
+
 	rabbitHost        string
 	rabbitUsername    string
 	rabbitPassword    string
@@ -234,6 +238,9 @@ func parseDLQFlags(action string, args []string, stderr io.Writer) (dlqCommandCo
 		flags.StringVar(&config.vaultProvider, "vault-provider", envValue("KERBEROS_STORAGE_PROVIDER", ""), "fallback Vault provider when an event has none")
 		flags.StringVar(&config.vaultURLExpiry, "vault-url-expiry", "", "optional signed URL duration such as 24h")
 		flags.BoolVar(&config.vaultAllowHTTP, "vault-allow-insecure-http", false, "allow plaintext HTTP for a non-loopback Vault URI")
+		flags.DurationVar(&config.historicalTailMaxAge, "historical-tail-max-age", defaultHistoricalTailMaxAge, "recording age after which throttler and notification stages are suppressed")
+		flags.BoolVar(&config.allowHistoricalTail, "allow-historical-tail", false, "preserve throttler and notification stages for historical recordings (unsafe)")
+		flags.BoolVar(&config.legacyUserOwnership, "legacy-user-ownership", false, "require canonical ownership to match monitor user ID for legacy workers")
 	}
 	if action == "seed" {
 		flags.StringVar(&config.sources, "sources", "kcloud-monitor-queue,kcloud-analysis-queue", "comma-separated source queues to distribute synthetic messages across")
