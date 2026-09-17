@@ -44,21 +44,49 @@ func TestParseReplayDefaultsToDryRun(t *testing.T) {
 }
 
 func TestDLQHelpDoesNotExposeEnvironmentSecrets(t *testing.T) {
-	secrets := []string{"rabbit-value-92", "kafka-value-47", "azure-value-31", "token-value-68"}
+	secrets := []string{"rabbit-value-92", "kafka-value-47", "azure-value-31", "token-value-68", "vault-access-17", "vault-secret-53", "secret-vault-host"}
 	t.Setenv("RABBITMQ_PASSWORD", secrets[0])
 	t.Setenv("KAFKA_PASSWORD", secrets[1])
 	t.Setenv("AZURE_EVENTHUB_CONNECTION_STRING", secrets[2])
 	t.Setenv("SQS_SESSION_TOKEN", secrets[3])
+	t.Setenv("KERBEROS_STORAGE_ACCESS_KEY", secrets[4])
+	t.Setenv("KERBEROS_STORAGE_SECRET", secrets[5])
+	t.Setenv("KERBEROS_STORAGE_URI", "https://"+secrets[6]+"/api")
 
 	var output bytes.Buffer
-	_, err := parseDLQFlags("inspect", []string{"--help"}, &output)
+	_, err := parseDLQFlags("recover", []string{"--help"}, &output)
 	if err != flag.ErrHelp {
 		t.Fatalf("parseDLQFlags error = %v, want flag.ErrHelp", err)
 	}
+
 	for _, secret := range secrets {
 		if strings.Contains(output.String(), secret) {
 			t.Fatalf("help output exposed secret %q", secret)
 		}
+	}
+}
+
+func TestParseRecoveryBatchFlags(t *testing.T) {
+	config, err := parseDLQFlags("recover", []string{
+		"--provider", "rabbitmq",
+		"--dead-letter", "deadletter",
+		"--destination", "kcloud-event-queue",
+		"--limit", "30000",
+		"--batch-size", "500",
+		"--batch-delay", "2s",
+		"--historical-tail-max-age", "30m",
+		"--legacy-user-ownership",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("parseDLQFlags: %v", err)
+	}
+	if config.execute || config.limit != 30000 || config.batchSize != 500 ||
+		config.batchDelay != 2*time.Second || config.historicalTailMaxAge != 30*time.Minute ||
+		config.allowHistoricalTail || !config.legacyUserOwnership {
+		t.Fatalf("config = %+v", config)
+	}
+	if err := validateRecoveryConfig(config); err != nil {
+		t.Fatalf("validateRecoveryConfig: %v", err)
 	}
 }
 
@@ -104,6 +132,36 @@ func TestPrintInspectionGroupsSources(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output %q does not contain %q", text, expected)
 		}
+	}
+}
+
+func TestPrintReplayGroupsDestinations(t *testing.T) {
+	var output bytes.Buffer
+	printReplay(&output, sharedqueue.DeadLetterReplayResult{
+		Scanned:  3,
+		Matched:  3,
+		Planned:  3,
+		Retained: 3,
+		Destinations: map[string]int{
+			"kcloud-sequence-queue": 1,
+			"kcloud-event-queue":    2,
+		},
+	}, false)
+	text := output.String()
+	for _, expected := range []string{
+		"Mode: dry-run",
+		"REPLAY DESTINATION",
+		"kcloud-event-queue",
+		"kcloud-sequence-queue",
+		"Planned: 3",
+		"No messages were moved",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output %q does not contain %q", text, expected)
+		}
+	}
+	if strings.Index(text, "kcloud-event-queue") > strings.Index(text, "kcloud-sequence-queue") {
+		t.Fatalf("destinations are not sorted: %q", text)
 	}
 }
 

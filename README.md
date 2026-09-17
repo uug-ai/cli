@@ -9,7 +9,7 @@ This repository contains CLI tools for performing specific automations.
 - `organisations-bootstrap`: Bootstrapping Phase 3 organisation identity and memberships in ordered stages.
 - `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
-- `dlq`: Inspecting, replaying, and safely seeding dead-letter queues across supported providers.
+- `dlq`: Inspecting, replaying, recovering, and safely seeding dead-letter queues across supported providers.
 
 
 ## Run
@@ -54,10 +54,78 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
 
 ### Dead-letter queue administration
 
-The `dlq` command supports RabbitMQ, SQS, Kafka, and Azure Event Hubs through
-the shared `uug-ai/queue` administrative API.
+The provider-neutral `dlq` command uses the shared `uug-ai/queue`
+administrative API and supports RabbitMQ, SQS, Kafka, and Azure Event Hubs.
 
-Inspect a bounded number of messages and group them by their recorded source:
+| Command | Purpose | Mutates the queue by default? |
+| --- | --- | --- |
+| `dlq inspect` | Count and group dead letters by their recorded source queue. | No |
+| `dlq replay` | Republish messages without changing their payloads. | No; add `--execute` |
+| `dlq recover` | Validate and safely repair Hub pipeline events before replay. | No; add `--execute` |
+| `dlq seed` | Add synthetic envelopes for non-production testing. | No; add `--execute` |
+
+`inspect`, `replay`, and `recover` scan at most `--limit` messages. This is a
+bounded scan, not a promise to drain the queue. Always run `replay`, `recover`,
+or `seed` without `--execute` first, review the plan, and then repeat the same
+command with `--execute`.
+
+#### Configure a provider
+
+Provider flags have matching environment variables where possible. Prefer
+environment variables for secrets so credentials are not saved in shell
+history. For example, a RabbitMQ session can be configured as follows:
+
+```sh
+export RABBITMQ_HOST='<rabbitmq-host>'
+export RABBITMQ_USERNAME='<rabbitmq-username>'
+export RABBITMQ_PASSWORD='<rabbitmq-password>'
+export RABBITMQ_VHOST='/'
+```
+
+Use quotes around values containing shell metacharacters. The supported provider
+settings are:
+
+| Provider | Required settings | Optional settings |
+| --- | --- | --- |
+| RabbitMQ | `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD` | `RABBITMQ_VHOST`, `RABBITMQ_CA_CERT_FILE` |
+| Kafka | `KAFKA_BROKER` | `KAFKA_GROUP_ID` and `KAFKA_USERNAME`, `KAFKA_PASSWORD`, `KAFKA_MECHANISM`, `KAFKA_SECURITY_PROTOCOL` for SASL |
+| Azure Event Hubs | `AZURE_EVENTHUB_CONNECTION_STRING` and an existing, dedicated `KAFKA_GROUP_ID` | `AZURE_EVENTHUB_NAMESPACE` |
+| SQS | `AWS_REGION` and the standard AWS credential chain | `SQS_ENDPOINT`, `SQS_SESSION_TOKEN`, `SQS_MESSAGE_GROUP_ID`, or the static credential flags |
+
+`QUEUE_PROVIDER` and `DEAD_LETTER_QUEUE` can replace the common `--provider`
+and `--dead-letter` flags. Command-line flags remain useful when operating
+multiple queues from the same shell.
+
+#### Dead-letter envelope
+
+Provider-independent messages use the `uug.ai/dead-letter/v1` envelope:
+
+```json
+{
+  "schema": "uug.ai/dead-letter/v1",
+  "payload": "<base64-encoded original message>",
+  "deadLetter": {
+    "source": "kcloud-sequence-queue",
+    "destination": "dead-letter-queue",
+    "replayDestination": "kcloud-event-queue",
+    "service": "hub-pipeline-sequence",
+    "reason": "handler_error",
+    "attempts": 1,
+    "timestamp": "2026-09-17T12:56:43Z"
+  }
+}
+```
+
+The payload is base64 encoded by JSON so any original byte sequence can be
+preserved. Replay publishes the decoded original payload, not the envelope.
+Optional metadata records where and why the message was parked and allows
+provider-neutral inspection and routing. Messages written before envelopes were
+introduced are reported as `Legacy/unknown`; they can still be replayed with an
+explicit `--destination`.
+
+#### Inspect the queue
+
+Inspect up to 100 messages:
 
 ```sh
 go run . dlq inspect \
@@ -66,7 +134,28 @@ go run . dlq inspect \
   --limit 100
 ```
 
-Replay is a dry run by default:
+The report groups envelope messages by their recorded source and shows the
+oldest and newest dead-letter timestamps in each group. `Scanned` is the number
+read during this bounded operation, `TOTAL` is the number matching an optional
+`--source` filter, and `Legacy/unknown` counts raw messages without recognized
+dead-letter metadata.
+
+To inspect only sequence failures:
+
+```sh
+go run . dlq inspect \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --source kcloud-sequence-queue \
+  --limit 100
+```
+
+Inspection never publishes or settles messages.
+
+#### Replay messages unchanged
+
+Use `replay` when the original payload is still valid and needs no pipeline
+repair. First run a dry run:
 
 ```sh
 go run . dlq replay \
@@ -76,9 +165,28 @@ go run . dlq replay \
   --limit 100
 ```
 
-Add `--execute` to publish and settle matched messages. Envelope messages use
-their recorded source unless `--destination` overrides it. Legacy raw messages
-always require an explicit destination:
+The dry run prints the planned count for each replay destination and finishes
+with `No messages were moved`. Execute the reviewed plan by adding
+`--execute`:
+
+```sh
+go run . dlq replay \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --source kcloud-monitor-queue \
+  --limit 100 \
+  --execute
+```
+
+The destination is selected in this order:
+
+1. `--destination`, when explicitly provided by the operator.
+2. The envelope's recorded `replayDestination`.
+3. The envelope's recorded source, for older envelopes.
+
+Legacy raw messages have no routing metadata and therefore require
+`--destination`. A destination override is also useful when intentionally
+routing older messages through a new entry point:
 
 ```sh
 go run . dlq replay \
@@ -89,27 +197,173 @@ go run . dlq replay \
   --execute
 ```
 
-Replay refuses to target the configured dead-letter destination and always
-publishes before settling the source message. Kafka and Azure Event Hubs do not
-allow source-filtered executed replays because their offsets are committed
-contiguously.
+Replay refuses to publish to the configured dead-letter destination. It
+publishes each message before settling its dead-letter copy, so a publish
+failure retains the source message. Kafka and Azure Event Hubs do not allow an
+executed replay with `--source` because their offsets must be committed
+contiguously; an unfiltered executed replay or a filtered dry run is supported.
 
-Provider connection flags use matching environment variables where possible:
+#### Recover Hub pipeline events
 
-| Provider | Required settings |
+Use `recover` instead of `replay` for Hub pipeline events that may contain
+expired persistent-recording URLs or payload fields that are unsafe for the
+deployed downstream versions. Recovery resumes the event at its current
+`events[0]` stage and sends it through the event router; it does not rerun
+stages already removed from `events`.
+
+The router destination is mandatory. The following example scans sequence dead
+letters and plans recovery in batches of 10:
+
+```sh
+go run . dlq recover \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --source kcloud-sequence-queue \
+  --destination kcloud-event-queue \
+  --limit 100 \
+  --batch-size 10 \
+  --batch-delay 2s \
+  --timeout 1m \
+  --legacy-user-ownership
+```
+
+Without `--execute`, recovery:
+
+- validates every candidate and reports its current stage;
+- reports recoverable candidates, on-demand bypasses, planned audit
+  sanitizations, and planned historical tail suppressions;
+- groups rejected messages by an `UNRECOVERABLE REASON`; and
+- makes no Vault requests and moves no messages.
+
+For an executed recovery containing persistent recordings, configure Vault and
+repeat the reviewed command with `--execute`:
+
+```sh
+export KERBEROS_STORAGE_URI='https://<vault-host>/api'
+export KERBEROS_STORAGE_ACCESS_KEY='<vault-access-key>'
+export KERBEROS_STORAGE_SECRET='<vault-secret>'
+export KERBEROS_STORAGE_PROVIDER='<fallback-provider>'
+
+go run . dlq recover \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --source kcloud-sequence-queue \
+  --destination kcloud-event-queue \
+  --limit 100 \
+  --batch-size 10 \
+  --batch-delay 2s \
+  --timeout 1m \
+  --legacy-user-ownership \
+  --execute
+```
+
+`--limit` bounds the whole run. `--batch-size` controls how many messages are
+validated, refreshed, and published together. `--batch-delay` is applied
+between executed batches, and `--timeout` applies separately to each batch.
+If a later batch fails, earlier successful batches remain completed; the failed
+batch is not published and its counters are not reported as completed work.
+
+##### URL refresh behavior
+
+For `request == "persist"`, each executed batch calls Vault's
+`POST /api/storage/bulk` endpoint and replaces only `payload.signedUrl` plus any
+required safety normalization. Storage provider selection uses the event's
+`source`, then its `provider`, then `KERBEROS_STORAGE_PROVIDER`. Unknown JSON
+fields are preserved.
+
+For `request == "ondemand"`, recovery does not contact Vault because the
+existing URL belongs to the on-demand flow. The payload is replayed byte for
+byte when no safety normalization is needed. An on-demand-only execution can
+omit all Vault settings. If a persistent candidate is encountered without
+Vault settings, that batch stops before publication.
+
+`KERBEROS_STORAGE_URI`, `KERBEROS_STORAGE_ACCESS_KEY`, and
+`KERBEROS_STORAGE_SECRET` must be provided together. Equivalent
+`--vault-uri`, `--vault-access-key`, and `--vault-secret` flags are available.
+Vault must use HTTPS. Plain HTTP is accepted only for loopback development or
+with the explicit `--vault-allow-insecure-http` override. Redirects, incomplete
+bulk responses, invalid URLs, and oversized responses fail closed before
+publishing the affected batch. Transport errors do not print the Vault
+endpoint.
+
+##### Pipeline safety behavior
+
+Recovery applies the following checks before publishing:
+
+- Every stage name is validated, including messages that would otherwise reach
+  older workers that assume `events[1:]` exists.
+- The embedded `monitorStage.user.audit` snapshot is removed. Model generations
+  disagree on its shape, and resumed stages do not use it.
+- Embedded storage URLs and existing on-demand signed URLs must be valid HTTP
+  or HTTPS URLs.
+- Malformed, unsupported, or conflicting messages remain in the dead-letter
+  queue while other valid messages continue.
+- Existing non-empty canonical `organisationId` and `projectId` values are
+  never synthesized, removed, or overwritten.
+
+Recordings older than `--historical-tail-max-age` (15 minutes by default)
+resume only through stages before `throttler` and `notification`. This prevents
+stale monitor snapshots from regressing throttle state and avoids expired
+notifications. A message whose current stage is already `throttler` or
+`notification` is retained. `--allow-historical-tail` disables this protection
+and should be used only after explicitly accepting those downstream effects.
+
+##### Legacy ownership compatibility
+
+Some older sequence and analysis workers ignore canonical monitor ownership and
+scope persistence from `monitorStage.user.id`. Add
+`--legacy-user-ownership` whenever those versions are deployed.
+
+Known canonical-aware releases begin with sequence `v1.6.27` and analysis
+`v1.8.7`. Deployments containing older versions of either worker should use the
+legacy compatibility flag.
+
+With this flag, an event is compatible only when every existing canonical
+ownership field agrees with the stable user/owner ID. Missing canonical fields
+remain compatible with the legacy default-project interpretation:
+
+```text
+organisationId = projectId = monitorStage.user.id
+```
+
+An event with an existing non-default canonical project cannot be represented
+by that legacy model without changing its ownership. Recovery reports it as
+`legacy-owner-conflict` and retains it. Do not remove the flag merely to force
+replay, replace the canonical project with the user ID, or replace the user ID
+with the project ID. Upgrade or backport canonical ownership handling in the
+downstream workers before recovering such messages.
+
+Canonical-aware downstream versions should preserve existing canonical fields
+and use the stable owner ID only as a fallback when those fields are absent.
+They do not require `--legacy-user-ownership`.
+
+##### Read the recovery report
+
+| Field | Meaning |
 | --- | --- |
-| RabbitMQ | `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD`; optional `RABBITMQ_VHOST` |
-| Kafka | `KAFKA_BROKER`; optional SASL settings and `KAFKA_GROUP_ID` |
-| Azure Event Hubs | `AZURE_EVENTHUB_CONNECTION_STRING` and an existing dedicated `KAFKA_GROUP_ID`; optional namespace |
-| SQS | `AWS_REGION` and the standard AWS credential chain |
+| `Scanned` | Messages read from the bounded dead-letter scan. |
+| `Matched` | Messages matching the optional source filter. |
+| `Planned` | Valid transformations that would be, or were, published. |
+| `Recovery candidates` | Valid pipeline messages considered for recovery. |
+| `Legacy user audit sanitizations` | Embedded audit snapshots removed. |
+| `Historical tail suppressions` | Events whose unsafe tail stages were removed. |
+| `URL refresh bypassed` | Exact on-demand requests that kept their existing URL. |
+| `URLs refreshed` | Persistent event URLs actually refreshed; always zero in a dry run. |
+| `Unrecoverable` | Messages retained because validation failed; see the reason table above it. |
+| `Replayed` | Messages successfully published and settled; always zero in a dry run. |
+| `Retained` | Messages left in the dead-letter queue, including all messages in a dry run. |
+| `Legacy/unknown` | Messages without a recognized dead-letter envelope. |
+| `Unroutable` | Messages for which no safe replay destination was available. |
 
-Run `go run . dlq inspect --help`, `go run . dlq replay --help`, or
-`go run . dlq seed --help` for all flags.
+Each provider holds retained settlement metadata for the entire bounded
+operation so a message is scanned at most once. Choose `--limit` as both a work
+and memory safety bound. Kafka additionally retains messages after a skipped
+message in the same partition because committing a later offset would also
+commit the skipped message; other partitions continue.
 
-#### Seeding synthetic messages
+#### Seed synthetic messages
 
-Use the guarded seed command only with non-production queues. It is a dry run
-unless `--execute` is present:
+Use `seed` only with non-production queues. First review the dry run:
 
 ```sh
 go run . dlq seed \
@@ -117,12 +371,25 @@ go run . dlq seed \
   --dead-letter test-dead-letter-queue \
   --sources test-monitor-queue,test-analysis-queue \
   --count 10
+```
 
-go run . dlq seed ... --execute
+Then add `--execute` to publish the synthetic envelopes:
+
+```sh
+go run . dlq seed \
+  --provider rabbitmq \
+  --dead-letter test-dead-letter-queue \
+  --sources test-monitor-queue,test-analysis-queue \
+  --count 10 \
+  --execute
 ```
 
 Synthetic payloads contain only a sequence number and source name. Replaying
 them publishes those payloads to their recorded source destinations.
+
+Run `go run . dlq inspect --help`, `go run . dlq replay --help`,
+`go run . dlq recover --help`, or `go run . dlq seed --help` for the complete
+flag reference.
 
 ### Organisation identity bootstrap
 
