@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -960,6 +961,88 @@ func TestRecoverDeadLettersDryRunScansConfiguredLimit(t *testing.T) {
 		result.ByStage["sequence"] != 1 || result.ByStage["analysis"] != 1 ||
 		result.ByStage["notification"] != 1 {
 		t.Fatalf("result = %+v, requests = %+v", result, admin.requests)
+	}
+}
+
+func TestRecoverDeadLettersDebugPrintsRedactedPayloadAndPlan(t *testing.T) {
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "ceph", map[string]any{
+		"request": "persist",
+		"traceId": "trace-debug-1",
+		"date":    time.Now().Add(-time.Hour).Unix(),
+		"monitorStage": recoveryTestMonitorStage(map[string]any{
+			"audit":    map[string]any{"createdAt": "secret-audit-value"},
+			"password": "secret-password-value",
+			"storage": map[string]any{
+				"access_key": "secret-access-value",
+				"secret_key": "secret-storage-value",
+			},
+		}),
+		"payload": map[string]any{
+			"key":           "recording.mp4",
+			"signedUrl":     "https://vault.test/secret-signed-url",
+			"bytes_ranges":  "secret-byte-ranges",
+			"fileSize":      42,
+			"duration":      "30",
+			"is_fragmented": true,
+			"metadata": map[string]any{
+				"event-timestamp": "1",
+				"productid":       "device-1",
+				"secret":          "secret-metadata-value",
+			},
+		},
+	})
+	message.Legacy = true
+	admin := &scriptedRecoveryAdmin{messages: []sharedqueue.DeadLetterMessage{message}}
+	var debugOutput bytes.Buffer
+
+	result, err := recoverDeadLetters(context.Background(), admin, nil, dlqCommandConfig{
+		limit:       1,
+		batchSize:   1,
+		timeout:     time.Second,
+		destination: "kcloud-event-queue",
+		debug:       true,
+		debugOutput: &debugOutput,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Candidates != 1 || result.AuditRemoved != 1 || result.TailSuppressed != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+
+	output := debugOutput.String()
+	for _, expected := range []string{
+		`"type": "dlq-recovery-debug"`,
+		`"messageId": "message-1"`,
+		`"legacy": true`,
+		`"traceId": "trace-debug-1"`,
+		`"key": "recording.mp4"`,
+		`"signedUrl": "<redacted>"`,
+		`"bytes_ranges": "<omitted>"`,
+		`"status": "planned"`,
+		`"destination": "kcloud-event-queue"`,
+		`"currentStage": "sequence"`,
+		`"signedUrlAction": "refresh-from-vault"`,
+		`"auditSanitization": true`,
+		`"historicalTailSuppression": true`,
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("debug output does not contain %q:\n%s", expected, output)
+		}
+	}
+	for _, secret := range []string{
+		"secret-audit-value",
+		"secret-password-value",
+		"secret-access-value",
+		"secret-storage-value",
+		"secret-signed-url",
+		"secret-byte-ranges",
+		"secret-metadata-value",
+		"user@example.com",
+	} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("debug output exposed %q:\n%s", secret, output)
+		}
 	}
 }
 

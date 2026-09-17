@@ -263,6 +263,35 @@ between executed batches, and `--timeout` applies separately to each batch.
 If a later batch fails, earlier successful batches remain completed; the failed
 batch is not published and its counters are not reported as completed work.
 
+##### Debug individual recovery messages
+
+Add `--debug` to print a redacted JSON record before each matched message is
+processed. This is useful for a one-message canary:
+
+```sh
+go run . dlq recover \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --destination kcloud-event-queue \
+  --limit 1 \
+  --batch-size 1 \
+  --legacy-user-ownership \
+  --debug
+```
+
+Repeat the reviewed command with `--execute` to perform the canary. Each debug
+record includes the message ID, envelope type, trace ID, stage list, canonical
+ownership, selected media metadata, destination, signed URL action, and planned
+safety transformations. It is written before any Vault request or replay
+publish for that message's batch.
+
+Debug output deliberately omits or redacts credentials, user contact details,
+signed URLs, byte-range data, device cloud keys, and unknown fields. It is not
+a raw payload backup and should still be handled as operationally sensitive
+because file names, device identifiers, and ownership identifiers remain
+visible. Debug mode does not change settlement behavior and does not verify
+that downstream processing completed.
+
 ##### URL refresh behavior
 
 For `request == "persist"`, each executed batch calls Vault's
