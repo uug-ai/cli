@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,6 +186,73 @@ func TestTransformPipelineRecoveryBatchUsesEventStorageProviderFallback(t *testi
 	if len(refresher.calls) != 1 || len(refresher.calls[0]) != 1 ||
 		refresher.calls[0][0].Provider != "s3" {
 		t.Fatalf("Vault calls = %+v", refresher.calls)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchBypassesOnDemandURLRefresh(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{err: errors.New("Vault must not be called")}
+	message := recoveryTestMessage("message-1", "sequence", "recording.mp4", "minio-local", map[string]any{
+		"request": "ondemand",
+	})
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refresher.calls) != 0 {
+		t.Fatalf("Vault calls = %+v", refresher.calls)
+	}
+	if len(transformations) != 1 || transformations[0].Skip ||
+		string(transformations[0].Payload) != string(message.Payload) {
+		t.Fatalf("transformations = %+v", transformations)
+	}
+	if result.Candidates != 1 || result.Bypassed != 1 || result.Refreshed != 0 ||
+		result.ByStage["sequence"] != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchRefreshesPersistAndBypassesOnDemand(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{}
+	onDemand := recoveryTestMessage("message-1", "sequence", "ondemand.mp4", "minio-local", map[string]any{
+		"request": "ondemand",
+	})
+	persist := recoveryTestMessage("message-2", "sequence", "persist.mp4", "ceph", map[string]any{
+		"request": "persist",
+	})
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{onDemand, persist},
+		true,
+		"",
+		"",
+		refresher,
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refresher.calls) != 1 || len(refresher.calls[0]) != 1 ||
+		refresher.calls[0][0].Filename != "persist.mp4" {
+		t.Fatalf("Vault calls = %+v", refresher.calls)
+	}
+	if string(transformations[0].Payload) != string(onDemand.Payload) {
+		t.Fatal("on-demand payload was changed")
+	}
+	if string(transformations[1].Payload) == string(persist.Payload) {
+		t.Fatal("persist payload signed URL was not refreshed")
+	}
+	if result.Candidates != 2 || result.Bypassed != 1 || result.Refreshed != 1 {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

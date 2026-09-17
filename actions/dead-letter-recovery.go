@@ -45,6 +45,7 @@ type pipelineRecoveryMessage struct {
 	fileName string
 	provider string
 	stage    string
+	onDemand bool
 }
 
 type pipelineRecoveryRequest struct {
@@ -57,6 +58,7 @@ type deadLetterRecoveryResult struct {
 	Batches    int
 	Candidates int
 	Refreshed  int
+	Bypassed   int
 	ByStage    map[string]int
 }
 
@@ -222,6 +224,9 @@ func transformPipelineRecoveryBatch(
 		}
 		parsed[index] = &recoveryMessage
 
+		if recoveryMessage.onDemand {
+			continue
+		}
 		request := vaultMediaURLRequest{
 			Provider:      recoveryMessage.provider,
 			Filename:      recoveryMessage.fileName,
@@ -264,8 +269,11 @@ func transformPipelineRecoveryBatch(
 			result.ByStage = make(map[string]int)
 		}
 		result.ByStage[recoveryMessage.stage]++
-		if !execute {
+		if !execute || recoveryMessage.onDemand {
 			transformations[index].Payload = append([]byte(nil), messages[index].Payload...)
+		}
+		if recoveryMessage.onDemand {
+			result.Bypassed++
 		}
 	}
 	if !execute || len(requests) == 0 {
@@ -280,7 +288,7 @@ func transformPipelineRecoveryBatch(
 	}
 
 	for index, recoveryMessage := range parsed {
-		if recoveryMessage == nil {
+		if recoveryMessage == nil || recoveryMessage.onDemand {
 			continue
 		}
 		signedURL := strings.TrimSpace(urls[recoveryMessage.fileName])
@@ -299,6 +307,7 @@ func transformPipelineRecoveryBatch(
 
 func parsePipelineRecoveryMessage(message sharedqueue.DeadLetterMessage, fallbackProvider string) (pipelineRecoveryMessage, error) {
 	var projection struct {
+		Request  string   `json:"request"`
 		Stages   []string `json:"events"`
 		Provider string   `json:"source"`
 		Storage  string   `json:"provider"`
@@ -342,6 +351,7 @@ func parsePipelineRecoveryMessage(message sharedqueue.DeadLetterMessage, fallbac
 		fileName: fileName,
 		provider: provider,
 		stage:    strings.TrimSpace(projection.Stages[0]),
+		onDemand: projection.Request == "ondemand",
 	}, nil
 }
 
@@ -414,11 +424,12 @@ func printRecovery(output io.Writer, result deadLetterRecoveryResult, execute bo
 		writer.Flush()
 	}
 	printReplayDestinations(output, result.Replay.Destinations)
-	fmt.Fprintf(output, "Scanned: %d\nMatched: %d\nPlanned: %d\nURLs eligible: %d\nURLs refreshed: %d\nUnrecoverable: %d\nReplayed: %d\nRetained: %d\nLegacy/unknown: %d\nUnroutable: %d\n",
+	fmt.Fprintf(output, "Scanned: %d\nMatched: %d\nPlanned: %d\nRecovery candidates: %d\nURL refresh bypassed: %d\nURLs refreshed: %d\nUnrecoverable: %d\nReplayed: %d\nRetained: %d\nLegacy/unknown: %d\nUnroutable: %d\n",
 		result.Replay.Scanned,
 		result.Replay.Matched,
 		result.Replay.Planned,
 		result.Candidates,
+		result.Bypassed,
 		result.Refreshed,
 		result.Replay.Skipped,
 		result.Replay.Replayed,

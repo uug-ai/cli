@@ -123,6 +123,10 @@ reported as unrecoverable and remain in the dead-letter queue while other valid
 messages continue. The explicit destination should be the pipeline router so it
 can dispatch each event from its own current stage.
 
+Events whose `request` is exactly `ondemand` bypass Vault URL refresh and are
+replayed byte-for-byte. Their existing URL refers to the on-demand Vault flow
+and does not use the persistent-recording provider configuration.
+
 Vault request failures and incomplete bulk responses stop the run before that
 batch is published. Batches completed earlier in the same run remain replayed
 and can be excluded by a subsequent bounded retry.
