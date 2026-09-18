@@ -263,6 +263,33 @@ between executed batches, and `--timeout` applies separately to each batch.
 If a later batch fails, earlier successful batches remain completed; the failed
 batch is not published and its counters are not reported as completed work.
 
+##### Drop selected current stages
+
+Use `--drop` to remove validated pipeline messages whose current `events[0]`
+stage exactly matches one of the comma-separated stage names. A dry run is
+still the default:
+
+```sh
+go run . dlq recover \
+  --provider rabbitmq \
+  --dead-letter dead-letter-queue \
+  --destination kcloud-event-queue \
+  --limit 10000 \
+  --batch-size 100 \
+  --drop notification,throttler
+```
+
+Review `Planned drops` and the current-stage table, then repeat the command with
+`--execute` to settle those messages permanently. Dropped messages are not sent
+to Vault or published to the pipeline router. Messages at other current stages
+continue through normal recovery, so they may still require Vault credentials.
+The filter does not match a stage merely because it appears later in `events`.
+
+Dropping is destructive and irreversible. Pause new producers or otherwise
+isolate the DLQ during a broad cleanup so newly arriving failures are not
+discarded accidentally. `--drop` cannot be combined with
+`--allow-historical-tail`.
+
 ##### Debug individual recovery messages
 
 Add `--debug` to print one redacted JSON object for each matched message. Debug
@@ -293,7 +320,8 @@ Each debug record includes:
   version;
 - `payload`: an allowlisted, redacted view of the original pipeline payload;
 - `recovery.mode`: `dry-run` or `execute`;
-- `recovery.status`: `planned` when validation succeeded, or `retained` when
+- `recovery.status`: `planned` when recovery validation succeeded,
+  `drop-planned` when the current stage matches `--drop`, or `retained` when
   validation rejected the message;
 - `recovery.reason`: the categorized validation reason for a retained message;
   and
@@ -422,6 +450,7 @@ They do not require `--legacy-user-ownership`.
 | `Scanned` | Messages read from the bounded dead-letter scan. |
 | `Matched` | Messages matching the optional source filter. |
 | `Planned` | Valid transformations that would be, or were, published. |
+| `Planned drops` | Valid messages whose current stage matched `--drop`. |
 | `Recovery candidates` | Valid pipeline messages considered for recovery. |
 | `Legacy user audit sanitizations` | Embedded audit snapshots removed. |
 | `Historical tail suppressions` | Events whose unsafe tail stages were removed. |
@@ -429,6 +458,7 @@ They do not require `--legacy-user-ownership`.
 | `URLs refreshed` | Persistent event URLs actually refreshed; always zero in a dry run. |
 | `Unrecoverable` | Messages retained because validation failed; see the reason table above it. |
 | `Replayed` | Messages successfully published and settled; always zero in a dry run. |
+| `Dropped` | Messages settled without publication; always zero in a dry run. |
 | `Retained` | Messages left in the dead-letter queue, including all messages in a dry run. |
 | `Legacy/unknown` | Messages without a recognized dead-letter envelope. |
 | `Unroutable` | Messages for which no safe replay destination was available. |

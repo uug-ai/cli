@@ -56,6 +56,7 @@ type pipelineRecoveryMessage struct {
 	provider string
 	stage    string
 	onDemand bool
+	drop     bool
 	changed  bool
 
 	auditRemoved   bool
@@ -83,6 +84,7 @@ type pipelineRecoverySafetyPolicy struct {
 	historicalTailMaxAge time.Duration
 	allowHistoricalTail  bool
 	legacyUserOwnership  bool
+	dropStages           map[string]struct{}
 	debugger             *pipelineRecoveryDebugger
 }
 
@@ -298,6 +300,13 @@ func validateRecoveryConfig(config dlqCommandConfig) error {
 	if config.historicalTailMaxAge < 0 {
 		return fmt.Errorf("--historical-tail-max-age cannot be negative")
 	}
+	dropStages, err := parsePipelineDropStages(config.drop)
+	if err != nil {
+		return err
+	}
+	if len(dropStages) > 0 && config.allowHistoricalTail {
+		return fmt.Errorf("--drop and --allow-historical-tail cannot be used together")
+	}
 	if config.execute {
 		configuredVaultValues := 0
 		for _, value := range []string{config.vaultURI, config.vaultAccessKey, config.vaultSecret} {
@@ -314,6 +323,21 @@ func validateRecoveryConfig(config dlqCommandConfig) error {
 
 func recoveryVaultConfigured(config dlqCommandConfig) bool {
 	return config.vaultURI != "" && config.vaultAccessKey != "" && config.vaultSecret != ""
+}
+
+func parsePipelineDropStages(value string) (map[string]struct{}, error) {
+	stages := make(map[string]struct{})
+	for _, candidate := range strings.Split(value, ",") {
+		stage := strings.ToLower(strings.TrimSpace(candidate))
+		if stage == "" {
+			continue
+		}
+		if err := validatePipelineStages([]string{stage}); err != nil {
+			return nil, fmt.Errorf("--drop contains invalid stage %q: %w", candidate, err)
+		}
+		stages[stage] = struct{}{}
+	}
+	return stages, nil
 }
 
 func newVaultHTTPURLRefresher(baseURI, accessKey, secret string, allowInsecureHTTP bool, client *http.Client) (*vaultHTTPURLRefresher, error) {
@@ -471,6 +495,9 @@ func transformPipelineRecoveryBatch(
 		}
 		parsed[index] = &recoveryMessage
 
+		if recoveryMessage.drop {
+			continue
+		}
 		if recoveryMessage.onDemand {
 			continue
 		}
@@ -515,6 +542,17 @@ func transformPipelineRecoveryBatch(
 		if recoveryMessage == nil {
 			continue
 		}
+		batchResult.ByStage[recoveryMessage.stage]++
+		if recoveryMessage.drop {
+			transformations[index].Discard = true
+			if safety.debugger != nil {
+				debugRecords[index].Recovery.Status = "drop-planned"
+				debugRecords[index].Recovery.CurrentStage = recoveryMessage.stage
+				debugRecords[index].Recovery.ResultingStages = pipelineRecoveryDebugStages(recoveryMessage.root)
+				debugRecords[index].Recovery.SignedURLAction = "not-requested"
+			}
+			continue
+		}
 		if recoveryMessage.auditRemoved {
 			batchResult.AuditRemoved++
 		}
@@ -534,7 +572,6 @@ func transformPipelineRecoveryBatch(
 			debugRecords[index].Recovery.HistoricalTailSuppression = recoveryMessage.tailSuppressed
 		}
 		batchResult.Candidates++
-		batchResult.ByStage[recoveryMessage.stage]++
 		if !execute {
 			transformations[index].Payload = append([]byte(nil), messages[index].Payload...)
 		} else if recoveryMessage.onDemand {
@@ -568,7 +605,7 @@ func transformPipelineRecoveryBatch(
 	}
 
 	for index, recoveryMessage := range parsed {
-		if recoveryMessage == nil || recoveryMessage.onDemand {
+		if recoveryMessage == nil || recoveryMessage.drop || recoveryMessage.onDemand {
 			continue
 		}
 		signedURL := strings.TrimSpace(urls[recoveryMessage.fileName])
@@ -659,6 +696,16 @@ func parsePipelineRecoveryMessage(message sharedqueue.DeadLetterMessage, fallbac
 	if err := sanitizePipelineMonitorSnapshot(&recoveryMessage, safety); err != nil {
 		return recoveryMessage, err
 	}
+	if _, drop := safety.dropStages[recoveryMessage.stage]; drop {
+		recoveryMessage.drop = true
+		safety.allowHistoricalTail = true
+	}
+	if err := suppressHistoricalPipelineTail(&recoveryMessage, projection.Stages, safety); err != nil {
+		return recoveryMessage, err
+	}
+	if recoveryMessage.drop {
+		return recoveryMessage, nil
+	}
 	if recoveryMessage.onDemand {
 		if signedURL, ok, err := optionalJSONString(payload, "signedUrl"); err != nil {
 			return recoveryMessage, newPipelineRecoveryValidationError("invalid-signed-url", "dead-letter message %q has a non-string signed URL", message.ID)
@@ -667,9 +714,6 @@ func parsePipelineRecoveryMessage(message sharedqueue.DeadLetterMessage, fallbac
 				return recoveryMessage, newPipelineRecoveryValidationError("invalid-signed-url", "dead-letter message %q has an invalid signed URL: %v", message.ID, err)
 			}
 		}
-	}
-	if err := suppressHistoricalPipelineTail(&recoveryMessage, projection.Stages, safety); err != nil {
-		return recoveryMessage, err
 	}
 
 	provider := strings.TrimSpace(projection.Provider)
@@ -719,16 +763,21 @@ func defaultPipelineRecoverySafetyPolicy() pipelineRecoverySafetyPolicy {
 	return pipelineRecoverySafetyPolicy{historicalTailMaxAge: defaultHistoricalTailMaxAge}
 }
 
-func pipelineRecoverySafetyPolicyFromConfig(config dlqCommandConfig) pipelineRecoverySafetyPolicy {
+func pipelineRecoverySafetyPolicyFromConfig(config dlqCommandConfig) (pipelineRecoverySafetyPolicy, error) {
 	maxAge := config.historicalTailMaxAge
 	if maxAge == 0 {
 		maxAge = defaultHistoricalTailMaxAge
+	}
+	dropStages, err := parsePipelineDropStages(config.drop)
+	if err != nil {
+		return pipelineRecoverySafetyPolicy{}, err
 	}
 	return pipelineRecoverySafetyPolicy{
 		historicalTailMaxAge: maxAge,
 		allowHistoricalTail:  config.allowHistoricalTail,
 		legacyUserOwnership:  config.legacyUserOwnership,
-	}
+		dropStages:           dropStages,
+	}, nil
 }
 
 func newPipelineRecoveryValidationError(reason, format string, args ...any) error {
@@ -1045,7 +1094,10 @@ func isJSONNull(raw json.RawMessage) bool {
 
 func recoverDeadLetters(ctx context.Context, admin sharedqueue.DeadLetterAdmin, refresher vaultURLRefresher, config dlqCommandConfig) (deadLetterRecoveryResult, error) {
 	result := deadLetterRecoveryResult{ByStage: make(map[string]int)}
-	safety := pipelineRecoverySafetyPolicyFromConfig(config)
+	safety, err := pipelineRecoverySafetyPolicyFromConfig(config)
+	if err != nil {
+		return result, err
+	}
 	if config.debug {
 		safety.debugger = &pipelineRecoveryDebugger{
 			output:      config.debugOutput,
@@ -1116,10 +1168,11 @@ func printRecovery(output io.Writer, result deadLetterRecoveryResult, execute bo
 		writer.Flush()
 	}
 	printReplayDestinations(output, result.Replay.Destinations)
-	fmt.Fprintf(output, "Scanned: %d\nMatched: %d\nPlanned: %d\nRecovery candidates: %d\nLegacy user audit sanitizations: %d\nHistorical tail suppressions: %d\nURL refresh bypassed: %d\nURLs refreshed: %d\nUnrecoverable: %d\nReplayed: %d\nRetained: %d\nLegacy/unknown: %d\nUnroutable: %d\n",
+	fmt.Fprintf(output, "Scanned: %d\nMatched: %d\nPlanned: %d\nPlanned drops: %d\nRecovery candidates: %d\nLegacy user audit sanitizations: %d\nHistorical tail suppressions: %d\nURL refresh bypassed: %d\nURLs refreshed: %d\nUnrecoverable: %d\nReplayed: %d\nDropped: %d\nRetained: %d\nLegacy/unknown: %d\nUnroutable: %d\n",
 		result.Replay.Scanned,
 		result.Replay.Matched,
 		result.Replay.Planned,
+		result.Replay.DropPlanned,
 		result.Candidates,
 		result.AuditRemoved,
 		result.TailSuppressed,
@@ -1127,11 +1180,12 @@ func printRecovery(output io.Writer, result deadLetterRecoveryResult, execute bo
 		result.Refreshed,
 		result.Replay.Skipped,
 		result.Replay.Replayed,
+		result.Replay.Dropped,
 		result.Replay.Retained,
 		result.Replay.Legacy,
 		result.Replay.Unroutable,
 	)
 	if !execute {
-		fmt.Fprintln(output, "No URLs were requested and no messages were moved. Pass --execute to recover.")
+		fmt.Fprintln(output, "No URLs were requested and no messages were moved. Pass --execute to recover or drop planned messages.")
 	}
 }
