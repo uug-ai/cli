@@ -83,6 +83,14 @@ func (f *scriptedRecoveryAdmin) ReplayDeadLetters(ctx context.Context, request s
 			return result, err
 		}
 		for _, transformation := range transformations {
+			if transformation.Discard {
+				result.Planned--
+				result.DropPlanned++
+				if request.Execute {
+					result.Dropped++
+				}
+				continue
+			}
 			if transformation.Skip {
 				result.Skipped++
 				result.Planned--
@@ -514,6 +522,47 @@ func TestTransformPipelineRecoveryBatchRetainsHistoricalTailAtCurrentStage(t *te
 		result.ByFailure["historical-tail-current"] != 1 ||
 		result.AuditRemoved != 0 || result.TailSuppressed != 0 {
 		t.Fatalf("transformations=%+v result=%+v calls=%+v", transformations, result, refresher.calls)
+	}
+}
+
+func TestTransformPipelineRecoveryBatchDropsSelectedCurrentStage(t *testing.T) {
+	result := deadLetterRecoveryResult{}
+	refresher := &fakeVaultURLRefresher{err: errors.New("must not be called")}
+	var debug bytes.Buffer
+	message := recoveryTestMessage("message-1", "notification", "recording.mp4", "ceph", map[string]any{
+		"date":         time.Now().Add(-time.Hour).Unix(),
+		"events":       []string{"notification"},
+		"monitorStage": recoveryTestMonitorStage(map[string]any{"audit": map[string]any{"legacy": true}}),
+	})
+	transformations, err := transformPipelineRecoveryBatch(
+		context.Background(),
+		[]sharedqueue.DeadLetterMessage{message},
+		true,
+		"",
+		"",
+		refresher,
+		pipelineRecoverySafetyPolicy{
+			historicalTailMaxAge: defaultHistoricalTailMaxAge,
+			dropStages:           map[string]struct{}{"notification": {}},
+			debugger: &pipelineRecoveryDebugger{
+				output:      &debug,
+				destination: "kcloud-event-queue",
+				execute:     true,
+			},
+		},
+		&result,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !transformations[0].Discard || transformations[0].Skip || len(refresher.calls) != 0 ||
+		result.Candidates != 0 || result.ByStage["notification"] != 1 ||
+		result.ByFailure["historical-tail-current"] != 0 || result.AuditRemoved != 0 {
+		t.Fatalf("transformations=%+v result=%+v calls=%+v", transformations, result, refresher.calls)
+	}
+	if !strings.Contains(debug.String(), `"status": "drop-planned"`) ||
+		!strings.Contains(debug.String(), `"signedUrlAction": "not-requested"`) {
+		t.Fatalf("debug output = %s", debug.String())
 	}
 }
 
@@ -961,6 +1010,69 @@ func TestRecoverDeadLettersDryRunScansConfiguredLimit(t *testing.T) {
 		result.ByStage["sequence"] != 1 || result.ByStage["analysis"] != 1 ||
 		result.ByStage["notification"] != 1 {
 		t.Fatalf("result = %+v, requests = %+v", result, admin.requests)
+	}
+}
+
+func TestRecoverDeadLettersDropsSelectedStageAndRecoversOthers(t *testing.T) {
+	admin := &scriptedRecoveryAdmin{
+		messages: []sharedqueue.DeadLetterMessage{
+			recoveryTestMessage("message-1", "notification", "one.mp4", "azure", map[string]any{
+				"date":         time.Now().Add(-time.Hour).Unix(),
+				"events":       []string{"notification"},
+				"monitorStage": recoveryTestMonitorStage(nil),
+			}),
+			recoveryTestMessage("message-2", "analysis", "two.mp4", "azure", nil),
+		},
+	}
+	refresher := &fakeVaultURLRefresher{}
+	result, err := recoverDeadLetters(context.Background(), admin, refresher, dlqCommandConfig{
+		limit:       2,
+		batchSize:   2,
+		timeout:     time.Minute,
+		destination: "kcloud-event-queue",
+		execute:     true,
+		drop:        "notification",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Replay.DropPlanned != 1 || result.Replay.Dropped != 1 ||
+		result.Replay.Planned != 1 || result.Replay.Replayed != 1 ||
+		result.Replay.Retained != 0 || result.Candidates != 1 ||
+		result.ByStage["notification"] != 1 || result.ByStage["analysis"] != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(refresher.calls) != 1 || len(refresher.calls[0]) != 1 ||
+		refresher.calls[0][0].Filename != "two.mp4" || len(admin.payloads) != 1 {
+		t.Fatalf("Vault calls=%+v replayed payloads=%d", refresher.calls, len(admin.payloads))
+	}
+}
+
+func TestRecoverDeadLettersDryRunPlansDropWithoutSettling(t *testing.T) {
+	admin := &scriptedRecoveryAdmin{
+		messages: []sharedqueue.DeadLetterMessage{
+			recoveryTestMessage("message-1", "notification", "one.mp4", "", map[string]any{
+				"date":         time.Now().Add(-time.Hour).Unix(),
+				"events":       []string{"notification"},
+				"monitorStage": recoveryTestMonitorStage(nil),
+			}),
+		},
+	}
+	result, err := recoverDeadLetters(context.Background(), admin, nil, dlqCommandConfig{
+		limit:       1,
+		batchSize:   1,
+		timeout:     time.Minute,
+		destination: "kcloud-event-queue",
+		drop:        " Notification,notification ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Replay.DropPlanned != 1 || result.Replay.Dropped != 0 ||
+		result.Replay.Planned != 0 || result.Replay.Replayed != 0 ||
+		result.Replay.Retained != 1 || result.Candidates != 0 ||
+		len(admin.payloads) != 0 {
+		t.Fatalf("result = %+v, payloads = %d", result, len(admin.payloads))
 	}
 }
 

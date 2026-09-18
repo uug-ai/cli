@@ -77,17 +77,40 @@ func TestParseRecoveryBatchFlags(t *testing.T) {
 		"--historical-tail-max-age", "30m",
 		"--legacy-user-ownership",
 		"--debug",
+		"--drop", " Notification, throttler,notification ",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("parseDLQFlags: %v", err)
 	}
 	if config.execute || config.limit != 30000 || config.batchSize != 500 ||
 		config.batchDelay != 2*time.Second || config.historicalTailMaxAge != 30*time.Minute ||
-		config.allowHistoricalTail || !config.legacyUserOwnership || !config.debug {
+		config.allowHistoricalTail || !config.legacyUserOwnership || !config.debug ||
+		config.drop != " Notification, throttler,notification " {
 		t.Fatalf("config = %+v", config)
 	}
 	if err := validateRecoveryConfig(config); err != nil {
 		t.Fatalf("validateRecoveryConfig: %v", err)
+	}
+}
+
+func TestValidateRecoveryConfigRejectsInvalidOrConflictingDropStages(t *testing.T) {
+	base := dlqCommandConfig{
+		destination:          "kcloud-event-queue",
+		limit:                1,
+		batchSize:            1,
+		historicalTailMaxAge: defaultHistoricalTailMaxAge,
+	}
+	for _, drop := range []string{"end", "notification,$invalid"} {
+		config := base
+		config.drop = drop
+		if err := validateRecoveryConfig(config); err == nil {
+			t.Fatalf("expected --drop %q to be rejected", drop)
+		}
+	}
+	base.drop = "notification"
+	base.allowHistoricalTail = true
+	if err := validateRecoveryConfig(base); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
