@@ -10,6 +10,7 @@ This repository contains CLI tools for performing specific automations.
 - `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
 - `dlq`: Inspecting, replaying, recovering, and safely seeding dead-letter queues across supported providers.
+- `load-test`: Preparing isolated synthetic fixtures and measuring real monitor/sequence ingestion with confirmed publishing, completion tracking, and database verification. See [the load-test guide](docs/load-test.md).
 
 
 ## Run
