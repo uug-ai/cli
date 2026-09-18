@@ -9,7 +9,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/uug-ai/ingest v1.0.10
 	github.com/uug-ai/models v1.7.21
-	github.com/uug-ai/queue v1.4.4-0.20260918083421-a0c331b9a2ea
+	github.com/uug-ai/queue v1.4.4
 	github.com/uug-ai/trace v1.1.0
 	go.mongodb.org/mongo-driver v1.17.9
 	golang.org/x/crypto v0.51.0
