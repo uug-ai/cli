@@ -582,6 +582,21 @@ go run . -action check-indexes \
          -index-version migration-hub-subscription-ownership-21-08-2026
 ```
 
+Project-scoped marker timeline reads use a stable
+`{startTimestamp: -1, _id: -1}` order. The marker ownership index set includes
+that order after the organisation, project, and device equality fields so a
+limited device timeline does not require a blocking sort. Audit the marker
+contracts before installing missing indexes:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections markers \
+         -mode dry-run \
+         -index-version migration-hub-marker-ownership-27-08-2026
+```
+
 Access tokens use canonical string `organisationId`, then resolve legacy
 creator `userId` through the persisted user's stable `user_id` parent or own
 `_id`. Mutable user organisation selection is never ownership evidence.

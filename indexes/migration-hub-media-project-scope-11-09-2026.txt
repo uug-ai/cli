@@ -1,4 +1,5 @@
 media
 [
-  { v: 2, key: { organisationId: 1, projectId: 1, startTimestamp: -1, _id: -1 }, name: 'organisationId_1_projectId_1_startTimestamp_-1__id_-1' }
+  { v: 2, key: { organisationId: 1, projectId: 1, startTimestamp: -1, _id: -1 }, name: 'organisationId_1_projectId_1_startTimestamp_-1__id_-1' },
+  { v: 2, key: { organisationId: 1, projectId: 1, deviceKey: 1, startTimestamp: 1, _id: 1 }, name: 'timeline-project-device-start' }
 ]

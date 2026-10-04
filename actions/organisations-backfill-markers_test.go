@@ -247,7 +247,7 @@ func TestMarkerAdaptersAndIndexContracts(t *testing.T) {
 		organisationsBackfillNewIndexContract("project-time-list", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "startTimestamp", Value: int32(-1)}, {Key: "_id", Value: int32(-1)}}),
 		organisationsBackfillNewIndexContract("project-device-name-time", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceId", Value: int32(1)}, {Key: "name", Value: int32(1)}, {Key: "startTimestamp", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("project-media-keys", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "mediaKeys", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("project-device-time", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceId", Value: int32(1)}, {Key: "startTimestamp", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("project-device-time-list", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceId", Value: int32(1)}, {Key: "startTimestamp", Value: int32(-1)}, {Key: "_id", Value: int32(-1)}}),
 	}
 	if got := organisationsBackfillMarkerIndexContracts(); !reflect.DeepEqual(got, wantMarker) {
 		t.Fatalf("marker contracts = %#v, want %#v", got, wantMarker)
@@ -257,7 +257,15 @@ func TestMarkerAdaptersAndIndexContracts(t *testing.T) {
 		t.Fatalf("option contracts = %#v", optionContracts)
 	}
 	rangeContracts := organisationsBackfillMarkerCanonicalIndexContracts("marker_option_ranges")
-	if len(rangeContracts) != 4 || rangeContracts[0].Keys[2].Field != "text" || rangeContracts[1].Name != "project-value-device-start-unique" || !rangeContracts[1].Unique || !reflect.DeepEqual(rangeContracts[1].PartialFilterExpression, markerRangePartialFilter()) || rangeContracts[2].Keys[2].Field != "value" || rangeContracts[2].Keys[3].Field != "deviceKey" {
+	if len(rangeContracts) != 6 ||
+		rangeContracts[0].Keys[2].Field != "text" ||
+		rangeContracts[1].Name != "project-value-device-start-unique" ||
+		!rangeContracts[1].Unique ||
+		!reflect.DeepEqual(rangeContracts[1].PartialFilterExpression, markerRangePartialFilter()) ||
+		rangeContracts[2].Keys[2].Field != "value" ||
+		rangeContracts[2].Keys[3].Field != "deviceKey" ||
+		rangeContracts[4].Name != "timeline-project-device-id-start" ||
+		rangeContracts[5].Name != "timeline-project-device-key-start" {
 		t.Fatalf("range contracts = %#v", rangeContracts)
 	}
 }

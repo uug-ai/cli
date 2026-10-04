@@ -375,7 +375,9 @@ func TestMarkerOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
 	}
 
 	markerSpecs := canonical["markers"]
-	if len(markerSpecs) != 4 || normalizeKey(markerSpecs[0].Key) != "organisationId:1.projectId:1.startTimestamp:-1._id:-1" || normalizeKey(markerSpecs[3].Key) != "organisationId:1.projectId:1.deviceId:1.startTimestamp:1" {
+	if len(markerSpecs) != 4 ||
+		normalizeKey(markerSpecs[0].Key) != "organisationId:1.projectId:1.startTimestamp:-1._id:-1" ||
+		normalizeKey(markerSpecs[3].Key) != "organisationId:1.projectId:1.deviceId:1.startTimestamp:-1._id:-1" {
 		t.Fatalf("marker index specs = %#v", markerSpecs)
 	}
 	for _, collection := range []string{"marker_options", "marker_tag_options", "marker_event_options", "marker_category_options"} {
@@ -384,7 +386,10 @@ func TestMarkerOwnershipIndexFileDeclaresOrderedContracts(t *testing.T) {
 			t.Fatalf("%s index specs = %#v", collection, specs)
 		}
 	}
-	if specs := canonical["marker_option_ranges"]; len(specs) != 4 || normalizeKey(specs[2].Key) != "organisationId:1.projectId:1.value:1.deviceKey:1.start:1.end:1" {
+	if specs := canonical["marker_option_ranges"]; len(specs) != 6 ||
+		normalizeKey(specs[2].Key) != "organisationId:1.projectId:1.value:1.deviceKey:1.start:1.end:1" ||
+		normalizeKey(specs[4].Key) != "organisationId:1.projectId:1.deviceId:1.start:1._id:1" ||
+		normalizeKey(specs[5].Key) != "organisationId:1.projectId:1.deviceKey:1.start:1._id:1" {
 		t.Fatalf("marker range index specs = %#v", specs)
 	}
 }
@@ -397,11 +402,13 @@ func TestMediaProjectScopeIndexFileDeclaresOrderedContract(t *testing.T) {
 	}
 
 	specs := canonical["media"]
-	if len(specs) != 1 || normalizeKey(specs[0].Key) != "organisationId:1.projectId:1.startTimestamp:-1._id:-1" {
+	if len(specs) != 2 ||
+		normalizeKey(specs[0].Key) != "organisationId:1.projectId:1.startTimestamp:-1._id:-1" ||
+		normalizeKey(specs[1].Key) != "organisationId:1.projectId:1.deviceKey:1.startTimestamp:1._id:1" {
 		t.Fatalf("media index specs = %#v", specs)
 	}
-	if specs[0].Unique {
-		t.Fatal("media project scope index must be non-unique")
+	if specs[0].Unique || specs[1].Unique {
+		t.Fatal("media project scope indexes must be non-unique")
 	}
 }
 

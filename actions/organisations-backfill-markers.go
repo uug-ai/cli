@@ -573,7 +573,7 @@ func organisationsBackfillMarkerIndexContracts() []organisationsBackfillIndexCon
 		organisationsBackfillNewIndexContract("project-time-list", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "startTimestamp", Value: int32(-1)}, {Key: "_id", Value: int32(-1)}}),
 		organisationsBackfillNewIndexContract("project-device-name-time", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceId", Value: int32(1)}, {Key: "name", Value: int32(1)}, {Key: "startTimestamp", Value: int32(1)}}),
 		organisationsBackfillNewIndexContract("project-media-keys", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "mediaKeys", Value: int32(1)}}),
-		organisationsBackfillNewIndexContract("project-device-time", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceId", Value: int32(1)}, {Key: "startTimestamp", Value: int32(1)}}),
+		organisationsBackfillNewIndexContract("project-device-time-list", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceId", Value: int32(1)}, {Key: "startTimestamp", Value: int32(-1)}, {Key: "_id", Value: int32(-1)}}),
 	}
 }
 
@@ -809,6 +809,8 @@ func organisationsBackfillMarkerCanonicalIndexContracts(collection string) []org
 		contracts = append(contracts,
 			organisationsBackfillNewIndexContract("project-value-device-key-range", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "value", Value: int32(1)}, {Key: "deviceKey", Value: int32(1)}, {Key: "start", Value: int32(1)}, {Key: "end", Value: int32(1)}}),
 			organisationsBackfillNewIndexContract("project-range", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "start", Value: int32(1)}, {Key: "end", Value: int32(1)}}),
+			organisationsBackfillNewIndexContract("timeline-project-device-id-start", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceId", Value: int32(1)}, {Key: "start", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
+			organisationsBackfillNewIndexContract("timeline-project-device-key-start", bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}, {Key: "deviceKey", Value: int32(1)}, {Key: "start", Value: int32(1)}, {Key: "_id", Value: int32(1)}}),
 		)
 	}
 	contracts[1].Unique = true
