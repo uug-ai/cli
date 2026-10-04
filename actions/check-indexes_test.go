@@ -412,6 +412,22 @@ func TestMediaProjectScopeIndexFileDeclaresOrderedContract(t *testing.T) {
 	}
 }
 
+func TestMarkerCategoryOptionsIndexFileDeclaresDurationContract(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-marker-category-options-04-10-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+
+	specs := canonical["markers"]
+	if len(canonical) != 1 || len(specs) != 1 ||
+		normalizeKey(specs[0].Key) != "organisationId:1.projectId:1.duration:1.startTimestamp:1" ||
+		specs[0].Name != "organisationId_1_projectId_1_duration_1_startTimestamp_1" ||
+		specs[0].Unique {
+		t.Fatalf("marker category options index specs = %#v", canonical)
+	}
+}
+
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
 	t.Helper()
 	for _, s := range specs {

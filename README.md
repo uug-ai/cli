@@ -597,6 +597,22 @@ go run . -action check-indexes \
          -index-version migration-hub-marker-ownership-27-08-2026
 ```
 
+Marker category options for a time range split the overlap predicate into a
+bounded `startTimestamp` branch and a long-marker branch selected by
+`duration`. Install the supporting
+`{organisationId, projectId, duration, startTimestamp}` index **before**
+deploying the Hub API that issues the split query; without it the long-marker
+branch scans the tenant's marker history:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections markers \
+         -mode dry-run \
+         -index-version migration-hub-marker-category-options-04-10-2026
+```
+
 Access tokens use canonical string `organisationId`, then resolve legacy
 creator `userId` through the persisted user's stable `user_id` parent or own
 `_id`. Mutable user organisation selection is never ownership evidence.
