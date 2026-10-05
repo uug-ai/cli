@@ -613,6 +613,70 @@ go run . -action check-indexes \
          -index-version migration-hub-marker-category-options-04-10-2026
 ```
 
+Timeline marker ranges are read by `organisationId` and sorted by
+`{start: 1, _id: 1}`, then filtered by device, project, and range end. The
+`{organisationId, start, _id, deviceKey, projectId, end}` index on
+`marker_option_ranges` serves that order without a blocking sort:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections marker_option_ranges \
+         -mode dry-run \
+         -index-version migration-hub-marker-option-ranges-timeline-05-10-2026
+```
+
+Marker, tag, and event option filters for a time range run
+`distinct("value")` over `{organisationId, projectId: {$in: [project, null]},
+start: {$lte: rangeEnd}, end: {$gte: rangeStart}}`. Indexes that lead with
+`start` can only bound `start <= rangeEnd`, which is the tenant's entire
+history. Leading with `end` bounds the scan to ranges that end inside or after
+the window, so a recent window reads a handful of keys:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections marker_option_ranges,marker_tag_option_ranges,marker_event_option_ranges \
+         -mode dry-run \
+         -index-version migration-hub-marker-option-values-in-range-05-10-2026
+```
+
+Notification group and site lookups match a device inside each ownership arm:
+`{organisationId, projectId, devices}` for canonical documents and
+`{user_id, organisationId: {$in: [null, ""]}, projectId, devices}` for legacy
+documents. Every `$or` arm needs an index or MongoDB scans the collection, so
+`groups` and `sites` both declare one index per arm. The leading
+`{organisationId, projectId}` and `{user_id, projectId}` prefixes also satisfy
+the project-list contracts reported by `organisations-backfill`:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections groups,sites \
+         -mode dry-run \
+         -index-version migration-hub-group-site-device-lookup-05-10-2026
+```
+
+Device list scopes are an `$or` of `{organisationId, projectId}` and
+`{user_id, organisationId: {$in: [null, ""]}, projectId}`. Canonical devices
+keep their organisation in `user_id`, so with only `{user_id: 1}` the legacy
+arm fetches every canonical device a second time before rejecting it. The
+`{user_id, organisationId, projectId, key}` index bounds that arm in the index
+and halves the documents a device list examines; it also makes `{user_id: 1}`
+a redundant prefix:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections devices \
+         -mode dry-run \
+         -index-version migration-hub-device-legacy-arm-05-10-2026
+```
+
 Access tokens use canonical string `organisationId`, then resolve legacy
 creator `userId` through the persisted user's stable `user_id` parent or own
 `_id`. Mutable user organisation selection is never ownership evidence.

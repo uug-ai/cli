@@ -1,0 +1,4 @@
+devices
+[
+  { v: 2, key: { user_id: 1, organisationId: 1, projectId: 1, key: 1 }, name: 'user_id_1_organisationId_1_projectId_1_key_1' }
+]

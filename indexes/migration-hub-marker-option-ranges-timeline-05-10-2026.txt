@@ -1,0 +1,4 @@
+marker_option_ranges
+[
+  { v: 2, key: { organisationId: 1, start: 1, _id: 1, deviceKey: 1, projectId: 1, end: 1 }, name: 'organisationId_1_start_1__id_1_deviceKey_1_projectId_1_end_1' }
+]

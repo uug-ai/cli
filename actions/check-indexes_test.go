@@ -428,6 +428,45 @@ func TestMarkerCategoryOptionsIndexFileDeclaresDurationContract(t *testing.T) {
 	}
 }
 
+func TestMarkerOptionRangesTimelineIndexFileDeclaresSortContract(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-marker-option-ranges-timeline-05-10-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+
+	specs := canonical["marker_option_ranges"]
+	if len(canonical) != 1 || len(specs) != 1 ||
+		normalizeKey(specs[0].Key) != "organisationId:1.start:1._id:1.deviceKey:1.projectId:1.end:1" ||
+		specs[0].Name != "organisationId_1_start_1__id_1_deviceKey_1_projectId_1_end_1" ||
+		specs[0].Unique {
+		t.Fatalf("marker option ranges timeline index specs = %#v", canonical)
+	}
+}
+
+func TestGroupSiteDeviceLookupIndexFileDeclaresOwnershipArms(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-group-site-device-lookup-05-10-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	if len(canonical) != 2 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	for _, collection := range []string{"groups", "sites"} {
+		specs := canonical[collection]
+		if len(specs) != 2 {
+			t.Fatalf("%s specs = %#v", collection, specs)
+		}
+		canonicalArm := findSpecByKey(t, specs, "organisationId:1.projectId:1.devices:1")
+		legacyArm := findSpecByKey(t, specs, "user_id:1.projectId:1.devices:1")
+		if canonicalArm.Name != "organisationId_1_projectId_1_devices_1" || canonicalArm.Unique ||
+			legacyArm.Name != "user_id_1_projectId_1_devices_1" || legacyArm.Unique {
+			t.Fatalf("%s specs = %#v", collection, specs)
+		}
+	}
+}
+
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
 	t.Helper()
 	for _, s := range specs {
