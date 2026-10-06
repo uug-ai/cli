@@ -40,3 +40,19 @@ func TestMarkerOptionValuesInRangeIndexFileDeclaresEndFirstContract(t *testing.T
 		}
 	}
 }
+
+func TestNotificationStatisticsIndexFileDeclaresCoveredCountContract(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-notification-statistics-06-10-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+
+	specs := canonical["notifications"]
+	if len(canonical) != 1 || len(specs) != 1 ||
+		normalizeKey(specs[0].Key) != "organisationId:1.alert_master_user:1.userid:1.projectId:1.read:1.device_id:1" ||
+		specs[0].Name != "organisationId_1_alert_master_user_1_userid_1_projectId_1_read_1_device_id_1" ||
+		specs[0].Unique {
+		t.Fatalf("notification statistics index specs = %#v", canonical)
+	}
+}

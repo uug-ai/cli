@@ -792,6 +792,27 @@ go run . -action check-indexes \
          -index-version migration-hub-notification-ownership-02-09-2026
 ```
 
+Hub API's notification statistics (`GET /notifications/statistics`, polled by
+the Hub UI for the unread badge) count flat events in three ownership arms:
+canonical `organisationId`, legacy `alert_master_user`, and legacy recipient
+`userid`, each limited to the project scope, the caller's devices for
+non-owners, and `read: {$in: [null, false]}` for the unread count. Hub API
+hints those counts to the index below. `organisationId`, `alert_master_user`
+and `userid` bound every arm, and `projectId`, `read` and `device_id` let the
+index answer the count without loading a single notification. Without it, a
+count reads every notification of the organisation, on every poll. Create it
+before deploying that Hub API version. If it is missing, Hub API logs a warning
+and counts without the hint, which is as slow as before:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections notifications \
+         -mode dry-run \
+         -index-version migration-hub-notification-statistics-06-10-2026
+```
+
 `channels` is embedded configuration rather than a standalone collection,
 `settings` is platform-global, and the deprecated `sequences` collection is no
 longer written. They are explicit exclusions from organisation backfill rather
