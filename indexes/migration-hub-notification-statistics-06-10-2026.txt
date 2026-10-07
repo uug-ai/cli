@@ -1,0 +1,4 @@
+notifications
+[
+  { v: 2, key: { organisationId: 1, alert_master_user: 1, userid: 1, projectId: 1, read: 1, device_id: 1 }, name: 'organisationId_1_alert_master_user_1_userid_1_projectId_1_read_1_device_id_1' }
+]

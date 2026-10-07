@@ -632,7 +632,9 @@ Marker, tag, and event option filters for a time range run
 start: {$lte: rangeEnd}, end: {$gte: rangeStart}}`. Indexes that lead with
 `start` can only bound `start <= rangeEnd`, which is the tenant's entire
 history. Leading with `end` bounds the scan to ranges that end inside or after
-the window, so a recent window reads a handful of keys:
+the window, so a recent window reads a handful of keys. Hub API also builds this index in the background at
+startup (`database.EnsureHotPathIndexes`); use the contract to verify it or to
+build it ahead of a deploy:
 
 ```sh
 go run . -action check-indexes \
@@ -666,7 +668,9 @@ keep their organisation in `user_id`, so with only `{user_id: 1}` the legacy
 arm fetches every canonical device a second time before rejecting it. The
 `{user_id, organisationId, projectId, key}` index bounds that arm in the index
 and halves the documents a device list examines; it also makes `{user_id: 1}`
-a redundant prefix:
+a redundant prefix. Hub API also builds this index in the background at
+startup (`database.EnsureHotPathIndexes`); use the contract to verify it or to
+build it ahead of a deploy:
 
 ```sh
 go run . -action check-indexes \
@@ -790,6 +794,19 @@ go run . -action check-indexes \
          -collections notifications \
          -mode dry-run \
          -index-version migration-hub-notification-ownership-02-09-2026
+```
+
+The notification statistics endpoint counts total and unread events through
+canonical and legacy ownership branches. Install its covering index before
+deploying the corresponding Hub API:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database Kerberos \
+         -collections notifications \
+         -mode live \
+         -index-version migration-hub-notification-statistics-06-10-2026
 ```
 
 `channels` is embedded configuration rather than a standalone collection,
