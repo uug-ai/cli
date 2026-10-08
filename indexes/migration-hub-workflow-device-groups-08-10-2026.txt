@@ -1,0 +1,10 @@
+sites
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, groups: 1 }, name: 'organisationId_1_projectId_1_groups_1' },
+  { v: 2, key: { user_id: 1, projectId: 1, groups: 1 }, name: 'user_id_1_projectId_1_groups_1' }
+]
+groups
+[
+  { v: 2, key: { organisationId: 1, projectId: 1, sites: 1 }, name: 'organisationId_1_projectId_1_sites_1' },
+  { v: 2, key: { user_id: 1, projectId: 1, sites: 1 }, name: 'user_id_1_projectId_1_sites_1' }
+]

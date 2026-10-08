@@ -467,6 +467,29 @@ func TestGroupSiteDeviceLookupIndexFileDeclaresOwnershipArms(t *testing.T) {
 	}
 }
 
+func TestWorkflowDeviceGroupsIndexFileDeclaresOwnershipArms(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-workflow-device-groups-08-10-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	if len(canonical) != 2 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	for collection, field := range map[string]string{"sites": "groups", "groups": "sites"} {
+		specs := canonical[collection]
+		if len(specs) != 2 {
+			t.Fatalf("%s specs = %#v", collection, specs)
+		}
+		canonicalArm := findSpecByKey(t, specs, "organisationId:1.projectId:1."+field+":1")
+		legacyArm := findSpecByKey(t, specs, "user_id:1.projectId:1."+field+":1")
+		if canonicalArm.Name != "organisationId_1_projectId_1_"+field+"_1" || canonicalArm.Unique ||
+			legacyArm.Name != "user_id_1_projectId_1_"+field+"_1" || legacyArm.Unique {
+			t.Fatalf("%s specs = %#v", collection, specs)
+		}
+	}
+}
+
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
 	t.Helper()
 	for _, s := range specs {
