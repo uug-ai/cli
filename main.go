@@ -43,6 +43,9 @@ func promptAction() string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "load-test" {
+		os.Exit(actions.RunLoadTest(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "dlq" {
 		os.Exit(actions.RunDLQ(os.Args[2:], os.Stdout, os.Stderr))
 	}
