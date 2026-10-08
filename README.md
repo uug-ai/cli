@@ -662,6 +662,21 @@ go run . -action check-indexes \
          -index-version migration-hub-group-site-device-lookup-05-10-2026
 ```
 
+Workflow camera-group resolution (hub-workflows) finds a device's groups in
+three scoped lookups: groups by `devices` and sites by `devices` (covered
+above), sites by `groups` (sites listing one of the device's groups), and site
+groups by `sites`. The last two declare one index per ownership arm, like the
+device lookups:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections groups,sites \
+         -mode dry-run \
+         -index-version migration-hub-workflow-device-groups-08-10-2026
+```
+
 Device list scopes are an `$or` of `{organisationId, projectId}` and
 `{user_id, organisationId: {$in: [null, ""]}, projectId}`. Canonical devices
 keep their organisation in `user_id`, so with only `{user_id: 1}` the legacy
