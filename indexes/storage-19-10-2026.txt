@@ -1,0 +1,71 @@
+accounts
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+devices
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { key: 1, user_id: 1 }, name: 'key_1_user_id_1' }
+]
+markers
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+media
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { timestamp: -1 }, name: 'timestamp_-1' },
+  {
+    v: 2,
+    key: { forwarder_type: 1, forwarded: 1 },
+    name: 'forwarder_type_1_forwarded_1'
+  },
+  {
+    v: 2,
+    key: { filename: 1, provider: 1 },
+    name: 'filename_1_provider_1'
+  },
+  {
+    v: 2,
+    key: { provider: 1, account: 1, timestamp: 1 },
+    name: 'provider_1_account_1_timestamp_1'
+  },
+  {
+    v: 2,
+    key: { provider: 1, timestamp: 1, device: 1 },
+    name: 'provider_1_timestamp_1_device_1'
+  },
+  { v: 2, key: { filename: 1, timestamp: 1 }, name: 'filename_1_timestamp_1' },
+  { v: 2, key: { filename: 1 }, name: 'media_filename_idx' },
+  { v: 2, key: { provider: 1, timestamp: 1 }, name: 'media_provider_timestamp_idx' },
+  { v: 2, key: { provider: 1, _id: 1, filename: 1, filesize: 1 }, name: 'media_provider_usage_batch_idx' },
+  { v: 2, key: { 'pipeline_outbox.status': 1, 'pipeline_outbox.next_attempt_at': 1, 'pipeline_outbox.lease_until': 1 }, name: 'media_pipeline_outbox_ready_idx' },
+  { v: 2, key: { 'pipeline_outbox.queue_name': 1, 'pipeline_outbox.topic': 1, 'pipeline_outbox.status': 1, 'pipeline_outbox.next_attempt_at': 1 }, name: 'media_pipeline_outbox_destination_idx' },
+  { v: 2, key: { 'pipeline_outbox_outcomes.occurred_at': 1 }, name: 'media_pipeline_outbox_outcome_time_idx' },
+  { v: 2, key: { 'pipeline_outbox_outcomes.queue_name': 1, 'pipeline_outbox_outcomes.occurred_at': 1 }, name: 'media_pipeline_outbox_outcome_queue_time_idx' }
+]
+provider_cleanup_runs
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { provider: 1, completed_at: -1, _id: -1 }, name: 'provider_cleanup_runs_provider_completed_idx' },
+  { v: 2, key: { completed_at: 1 }, name: 'provider_cleanup_runs_ttl_idx', expireAfterSeconds: 7776000 }
+]
+provider_usage
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { provider: 1 }, name: 'provider_usage_provider_idx', unique: true }
+]
+provider_usage_history
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { provider: 1, date: 1 }, name: 'provider_usage_history_provider_date_idx', unique: true }
+]
+providers
+[ { v: 2, key: { _id: 1 }, name: '_id_' } ]
+queues
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { enabled: 1, name: 1 }, name: 'enabled_1_name_1' }
+]
+states
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { name: 1 }, name: 'states_name_idx' },
+  { v: 2, key: { devices: 1 }, name: 'states_devices_idx' }
+]
