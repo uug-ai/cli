@@ -845,6 +845,29 @@ The adapter reports BSON field types/shapes and exact ordered coverage for
 `{organisationId,targetType,targetId,timestamp:-1}`, and
 `{organisationId,projectId,timestamp:-1}`.
 
+### Index snapshots
+
+`indexes/hub-19-10-2026.txt` is the full Hub database index set: the
+16-09-2026 snapshot, every `migration-hub-*` contract since August, and the
+indexes Hub API and Hub Cleanup build at runtime. Where the service code
+supersedes a contract (unique `detections` run key, partial legacy
+`workflow_runs` retention indexes, device-scoped `live_segments`), the snapshot
+follows the code; `check-indexes_snapshot_test.go` lists those exceptions and
+fails when a new contract is not added to the snapshot.
+`indexes/storage-19-10-2026.txt` is the same for the Vault storage database.
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database Kerberos \
+         -collections "" \
+         -mode dry-run \
+         -index-version hub-19-10-2026
+```
+
+Use `-mongodb-destination-database KerberosStorage -index-version
+storage-19-10-2026` for the storage database.
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.
