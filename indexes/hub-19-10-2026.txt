@@ -183,6 +183,18 @@ category_options
 [
   { v: 2, key: { _id: 1 }, name: '_id_' }
 ]
+channels
+[
+  { v: 2, key: { _id: 1 }, name: '_id_' },
+  { v: 2, key: { organisationId: 1, projectId: 1 }, name: 'organisationId_1_projectId_1' },
+  {
+    v: 2,
+    key: { organisationId: 1, source: 1, legacyKey: 1 },
+    name: 'organisationId_1_source_1_legacyKey_1',
+    unique: true,
+    partialFilterExpression: { source: { '$exists': true, '$type': 'string' } }
+  }
+]
 comments
 [
   { v: 2, key: { _id: 1 }, name: '_id_' },
