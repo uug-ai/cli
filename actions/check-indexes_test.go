@@ -490,6 +490,28 @@ func TestWorkflowDeviceGroupsIndexFileDeclaresOwnershipArms(t *testing.T) {
 	}
 }
 
+func TestChannelsIndexFileDeclaresLegacyUpsertKey(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-channels-20-10-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	specs := canonical["channels"]
+	if len(canonical) != 1 || len(specs) != 2 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	listing := findSpecByKey(t, specs, "organisationId:1.projectId:1")
+	if listing.Name != "organisationId_1_projectId_1" || listing.Unique || listing.PartialFilterExpression != nil {
+		t.Fatalf("listing spec = %#v", listing)
+	}
+	legacy := findSpecByKey(t, specs, "organisationId:1.source:1.legacyKey:1")
+	want := bson.M{"source": bson.M{"$exists": true, "$type": "string"}}
+	if legacy.Name != "organisationId_1_source_1_legacyKey_1" || !legacy.Unique ||
+		!reflect.DeepEqual(legacy.PartialFilterExpression, want) {
+		t.Fatalf("legacy upsert spec = %#v", legacy)
+	}
+}
+
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
 	t.Helper()
 	for _, s := range specs {

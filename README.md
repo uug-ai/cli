@@ -678,6 +678,25 @@ go run . -action check-indexes \
          -index-version migration-hub-workflow-device-groups-08-10-2026
 ```
 
+Project-scoped notification channels (`channels`, see
+`specs/organisations/project-channels-migration.md` in the monorepo) list by
+`{organisationId, projectId}`. Channels migrated from `users.channels` and from
+custom-alert overrides carry a `source` and a `legacyKey`; the Hub API legacy
+write-through and the migration backfill both upsert on
+`{organisationId, source, legacyKey}`, so that key is unique. The index is
+partial on `source` because channels created through the channel API have
+none. Create it before the write-through is deployed, otherwise two concurrent
+upserts can insert duplicate legacy channels:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections channels \
+         -mode dry-run \
+         -index-version migration-hub-channels-20-10-2026
+```
+
 Device list scopes are an `$or` of `{organisationId, projectId}` and
 `{user_id, organisationId: {$in: [null, ""]}, projectId}`. Canonical devices
 keep their organisation in `user_id`, so with only `{user_id: 1}` the legacy
