@@ -64,9 +64,14 @@ immutable digest rather than `latest`. Supported targets are Linux amd64 and
 arm64, tested natively in CI.
 
 The builder is digest-pinned Go 1.26.10 on Debian 13; the runtime is
-digest-pinned distroless `cc-debian13:nonroot`. Debian 13's libc and libm are
-needed by Kafka's bundled native library. This is deliberately **not** a
-CGO-disabled scratch build. Runtime CA certificates support MongoDB, Vault,
+digest-pinned Chainguard `glibc-dynamic` (glibc 2.44-r9). Its libc, libm and
+architecture-specific loader are needed by Kafka's bundled native library.
+This is deliberately **not** a CGO-disabled scratch build. The complete
+vendor package database and native SPDX inventory are retained, not relabeled
+as Debian or replaced by an incomplete hand-copied library set. The native
+`test` target checks both CLI help and a local librdkafka mock-cluster
+producer/consumer round trip using the actual runtime's loader and libraries.
+Runtime CA certificates support MongoDB, Vault,
 AWS, queue and telemetry TLS. Timezone data is embedded with `timetzdata`.
 The image contains no shell, package manager or compiler.
 
@@ -88,6 +93,20 @@ capabilities dropped and privilege escalation disabled. Index fixtures are
 compared byte-for-byte against the exported image. No migration, seeding,
 backfill, DLQ replay or queue-consuming worker is started by this smoke.
 Native fixture/unit tests use in-process MongoDB mocks, not real resources.
+The Kafka compatibility fixture creates only an ephemeral localhost mock
+broker; it never reads production credentials or connects to a real cluster.
+
+The previous distroless Debian 13 base produced identical findings on both
+architectures: 13 libc6 findings, two GCC CVEs repeated across four native
+packages (eight findings), and two zlib findings. Debian's published trixie
+versions matched those installed, with no fixed versions listed. Updating
+Go dependencies could not fix these operating-system packages. The
+Chainguard replacement was selected only after inspecting both actual CLI
+binaries' required GLIBC symbols (maximum GLIBC_2.34), verifying their loader
+layout, and executing the actual arm64 CLI with the replacement libc/libm.
+The pinned replacement's MEDIUM/HIGH/CRITICAL scan was clean. Both-architecture
+image gates and native compatibility fixtures remain required; no ignore,
+unfixed filter or severity-policy reduction is used.
 
 Normal operations do not need a writable root filesystem. When using
 `-report-file`, mount a narrowly scoped writable volume (for example

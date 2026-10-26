@@ -1,4 +1,7 @@
 # syntax=docker/dockerfile:1.7
+# glibc 2.44-r9; retain the vendor's complete native package inventory/SBOM.
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5380a8b913d0900cf44180e2205bf3ebf0e0b00a32a0f2fa4ab16cb06d7f9cdf AS runtime-base
+
 FROM golang:1.26.10-trixie@sha256:909771fef53e3dcb0950255f0c9a8b4728c3b841e61509c7b29b098de7ee02d4 AS builder
 
 WORKDIR /src
@@ -35,16 +38,25 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     find indexes -type f -exec chmod 0444 {} +
 
 FROM builder AS test
+COPY --from=runtime-base /usr/lib/ /native-libs/
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
     go test -p=1 -mod=readonly ./actions ./database ./queue ./models ./utils && \
-    /out/main --help
+    go test -c -p=1 -mod=readonly -tags timetzdata,netgo -o /out/queue.test ./queue && \
+    case "$(uname -m)" in \
+      x86_64) loader=/native-libs/ld-linux-x86-64.so.2 ;; \
+      aarch64) loader=/native-libs/ld-linux-aarch64.so.1 ;; \
+      *) exit 1 ;; \
+    esac && \
+    "$loader" --library-path /native-libs /out/main --help && \
+    "$loader" --library-path /native-libs /out/queue.test \
+      -test.run '^TestKafkaNativeMockRoundTrip$' -test.timeout 30s -test.v
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     go install golang.org/x/vuln/cmd/govulncheck@v1.1.4 && \
     govulncheck -tags timetzdata,netgo ./... && \
     govulncheck -mode=binary /out/main
 
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e AS runtime
+FROM runtime-base AS runtime
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED
