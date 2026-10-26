@@ -104,6 +104,7 @@ Build locally with BuildKit:
 docker buildx build --target test --progress=plain .
 docker buildx build --load -t cli:hardened .
 bash image/verify.sh cli:hardened arm64 # use the native architecture
+bash image/smoke-test.sh cli:hardened # infer the native architecture
 ```
 
 If a private module needs authentication, pass only a short-lived read-only
@@ -121,15 +122,22 @@ excluded so binary vulnerability discovery retains symbols. Reports,
 rootfs inventories, native gate logs and SPDX SBOMs are uploaded per
 architecture. Findings are not blanket suppressed.
 
-**Release prerequisite (shared repository, not implemented here):**
-`uug-ai/workflows` must support `hardened_profile: cli`. At this change it
-accepts only `worker` and `frontend`, so release callers deliberately fail
-closed rather than publish through the legacy image path. The CLI profile
-must build Dockerfile target `test` with CGO enabled, accept `/main` and `/`
-instead of `/app/main`, verify `/indexes` fixtures, run `image/verify.sh`
-without MongoDB/RabbitMQ services or `smoke_queue`, support optional BuildKit
-`github_token` authentication, and preserve source/binary/image gates and
-SPDX evidence. Publication must generate provenance and SBOM attestations,
+**Shared hardened release integration:**
+PR validation and release callers pin `uug-ai/workflows` to tested commit
+`c336f1ae4972de521930a2b58124038e09b603dc` (shared PR #13, awaiting merge).
+They use `hardened_profile: standalone`, assert
+`hardened_entrypoint: '["/main"]'` and `hardened_workdir: "/"`, and build
+Dockerfile target `test` with CGO enabled. PR validation sets `publish: false`;
+it never reserves a tag or publishes an image. The required
+`bash image/smoke-test.sh IMAGE` hook verifies the native image and all index
+fixtures without MongoDB/RabbitMQ services or `smoke_queue`. It honors
+`RUNTIME_EVIDENCE_DIR` (the shared runner sets `runtime-evidence`) so smoke
+logs and rootfs/fixture inventories are retained. Optional module
+authentication uses only BuildKit `github_token` secrets; the current public
+module graph uses `use_private_module_auth: false`. Enable it only with a
+read-only `secrets.TOKEN` if module visibility changes; never use credential
+build arguments. Source/binary/image gates and SPDX evidence remain mandatory.
+Publication must generate provenance and SBOM attestations,
 rescan immutable per-architecture digests, sign the final multi-platform
 manifest with keyless Cosign, and retain base/source/image digests, reports
 and signature/provenance evidence before promotion. Bump reserves a draft
@@ -140,7 +148,7 @@ Before deployment verify the published digest with:
 ```sh
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity=https://github.com/uug-ai/workflows/.github/workflows/release-create.yml@refs/heads/main \
+  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@c336f1ae4972de521930a2b58124038e09b603dc$' \
   ghcr.io/uug-ai/cli@sha256:<verified-manifest-digest>
 ```
 

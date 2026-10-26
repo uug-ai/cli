@@ -3,7 +3,27 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
 jobs:
   build:
-    uses: ./.github/workflows/hardened-image.yml
+    uses: uug-ai/workflows/.github/workflows/release-create.yml@c336f1ae4972de521930a2b58124038e09b603dc
+    with:
+      organization: uug-ai
+      project: cli
+      docker_context: "."
+      hardened: true
+      hardened_profile: standalone
+      hardened_entrypoint: '["/main"]'
+      hardened_workdir: "/"
+      publish: false
+      use_private_module_auth: false
+      runner_matrix: >-
+        [
+          {"architecture":"amd64","runner":"ubuntu-24.04"},
+          {"architecture":"arm64","runner":"ubuntu-24.04-arm"}
+        ]
     secrets: inherit
