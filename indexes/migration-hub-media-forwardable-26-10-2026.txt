@@ -1,0 +1,9 @@
+media
+[
+  {
+    v: 2,
+    key: { organisationId: 1, projectId: 1, storageSolution: 1, startTimestamp: -1, _id: -1 },
+    name: 'media_forwardable_start_id',
+    partialFilterExpression: { storageSolution: 'metadata' }
+  }
+]

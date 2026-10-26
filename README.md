@@ -697,6 +697,26 @@ go run . -action check-indexes \
          -index-version migration-hub-channels-20-10-2026
 ```
 
+The Recordings page checks whether the current filter contains any recording
+that can be forwarded on demand: a bounded media count (limit 1) with
+`forwardable: true`, which matches `storageSolution: "metadata"` plus a source
+Vault and source recording ID. Most organisations have no metadata-only
+recordings, and then a full index would walk every recording in the filtered
+window to answer "none". `media_forwardable_start_id` only holds metadata-only
+recordings (partial on `storageSolution: "metadata"`), so that answer is a
+near-empty index scan. `storageSolution` is part of the key so the checker,
+which compares key signatures only, does not mistake it for the existing
+`{organisationId, projectId, startTimestamp, _id}` index:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections media \
+         -mode dry-run \
+         -index-version migration-hub-media-forwardable-26-10-2026
+```
+
 Device list scopes are an `$or` of `{organisationId, projectId}` and
 `{user_id, organisationId: {$in: [null, ""]}, projectId}`. Canonical devices
 keep their organisation in `user_id`, so with only `{user_id: 1}` the legacy

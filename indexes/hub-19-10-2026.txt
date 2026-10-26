@@ -700,7 +700,13 @@ media
     key: { 'metadata.classifications.centroids': '2d' },
     name: 'metadata.classifications.centroids_2d'
   },
-  { v: 2, key: { organisationId: 1, projectId: 1, deviceKey: 1, startTimestamp: 1, _id: 1 }, name: 'timeline-project-device-start' }
+  { v: 2, key: { organisationId: 1, projectId: 1, deviceKey: 1, startTimestamp: 1, _id: 1 }, name: 'timeline-project-device-start' },
+  {
+    v: 2,
+    key: { organisationId: 1, projectId: 1, storageSolution: 1, startTimestamp: -1, _id: -1 },
+    name: 'media_forwardable_start_id',
+    partialFilterExpression: { storageSolution: 'metadata' }
+  }
 ]
 migration_checkpoints
 [
