@@ -6,6 +6,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   release:
@@ -15,6 +16,9 @@ jobs:
       project: ${{ github.event.repository.name }}
       tag: ${{ github.event.release.tag_name }}
       docker_context: "."
+      hardened: true
+      hardened_profile: cli
+      use_private_module_auth: false
       runner_matrix: >-
         [
           {"architecture":"amd64","runner":"ubuntu-24.04"},

@@ -16,6 +16,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   # Determine the next version, create the GitHub release and expose the tag.
@@ -23,6 +24,7 @@ jobs:
     uses: uug-ai/workflows/.github/workflows/release-bump.yml@main
     with:
       bump: ${{ github.event.inputs.bump }}
+      draft: true
     secrets: inherit
 
   # Run the original release pipeline for the freshly created tag.
@@ -36,6 +38,10 @@ jobs:
       project: ${{ github.event.repository.name }}
       tag: ${{ needs.bump-release.outputs.tag }}
       docker_context: "."
+      hardened: true
+      hardened_profile: cli
+      use_private_module_auth: false
+      finalize_release: true
       runner_matrix: >-
         [
           {"architecture":"amd64","runner":"ubuntu-24.04"},

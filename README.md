@@ -31,6 +31,9 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
 
 ## Installation and contributing
 
+Go 1.26.10 or newer and a C compiler are required. The Kafka provider uses
+Confluent's bundled native librdkafka; `CGO_ENABLED=0` is not supported.
+
 1. Clone the repository:
 
    ```sh
@@ -52,6 +55,105 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
    ```
 
 ## Usage
+
+### Hardened production image
+
+See the [image-hardening standard](https://learn.uug.ai/guides/security/image-hardening/).
+The production image is `ghcr.io/uug-ai/cli:<version>`; deploy a verified
+immutable digest rather than `latest`. Supported targets are Linux amd64 and
+arm64, tested natively in CI.
+
+The builder is digest-pinned Go 1.26.10 on Debian 13; the runtime is
+digest-pinned distroless `cc-debian13:nonroot`. Debian 13's libc and libm are
+needed by Kafka's bundled native library. This is deliberately **not** a
+CGO-disabled scratch build. Runtime CA certificates support MongoDB, Vault,
+AWS, queue and telemetry TLS. Timezone data is embedded with `timetzdata`.
+The image contains no shell, package manager or compiler.
+
+The contract preserves `/main`, the `/` working directory, and every shipped
+`/indexes/*.txt` snapshot, including historical migration snapshots.
+The entrypoint is `["/main"]`, with UID/GID **65532:65532**. Application and
+index files are root-owned and read-only (0555 and 0444 respectively). All
+existing actions and flags, including migration, bootstrap, backfill,
+seeding, reprocessing, index management and DLQ commands, remain available.
+No new environment variable is required. Credentials remain action-specific
+flags/secrets; supply them through your platform's secret injection and
+avoid logging command lines.
+
+The CLI exposes no ports, metrics, liveness or readiness endpoint, and has no
+image health check. Job completion/exit status is the health contract.
+`/main --help` is the only automated runtime smoke: it exits before command
+dispatch and runs with **no network**, a read-only root filesystem, all
+capabilities dropped and privilege escalation disabled. Index fixtures are
+compared byte-for-byte against the exported image. No migration, seeding,
+backfill, DLQ replay or queue-consuming worker is started by this smoke.
+Native fixture/unit tests use in-process MongoDB mocks, not real resources.
+
+Normal operations do not need a writable root filesystem. When using
+`-report-file`, mount a narrowly scoped writable volume (for example
+`/reports`, owned by UID 65532) and set an absolute report path there;
+relative paths under `/` will correctly fail. Do not make the binary or
+indexes writable. Add an isolated writable scratch volume only if a
+specific operational command requires it. Expected outbound connections
+depend on the selected action: MongoDB, Vault/Hub HTTPS, RabbitMQ, Kafka,
+AWS SQS/S3, Azure Event Hubs and configured telemetry.
+
+Build locally with BuildKit:
+
+```sh
+docker buildx build --target test --progress=plain .
+docker buildx build --load -t cli:hardened .
+bash image/verify.sh cli:hardened arm64 # use the native architecture
+```
+
+If a private module needs authentication, pass only a short-lived read-only
+token with `--secret id=github_token,env=GITHUB_TOKEN`. The secret is optional,
+is never a build argument, and is not written into Git configuration.
+Public checksum verification stays enabled; only `github.com/uug-ai/*` is
+scoped private. The allowlist `.dockerignore` excludes local configuration,
+credentials, Git metadata, build output and operational data.
+
+PR/main CI blocks on source vulnerability/secret/misconfiguration scanning,
+native fixture tests, source **and retained-symbol binary** govulncheck,
+image contract checks, offline smoke and final-image HIGH/CRITICAL scans.
+Go uses `-trimpath -buildvcs=false -w -buildid=`; `-s` is intentionally
+excluded so binary vulnerability discovery retains symbols. Reports,
+rootfs inventories, native gate logs and SPDX SBOMs are uploaded per
+architecture. Findings are not blanket suppressed.
+
+**Release prerequisite (shared repository, not implemented here):**
+`uug-ai/workflows` must support `hardened_profile: cli`. At this change it
+accepts only `worker` and `frontend`, so release callers deliberately fail
+closed rather than publish through the legacy image path. The CLI profile
+must build Dockerfile target `test` with CGO enabled, accept `/main` and `/`
+instead of `/app/main`, verify `/indexes` fixtures, run `image/verify.sh`
+without MongoDB/RabbitMQ services or `smoke_queue`, support optional BuildKit
+`github_token` authentication, and preserve source/binary/image gates and
+SPDX evidence. Publication must generate provenance and SBOM attestations,
+rescan immutable per-architecture digests, sign the final multi-platform
+manifest with keyless Cosign, and retain base/source/image digests, reports
+and signature/provenance evidence before promotion. Bump reserves a draft
+release (`draft: true`); only successful verified publication may finalize
+it (`finalize_release: true`). Never finalize on a failed gate.
+Before deployment verify the published digest with:
+
+```sh
+cosign verify \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --certificate-identity=https://github.com/uug-ai/workflows/.github/workflows/release-create.yml@refs/heads/main \
+  ghcr.io/uug-ai/cli@sha256:<verified-manifest-digest>
+```
+
+Customers/Helm owners must set `runAsNonRoot: true`, `runAsUser: 65532`,
+`runAsGroup: 65532`, `allowPrivilegeEscalation: false`,
+`readOnlyRootFilesystem: true`, `capabilities.drop: [ALL]` and
+`seccompProfile.type: RuntimeDefault`, use resource limits and a Job
+restart/backoff/deadline policy, and inject secrets without baking them into
+images. Set report-volume ownership appropriately and restrict egress to
+the action's required systems. No worker probes or RabbitMQ readiness
+checks belong on a finite CLI Job. Existing `jobs/` examples retain their
+command paths; their old image versions are not evidence of a hardened
+release. This image work alone does not claim deployment-wide CIS compliance.
 
 ### Dead-letter queue administration
 
