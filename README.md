@@ -155,7 +155,11 @@ architecture. Findings are not blanket suppressed.
 
 **Shared hardened release integration:**
 PR validation and release callers pin `uug-ai/workflows` to tested commit
-`f987049597f729e1ca3ca801f6fdedc2b1b06917`.
+`787d9128bd488896a61e390c84a3d47794e6817f`.
+All reusable image callers use isolated `cli` artifact prefixes. The shared gate
+requires exact installed APK/scanner OS/native SPDX package-version sets
+before staged publication, rechecks immutable published scanner packages
+against the installed set, and blocks secrets at every severity.
 They use `hardened_profile: standalone`, assert
 `hardened_entrypoint: '["/main"]'` and `hardened_workdir: "/"`, and build
 Dockerfile target `test` with CGO enabled. PR validation sets `publish: false`;
@@ -179,7 +183,7 @@ Before deployment verify the published digest with:
 ```sh
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@f987049597f729e1ca3ca801f6fdedc2b1b06917$' \
+  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@787d9128bd488896a61e390c84a3d47794e6817f$' \
   ghcr.io/uug-ai/cli@sha256:<verified-manifest-digest>
 ```
 

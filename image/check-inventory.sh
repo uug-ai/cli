@@ -33,8 +33,8 @@ cmp "$evidence/native-packages.tsv" "$evidence/scanned-native-packages.tsv"
 cmp "$evidence/native-packages.tsv" "$evidence/spdx-native-packages.tsv"
 test -s "$native/native-dependency-owners.tsv"
 test "$(wc -l < "$native/native-needed.txt")" -eq "$(wc -l < "$native/native-dependency-owners.tsv")"
-jq -e '([.Results[]? | (.Vulnerabilities[]?, .Secrets[]?) |
-  select(.Severity == "MEDIUM" or .Severity == "HIGH" or .Severity == "CRITICAL")] +
+jq -e '([.Results[]? | ((.Vulnerabilities[]? |
+  select(.Severity == "MEDIUM" or .Severity == "HIGH" or .Severity == "CRITICAL")), .Secrets[]?)] +
   [.Results[]? | .Misconfigurations[]? |
   select(.Status == "FAIL" and (.Severity == "HIGH" or .Severity == "CRITICAL"))]) |
   length == 0' "$evidence/image-security.json"
