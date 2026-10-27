@@ -155,7 +155,7 @@ architecture. Findings are not blanket suppressed.
 
 **Shared hardened release integration:**
 PR validation and release callers pin `uug-ai/workflows` to tested commit
-`787d9128bd488896a61e390c84a3d47794e6817f`.
+`ff61364bb99093f43f0c02b2f5091f0e22ba9fb6`.
 All reusable image callers use isolated `cli` artifact prefixes. The shared gate
 requires exact installed APK/scanner OS/native SPDX package-version sets
 before staged publication, rechecks immutable published scanner packages
@@ -183,7 +183,7 @@ Before deployment verify the published digest with:
 ```sh
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@787d9128bd488896a61e390c84a3d47794e6817f$' \
+  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@ff61364bb99093f43f0c02b2f5091f0e22ba9fb6$' \
   ghcr.io/uug-ai/cli@sha256:<verified-manifest-digest>
 ```
 
