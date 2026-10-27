@@ -76,15 +76,18 @@ jobs:
           build-args: |
             REVISION=${{ github.sha }}
       - name: Offline read-only non-root smoke and index fixture verification
-        run: bash image/verify.sh cli:hardened "${{ matrix.architecture }}"
+        env:
+          RUNTIME_EVIDENCE_DIR: image-evidence
+        run: bash image/smoke-test.sh cli:hardened
       - name: Scan final image
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           version: v0.76.1
           image-ref: cli:hardened
           scanners: vuln,secret,misconfig
-          severity: HIGH,CRITICAL
-          exit-code: "1"
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "0"
           format: json
           output: image-evidence/image-security.json
       - name: Generate SPDX SBOM
@@ -95,11 +98,12 @@ jobs:
           image-ref: cli:hardened
           format: spdx-json
           output: image-evidence/image.spdx.json
+      - name: Require complete native inventory and enforce image policy
+        run: |
+          bash image/check-native-owners_test.sh
+          bash image/check-inventory.sh image-evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cli-hardened-${{ matrix.architecture }}
-          path: |
-            image-evidence/*.json
-            image-evidence/*.txt
-            image-evidence/*.log
+          path: image-evidence/

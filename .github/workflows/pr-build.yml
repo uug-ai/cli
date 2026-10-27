@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    uses: uug-ai/workflows/.github/workflows/release-create.yml@c336f1ae4972de521930a2b58124038e09b603dc
+    uses: uug-ai/workflows/.github/workflows/release-create.yml@f987049597f729e1ca3ca801f6fdedc2b1b06917
     with:
       organization: uug-ai
       project: cli
@@ -27,3 +27,20 @@ jobs:
           {"architecture":"arm64","runner":"ubuntu-24.04-arm"}
         ]
     secrets: inherit
+
+  native-inventory:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hardened-image-*
+          path: image-evidence
+      - name: Require APK, scanner and SPDX agreement on both architectures
+        run: |
+          bash image/check-native-owners_test.sh
+          bash image/check-inventory.sh image-evidence/hardened-image-amd64
+          bash image/check-inventory.sh image-evidence/hardened-image-arm64

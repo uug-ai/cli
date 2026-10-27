@@ -8,4 +8,6 @@ case "$(uname -m)" in
   *) echo "Unsupported native CLI architecture" >&2; exit 1 ;;
 esac
 cd "$(dirname "$0")/.."
-exec bash image/verify.sh "$image" "$architecture"
+export RUNTIME_EVIDENCE_DIR=${RUNTIME_EVIDENCE_DIR:-runtime-evidence}
+bash image/verify.sh "$image" "$architecture"
+bash image/native-inventory.sh "$image"

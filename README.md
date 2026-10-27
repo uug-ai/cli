@@ -31,8 +31,10 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
 
 ## Installation and contributing
 
-Go 1.26.10 or newer and a C compiler are required. The Kafka provider uses
-Confluent's bundled native librdkafka; `CGO_ENABLED=0` is not supported.
+Go 1.26.10, a C compiler, pkg-config and librdkafka 2.16.0 development
+headers/libraries are required for production builds. Build with
+`-tags dynamic,timetzdata,netgo` and `CGO_ENABLED=1`; the production image
+does not use Confluent's opaque bundled native archive.
 
 1. Clone the repository:
 
@@ -63,14 +65,21 @@ The production image is `ghcr.io/uug-ai/cli:<version>`; deploy a verified
 immutable digest rather than `latest`. Supported targets are Linux amd64 and
 arm64, tested natively in CI.
 
-The builder is digest-pinned Go 1.26.10 on Debian 13; the runtime is
-digest-pinned Chainguard `glibc-dynamic` (glibc 2.44-r9). Its libc, libm and
-architecture-specific loader are needed by Kafka's bundled native library.
-This is deliberately **not** a CGO-disabled scratch build. The complete
-vendor package database and native SPDX inventory are retained, not relabeled
-as Debian or replaced by an incomplete hand-copied library set. The native
-`test` target checks both CLI help and a local librdkafka mock-cluster
-producer/consumer round trip using the actual runtime's loader and libraries.
+The Go 1.26.10 toolchain donor and Wolfi build base are digest-pinned.
+The native builder installs `librdkafka-dev=2.16.0-r0`; an isolated final
+root is created by genuine signed-package `apk --root /runtime --initdb`
+installation of `librdkafka=2.16.0-r0`, CA certificates, keys and baselayout.
+Final `scratch` copies that entire root, including the authentic installed
+package database and the complete dependency closure. No package records are
+invented, relabeled, or copied independently of the files they describe.
+Go links with `-tags dynamic,timetzdata,netgo`; ELF inspection requires
+`librdkafka.so.1`. The native `test` target runs CLI help and the Kafka fixture
+inside the actual package-managed runtime as UID/GID 65532, with a 30-second
+fixture deadline. The fixture requires librdkafka 2.16.0 and gzip, snappy, LZ4,
+zstd, TLS, SASL plain/SCRAM/OAuth, HTTP and OIDC built-in features, checks CA
+readability, and verifies a local mock-cluster producer/consumer payload.
+Feature availability and a plaintext mock round trip are **not** proof of
+external TLS/SASL/OIDC interoperability.
 Runtime CA certificates support MongoDB, Vault,
 AWS, queue and telemetry TLS. Timezone data is embedded with `timetzdata`.
 The image contains no shell, package manager or compiler.
@@ -101,11 +110,14 @@ architectures: 13 libc6 findings, two GCC CVEs repeated across four native
 packages (eight findings), and two zlib findings. Debian's published trixie
 versions matched those installed, with no fixed versions listed. Updating
 Go dependencies could not fix these operating-system packages. The
-Chainguard replacement was selected only after inspecting both actual CLI
-binaries' required GLIBC symbols (maximum GLIBC_2.34), verifying their loader
-layout, and executing the actual arm64 CLI with the replacement libc/libm.
-The pinned replacement's MEDIUM/HIGH/CRITICAL scan was clean. Both-architecture
-image gates and native compatibility fixtures remain required; no ignore,
+initial Chainguard glibc runtime resolved these OS findings, but did not
+catalog statically bundled librdkafka subcomponents. The dynamic,
+package-managed construction closes that inventory gap. Each image hook
+retains the real APK database, ELF dependencies/loader and package owners;
+missing ownership fails the hook. PR/main checks require every installed
+package/version to match both the image scanner's OS catalog and SPDX, not
+merely a nonempty native inventory. Both-architecture MEDIUM/HIGH/CRITICAL
+image gates and native compatibility fixtures remain mandatory; no ignore,
 unfixed filter or severity-policy reduction is used.
 
 Normal operations do not need a writable root filesystem. When using
@@ -135,7 +147,7 @@ credentials, Git metadata, build output and operational data.
 
 PR/main CI blocks on source vulnerability/secret/misconfiguration scanning,
 native fixture tests, source **and retained-symbol binary** govulncheck,
-image contract checks, offline smoke and final-image HIGH/CRITICAL scans.
+image contract checks, offline smoke and final-image MEDIUM/HIGH/CRITICAL scans.
 Go uses `-trimpath -buildvcs=false -w -buildid=`; `-s` is intentionally
 excluded so binary vulnerability discovery retains symbols. Reports,
 rootfs inventories, native gate logs and SPDX SBOMs are uploaded per
@@ -143,7 +155,7 @@ architecture. Findings are not blanket suppressed.
 
 **Shared hardened release integration:**
 PR validation and release callers pin `uug-ai/workflows` to tested commit
-`c336f1ae4972de521930a2b58124038e09b603dc` (shared PR #13, awaiting merge).
+`f987049597f729e1ca3ca801f6fdedc2b1b06917`.
 They use `hardened_profile: standalone`, assert
 `hardened_entrypoint: '["/main"]'` and `hardened_workdir: "/"`, and build
 Dockerfile target `test` with CGO enabled. PR validation sets `publish: false`;
@@ -167,7 +179,7 @@ Before deployment verify the published digest with:
 ```sh
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@c336f1ae4972de521930a2b58124038e09b603dc$' \
+  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@f987049597f729e1ca3ca801f6fdedc2b1b06917$' \
   ghcr.io/uug-ai/cli@sha256:<verified-manifest-digest>
 ```
 
