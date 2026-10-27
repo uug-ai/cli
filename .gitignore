@@ -6,3 +6,6 @@ launch.json
 
 # Compiled binary (module name matches the repo, so `go build` drops it here)
 /cli
+/.hardening-work/
+/image-evidence/
+/runtime-evidence/

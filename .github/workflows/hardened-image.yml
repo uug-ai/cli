@@ -1,0 +1,109 @@
+name: Hardened CLI image
+
+on:
+  workflow_call:
+    secrets:
+      TOKEN:
+        required: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan source vulnerabilities and secrets
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          version: v0.76.1
+          scan-type: fs
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: json
+          output: source-security.json
+      - name: Scan production image and Job configuration
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          version: v0.76.1
+          scan-type: config
+          skip-dirs: .devcontainer
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: json
+          output: configuration-security.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-source-security
+          path: |
+            source-security.json
+            configuration-security.json
+
+  image:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Native fixture tests and source/binary reachability gates
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          set -o pipefail
+          mkdir -p image-evidence
+          docker buildx build --target test --progress=plain \
+            --secret id=github_token,env=GITHUB_TOKEN . 2>&1 | tee image-evidence/native-gates.log
+      - name: Build image without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: cli:hardened
+          secrets: github_token=${{ secrets.TOKEN }}
+          build-args: |
+            REVISION=${{ github.sha }}
+      - name: Offline read-only non-root smoke and index fixture verification
+        env:
+          RUNTIME_EVIDENCE_DIR: image-evidence
+        run: bash image/smoke-test.sh cli:hardened
+      - name: Scan final image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          version: v0.76.1
+          image-ref: cli:hardened
+          scanners: vuln,secret,misconfig
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "0"
+          format: json
+          output: image-evidence/image-security.json
+      - name: Generate SPDX SBOM
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          version: v0.76.1
+          image-ref: cli:hardened
+          format: spdx-json
+          output: image-evidence/image.spdx.json
+      - name: Require complete native inventory and enforce image policy
+        run: |
+          bash image/check-native-owners_test.sh
+          bash image/check-inventory.sh image-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-hardened-${{ matrix.architecture }}
+          path: image-evidence/

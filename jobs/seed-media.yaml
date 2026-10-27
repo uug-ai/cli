@@ -5,9 +5,20 @@ metadata:
 spec:
   template:
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       restartPolicy: Never
       containers:
       - name: seed-users
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
         image: uugai/cli:latest
         command: ['/main', '-action', 'seed-media',
             '-mongodb-uri', 'mongodb+srv://<username>:<password>@<host>/<database>?retryWrites=true&w=majority&appName=<appName>',

@@ -1,68 +1,87 @@
-# The builder's Go must be at least the `go` directive in go.mod. It is not
-# merely a version-skew preference: GOSUMDB is off below, so when GOTOOLCHAIN
-# has to fetch a newer toolchain it cannot verify the download and the build
-# fails outright ("checksum database disabled by GOSUMDB=off"). Keep this image
-# ahead of go.mod, or the next directive bump breaks the image build again.
-FROM mcr.microsoft.com/devcontainers/go:1.25-bookworm AS builder
+# syntax=docker/dockerfile:1.7
+FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS go-toolchain
 
-ENV GOROOT=/usr/local/go
-ENV GOPATH=/go
-ENV PATH=$GOPATH/bin:$GOROOT/bin:/usr/local/lib:$PATH
-ENV GOSUMDB=off
-ENV GOTOOLCHAIN=auto
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:0feab531471d2edfcca55f18883441cb7df598e724fa2dedf9985273f532eed7 AS native
+RUN apk add --no-cache build-base coreutils git librdkafka-dev=2.16.0-r0 && \
+    mkdir -p /runtime/etc/apk/keys && \
+    cp /etc/apk/keys/* /runtime/etc/apk/keys/ && \
+    cp /etc/apk/repositories /runtime/etc/apk/repositories && \
+    apk --root /runtime --initdb --no-cache --no-scripts add \
+      wolfi-baselayout wolfi-keys ca-certificates-bundle librdkafka=2.16.0-r0 && \
+    apk --root /runtime info -v && \
+    apk --root /runtime info --who-owns /usr/lib/librdkafka.so.1
 
-ARG project
-ARG github_username
-ARG github_token
+FROM native AS builder
+COPY --from=go-toolchain /usr/local/go/ /usr/local/go/
+ENV PATH="/usr/local/go/bin:${PATH}" \
+    GOPATH=/go \
+    GOPRIVATE=github.com/uug-ai/* \
+    GOTOOLCHAIN=local \
+    CGO_ENABLED=1 \
+    GOMAXPROCS=2
+WORKDIR /src
 
-##############################################################################
-# Copy all the relevant source code in the Docker image, so we can build this.
+COPY go.mod go.sum ./
+RUN --mount=type=secret,id=github_token \
+    --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    if [ -s /run/secrets/github_token ]; then \
+      export GIT_CONFIG_COUNT=1 \
+        GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/github_token)@github.com/.insteadOf" \
+        GIT_CONFIG_VALUE_0=https://github.com/; \
+    fi; \
+    go mod download && go mod verify
 
-RUN git config --global \
-    url."https://${github_username}:${github_token}@github.com/".insteadOf \
-    "https://github.com/"
+COPY main.go ./
+COPY actions/ ./actions/
+COPY database/ ./database/
+COPY models/ ./models/
+COPY queue/ ./queue/
+COPY utils/ ./utils/
+COPY indexes/ ./indexes/
 
-##########################################
-# Installing some additional dependencies.
+# Use package-managed Kafka instead of the opaque bundled native archive.
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    test "$(go env GOVERSION)" = go1.26.10 && \
+    test "$(pkg-config --modversion rdkafka)" = 2.16.0 && \
+    go build -p=1 -mod=readonly -trimpath -buildvcs=false \
+      -tags dynamic,timetzdata,netgo -ldflags="-w -buildid=" -o /out/main . && \
+    readelf -d /out/main | grep 'Shared library: \[librdkafka.so.1\]' && \
+    chmod 0555 /out/main && \
+    find indexes -type d -exec chmod 0555 {} + && \
+    find indexes -type f -exec chmod 0444 {} +
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential cmake pkg-config unzip libgtk2.0-dev \
-    curl ca-certificates libcurl4-openssl-dev libssl-dev libjpeg62-turbo-dev && \
-    rm -rf /var/lib/apt/lists/*
+FROM builder AS test
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    go test -p=1 -mod=readonly -tags dynamic,timetzdata,netgo \
+      -timeout 120s ./actions ./database ./queue ./models ./utils && \
+    go test -c -p=1 -mod=readonly -tags dynamic,timetzdata,netgo -o /out/queue.test ./queue && \
+    install -m 0555 /out/main /runtime/main && \
+    install -m 0555 /out/queue.test /runtime/queue.test && \
+    chroot --userspec=65532:65532 /runtime /main --help && \
+    CLI_RUNTIME_FIXTURE=1 chroot --userspec=65532:65532 /runtime /queue.test \
+      -test.run '^TestKafkaNativeMockRoundTrip$' -test.timeout 30s -test.v
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.9.0 && \
+    /usr/local/bin/govulncheck -tags dynamic,timetzdata,netgo ./... && \
+    /usr/local/bin/govulncheck -mode=binary /out/main
 
-##############################################################################
-# Copy all the relevant source code in the Docker image, so we can build this.
+FROM scratch AS runtime
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED
+LABEL org.opencontainers.image.title="cli" \
+      org.opencontainers.image.source="https://github.com/uug-ai/cli" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.vendor="UUG.AI"
 
-RUN mkdir -p /go/src/github.com/uug-ai/${project}
-COPY . /go/src/github.com/uug-ai/${project}
-
-##################
-# Build Project
-
-RUN cd /go/src/github.com/uug-ai/${project} && \
-    go mod download && \
-    go build -tags timetzdata,netgo --ldflags '-s -w -extldflags "-static -latomic"' main.go && \
-    mkdir -p /${project} && \
-    mv main /${project} && \
-    mv indexes /${project}/indexes && \
-    rm -rf /go/src/github.com/uug-ai/${project}
-
-####################################
-# Let's create a /dist folder containing just the files necessary for runtime.
-# Later, it will be copied as the / (root) of the output image.
-
-WORKDIR /dist
-RUN cp -r /${project} ./
-
-##############################
-# Final Stage: Create the small runtime image.
-
-FROM alpine:latest
-LABEL org.opencontainers.image.source https://github.com/uug-ai/cli
-LABEL AUTHOR=uug-ai
-
-ARG project
-
-COPY --chown=0:0 --from=builder /${project} /
-
+# Keep /main and /indexes compatible with existing operational Job manifests.
+COPY --from=native --chown=0:0 /runtime/ /
+COPY --from=builder --chown=0:0 /out/main /main
+COPY --from=builder --chown=0:0 /src/indexes /indexes
+USER 65532:65532
+WORKDIR /
 ENTRYPOINT ["/main"]

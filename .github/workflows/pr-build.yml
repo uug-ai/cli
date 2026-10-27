@@ -3,18 +3,50 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
 jobs:
   build:
-    uses: uug-ai/workflows/.github/workflows/pr-build.yml@main
+    uses: uug-ai/workflows/.github/workflows/release-create.yml@ff61364bb99093f43f0c02b2f5091f0e22ba9fb6
     with:
-      project: ${{ github.event.repository.name }}
-      go_version: "1.25.8"
-      go_dir: "."
-      go_sum_path: "go.sum"
+      organization: uug-ai
+      project: cli
+      artifact_prefix: cli
       docker_context: "."
+      hardened: true
+      hardened_profile: standalone
+      hardened_entrypoint: '["/main"]'
+      hardened_workdir: "/"
+      publish: false
+      use_private_module_auth: false
       runner_matrix: >-
         [
           {"architecture":"amd64","runner":"ubuntu-24.04"},
           {"architecture":"arm64","runner":"ubuntu-24.04-arm"}
         ]
     secrets: inherit
+
+  native-inventory:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-image-*
+          path: image-evidence
+      - name: Require APK, scanner and SPDX agreement on both architectures
+        run: |
+          bash image/check-native-owners_test.sh
+          bash image/check-inventory.sh image-evidence/cli-image-amd64
+          bash image/check-inventory.sh image-evidence/cli-image-arm64
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-native-inventory
+          path: image-evidence/**/*.tsv

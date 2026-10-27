@@ -31,6 +31,11 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
 
 ## Installation and contributing
 
+Go 1.26.10, a C compiler, pkg-config and librdkafka 2.16.0 development
+headers/libraries are required for production builds. Build with
+`-tags dynamic,timetzdata,netgo` and `CGO_ENABLED=1`; the production image
+does not use Confluent's opaque bundled native archive.
+
 1. Clone the repository:
 
    ```sh
@@ -52,6 +57,146 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
    ```
 
 ## Usage
+
+### Hardened production image
+
+See the [image-hardening standard](https://learn.uug.ai/guides/security/image-hardening/).
+The production image is `ghcr.io/uug-ai/cli:<version>`; deploy a verified
+immutable digest rather than `latest`. Supported targets are Linux amd64 and
+arm64, tested natively in CI.
+
+The Go 1.26.10 toolchain donor and Wolfi build base are digest-pinned.
+The native builder installs `librdkafka-dev=2.16.0-r0`; an isolated final
+root is created by genuine signed-package `apk --root /runtime --initdb`
+installation of `librdkafka=2.16.0-r0`, CA certificates, keys and baselayout.
+Final `scratch` copies that entire root, including the authentic installed
+package database and the complete dependency closure. No package records are
+invented, relabeled, or copied independently of the files they describe.
+Go links with `-tags dynamic,timetzdata,netgo`; ELF inspection requires
+`librdkafka.so.1`. The native `test` target runs CLI help and the Kafka fixture
+inside the actual package-managed runtime as UID/GID 65532, with a 30-second
+fixture deadline. The fixture requires librdkafka 2.16.0 and gzip, snappy, LZ4,
+zstd, TLS, SASL plain/SCRAM/OAuth, HTTP and OIDC built-in features, checks CA
+readability, and verifies a local mock-cluster producer/consumer payload.
+Feature availability and a plaintext mock round trip are **not** proof of
+external TLS/SASL/OIDC interoperability.
+Runtime CA certificates support MongoDB, Vault,
+AWS, queue and telemetry TLS. Timezone data is embedded with `timetzdata`.
+The image contains no shell, package manager or compiler.
+
+The contract preserves `/main`, the `/` working directory, and every shipped
+`/indexes/*.txt` snapshot, including historical migration snapshots.
+The entrypoint is `["/main"]`, with UID/GID **65532:65532**. Application and
+index files are root-owned and read-only (0555 and 0444 respectively). All
+existing actions and flags, including migration, bootstrap, backfill,
+seeding, reprocessing, index management and DLQ commands, remain available.
+No new environment variable is required. Credentials remain action-specific
+flags/secrets; supply them through your platform's secret injection and
+avoid logging command lines.
+
+The CLI exposes no ports, metrics, liveness or readiness endpoint, and has no
+image health check. Job completion/exit status is the health contract.
+`/main --help` is the only automated runtime smoke: it exits before command
+dispatch and runs with **no network**, a read-only root filesystem, all
+capabilities dropped and privilege escalation disabled. Index fixtures are
+compared byte-for-byte against the exported image. No migration, seeding,
+backfill, DLQ replay or queue-consuming worker is started by this smoke.
+Native fixture/unit tests use in-process MongoDB mocks, not real resources.
+The Kafka compatibility fixture creates only an ephemeral localhost mock
+broker; it never reads production credentials or connects to a real cluster.
+
+The previous distroless Debian 13 base produced identical findings on both
+architectures: 13 libc6 findings, two GCC CVEs repeated across four native
+packages (eight findings), and two zlib findings. Debian's published trixie
+versions matched those installed, with no fixed versions listed. Updating
+Go dependencies could not fix these operating-system packages. The
+initial Chainguard glibc runtime resolved these OS findings, but did not
+catalog statically bundled librdkafka subcomponents. The dynamic,
+package-managed construction closes that inventory gap. Each image hook
+retains the real APK database, ELF dependencies/loader and package owners;
+missing ownership fails the hook. PR/main checks require every installed
+package/version to match both the image scanner's OS catalog and SPDX, not
+merely a nonempty native inventory. Both-architecture MEDIUM/HIGH/CRITICAL
+image gates and native compatibility fixtures remain mandatory; no ignore,
+unfixed filter or severity-policy reduction is used.
+
+Normal operations do not need a writable root filesystem. When using
+`-report-file`, mount a narrowly scoped writable volume (for example
+`/reports`, owned by UID 65532) and set an absolute report path there;
+relative paths under `/` will correctly fail. Do not make the binary or
+indexes writable. Add an isolated writable scratch volume only if a
+specific operational command requires it. Expected outbound connections
+depend on the selected action: MongoDB, Vault/Hub HTTPS, RabbitMQ, Kafka,
+AWS SQS/S3, Azure Event Hubs and configured telemetry.
+
+Build locally with BuildKit:
+
+```sh
+docker buildx build --target test --progress=plain .
+docker buildx build --load -t cli:hardened .
+bash image/verify.sh cli:hardened arm64 # use the native architecture
+bash image/smoke-test.sh cli:hardened # infer the native architecture
+```
+
+If a private module needs authentication, pass only a short-lived read-only
+token with `--secret id=github_token,env=GITHUB_TOKEN`. The secret is optional,
+is never a build argument, and is not written into Git configuration.
+Public checksum verification stays enabled; only `github.com/uug-ai/*` is
+scoped private. The allowlist `.dockerignore` excludes local configuration,
+credentials, Git metadata, build output and operational data.
+
+PR/main CI blocks on source vulnerability/secret/misconfiguration scanning,
+native fixture tests, source **and retained-symbol binary** govulncheck,
+image contract checks, offline smoke and final-image MEDIUM/HIGH/CRITICAL scans.
+Go uses `-trimpath -buildvcs=false -w -buildid=`; `-s` is intentionally
+excluded so binary vulnerability discovery retains symbols. Reports,
+rootfs inventories, native gate logs and SPDX SBOMs are uploaded per
+architecture. Findings are not blanket suppressed.
+
+**Shared hardened release integration:**
+PR validation and release callers pin `uug-ai/workflows` to tested commit
+`ff61364bb99093f43f0c02b2f5091f0e22ba9fb6`.
+All reusable image callers use isolated `cli` artifact prefixes. The shared gate
+requires exact installed APK/scanner OS/native SPDX package-version sets
+before staged publication, rechecks immutable published scanner packages
+against the installed set, and blocks secrets at every severity.
+They use `hardened_profile: standalone`, assert
+`hardened_entrypoint: '["/main"]'` and `hardened_workdir: "/"`, and build
+Dockerfile target `test` with CGO enabled. PR validation sets `publish: false`;
+it never reserves a tag or publishes an image. The required
+`bash image/smoke-test.sh IMAGE` hook verifies the native image and all index
+fixtures without MongoDB/RabbitMQ services or `smoke_queue`. It honors
+`RUNTIME_EVIDENCE_DIR` (the shared runner sets `runtime-evidence`) so smoke
+logs and rootfs/fixture inventories are retained. Optional module
+authentication uses only BuildKit `github_token` secrets; the current public
+module graph uses `use_private_module_auth: false`. Enable it only with a
+read-only `secrets.TOKEN` if module visibility changes; never use credential
+build arguments. Source/binary/image gates and SPDX evidence remain mandatory.
+Publication must generate provenance and SBOM attestations,
+rescan immutable per-architecture digests, sign the final multi-platform
+manifest with keyless Cosign, and retain base/source/image digests, reports
+and signature/provenance evidence before promotion. Bump reserves a draft
+release (`draft: true`); only successful verified publication may finalize
+it (`finalize_release: true`). Never finalize on a failed gate.
+Before deployment verify the published digest with:
+
+```sh
+cosign verify \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp='^https://github\.com/uug-ai/workflows/\.github/workflows/release-create\.yml@ff61364bb99093f43f0c02b2f5091f0e22ba9fb6$' \
+  ghcr.io/uug-ai/cli@sha256:<verified-manifest-digest>
+```
+
+Customers/Helm owners must set `runAsNonRoot: true`, `runAsUser: 65532`,
+`runAsGroup: 65532`, `allowPrivilegeEscalation: false`,
+`readOnlyRootFilesystem: true`, `capabilities.drop: [ALL]` and
+`seccompProfile.type: RuntimeDefault`, use resource limits and a Job
+restart/backoff/deadline policy, and inject secrets without baking them into
+images. Set report-volume ownership appropriately and restrict egress to
+the action's required systems. No worker probes or RabbitMQ readiness
+checks belong on a finite CLI Job. Existing `jobs/` examples retain their
+command paths; their old image versions are not evidence of a hardened
+release. This image work alone does not claim deployment-wide CIS compliance.
 
 ### Dead-letter queue administration
 
