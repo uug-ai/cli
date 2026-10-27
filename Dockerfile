@@ -14,6 +14,7 @@ RUN apk add --no-cache build-base coreutils git librdkafka-dev=2.16.0-r0 && \
 FROM native AS builder
 COPY --from=go-toolchain /usr/local/go/ /usr/local/go/
 ENV PATH="/usr/local/go/bin:${PATH}" \
+    GOPATH=/go \
     GOPRIVATE=github.com/uug-ai/* \
     GOTOOLCHAIN=local \
     CGO_ENABLED=1 \
@@ -62,9 +63,9 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     CLI_RUNTIME_FIXTURE=1 chroot --userspec=65532:65532 /runtime /queue.test \
       -test.run '^TestKafkaNativeMockRoundTrip$' -test.timeout 30s -test.v
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
-    go install golang.org/x/vuln/cmd/govulncheck@v1.9.0 && \
-    govulncheck -tags dynamic,timetzdata,netgo ./... && \
-    govulncheck -mode=binary /out/main
+    GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.9.0 && \
+    /usr/local/bin/govulncheck -tags dynamic,timetzdata,netgo ./... && \
+    /usr/local/bin/govulncheck -mode=binary /out/main
 
 FROM scratch AS runtime
 ARG VERSION=dev

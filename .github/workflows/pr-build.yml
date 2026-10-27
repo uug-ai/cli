@@ -44,3 +44,8 @@ jobs:
           bash image/check-native-owners_test.sh
           bash image/check-inventory.sh image-evidence/hardened-image-amd64
           bash image/check-inventory.sh image-evidence/hardened-image-arm64
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-native-inventory
+          path: image-evidence/**/*.tsv
