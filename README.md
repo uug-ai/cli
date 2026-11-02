@@ -791,6 +791,23 @@ go run . -action check-indexes \
          -index-version migration-hub-marker-option-values-in-range-05-10-2026
 ```
 
+Audit event exports download large ranges in parts. Each part continues from a
+`{timestamp, _id}` cursor and is sorted `{timestamp: -1, _id: -1}` within one
+organisation, so ties on the same millisecond keep a stable order. The
+`{schemaVersion, organisationId, timestamp, _id}` index serves that sort
+without an in-memory sort; it also covers every query the older
+`audit_event_v1_org_timestamp` prefix serves. Create it before deploying the
+Hub API part export:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections audit_events \
+         -mode dry-run \
+         -index-version migration-hub-audit-export-cursor-02-11-2026
+```
+
 Notification group and site lookups match a device inside each ownership arm:
 `{organisationId, projectId, devices}` for canonical documents and
 `{user_id, organisationId: {$in: [null, ""]}, projectId, devices}` for legacy

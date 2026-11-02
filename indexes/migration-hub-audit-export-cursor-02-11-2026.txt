@@ -1,0 +1,8 @@
+audit_events
+[
+  {
+    v: 2,
+    key: { schemaVersion: 1, organisationId: 1, timestamp: -1, _id: -1 },
+    name: 'audit_event_v1_org_timestamp_id'
+  }
+]
