@@ -512,6 +512,22 @@ func TestChannelsIndexFileDeclaresLegacyUpsertKey(t *testing.T) {
 	}
 }
 
+func TestAuditExportCursorIndexFileDeclaresTieBreakSort(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-audit-export-cursor-02-11-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	specs := canonical["audit_events"]
+	if len(canonical) != 1 || len(specs) != 1 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	cursor := findSpecByKey(t, specs, "schemaVersion:1.organisationId:1.timestamp:-1._id:-1")
+	if cursor.Name != "audit_event_v1_org_timestamp_id" || cursor.Unique || cursor.PartialFilterExpression != nil {
+		t.Fatalf("cursor spec = %#v", cursor)
+	}
+}
+
 func findSpecByKey(t *testing.T, specs []IndexSpec, normalized string) IndexSpec {
 	t.Helper()
 	for _, s := range specs {
