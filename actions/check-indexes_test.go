@@ -490,6 +490,24 @@ func TestWorkflowDeviceGroupsIndexFileDeclaresOwnershipArms(t *testing.T) {
 	}
 }
 
+func TestMediaForwardableIndexFileDeclaresPartialMetadataIndex(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-media-forwardable-26-10-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	specs := canonical["media"]
+	if len(canonical) != 1 || len(specs) != 1 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	spec := findSpecByKey(t, specs, "organisationId:1.projectId:1.storageSolution:1.startTimestamp:-1._id:-1")
+	want := bson.M{"storageSolution": "metadata"}
+	if spec.Name != "media_forwardable_start_id" || spec.Unique ||
+		!reflect.DeepEqual(spec.PartialFilterExpression, want) {
+		t.Fatalf("forwardable spec = %#v", spec)
+	}
+}
+
 func TestChannelsIndexFileDeclaresLegacyUpsertKey(t *testing.T) {
 	path := filepath.Join("..", "indexes", "migration-hub-channels-20-10-2026.txt")
 	canonical, err := loadCanonicalIndexSpecsFromFile(path)
