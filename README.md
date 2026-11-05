@@ -791,6 +791,32 @@ go run . -action check-indexes \
          -index-version migration-hub-marker-option-values-in-range-05-10-2026
 ```
 
+RBAC teams and role assignments (models#315, #316) need their uniqueness
+rules in the database, not only in the writers:
+
+- `teams`: one name per organisation, ignoring case (a `collation: { locale:
+  'en', strength: 2 }` unique index), and at most one team per identity
+  provider group (unique, partial on `source: 'identityProvider'`);
+- `team_members`: a user is in a team once; `{organisationId, userId}` finds
+  a member's teams on every request;
+- `role_assignments`: one assignment per principal, role and project
+  (organisation-level assignments have no project, so one per principal and
+  role); the same index serves the per-request lookup by principal. The
+  project and role indexes serve the access pages and role usage.
+
+Index files may declare `collation: { locale, strength }`; the checker
+creates the index with it and compares locale and strength (strength
+defaults to 3, as in Mongo). Create these before the writers ship:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections teams,team_members,role_assignments \
+         -mode dry-run \
+         -index-version migration-hub-rbac-teams-05-11-2026
+```
+
 Audit event exports download large ranges in parts. Each part continues from a
 `{timestamp, _id}` cursor and is sorted `{timestamp: -1, _id: -1}` within one
 organisation, so ties on the same millisecond keep a stable order. The

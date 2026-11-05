@@ -1,0 +1,33 @@
+teams
+[
+  {
+    v: 2,
+    key: { organisationId: 1, name: 1 },
+    name: 'teams_organisation_name_unique',
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
+  },
+  {
+    v: 2,
+    key: { organisationId: 1, 'identityProvider.provider': 1, 'identityProvider.externalGroupId': 1 },
+    name: 'teams_identity_provider_group_unique',
+    unique: true,
+    partialFilterExpression: { source: 'identityProvider' }
+  }
+]
+team_members
+[
+  { v: 2, key: { teamId: 1, userId: 1 }, name: 'team_members_team_user_unique', unique: true },
+  { v: 2, key: { organisationId: 1, userId: 1 }, name: 'team_members_organisation_user' }
+]
+role_assignments
+[
+  {
+    v: 2,
+    key: { organisationId: 1, 'principal.type': 1, 'principal.id': 1, roleId: 1, 'scope.projectId': 1 },
+    name: 'role_assignments_slot_unique',
+    unique: true
+  },
+  { v: 2, key: { organisationId: 1, 'scope.projectId': 1 }, name: 'role_assignments_organisation_project' },
+  { v: 2, key: { organisationId: 1, roleId: 1 }, name: 'role_assignments_organisation_role' }
+]
