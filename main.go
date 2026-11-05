@@ -18,7 +18,6 @@ func promptAction() string {
 		"organisations-authorization-mode",
 		"projects-bootstrap",
 		"migrate-legacy-media",
-		"backfill-device-names",
 		"audit-legacy-compat",
 		"generate-default-labels",
 		"check-indexes",
@@ -304,30 +303,6 @@ func main() {
 			*applyMigrationIndexes,
 			*generateDefaultMarkerOptions,
 		)
-	case "backfill-device-names":
-		deviceNamesBatchSize := *batchSize
-		if !actions.WasFlagPassed("batch-size") {
-			deviceNamesBatchSize = 500
-		}
-		err := actions.BackfillDeviceNames(actions.DeviceNamesBackfillConfig{
-			Mode:                       *mode,
-			MongoDBURI:                 *mongodbURI,
-			MongoDBHost:                *mongodbHost,
-			MongoDBPort:                *mongodbPort,
-			MongoDBSourceDatabase:      *mongodbSourceDatabase,
-			MongoDBDestinationDatabase: *mongodbDestinationDatabase,
-			MongoDBDatabaseCredentials: *mongodbDatabaseCredentials,
-			MongoDBUsername:            *mongodbUsername,
-			MongoDBPassword:            *mongodbPassword,
-			DeviceCollection:           *deviceCollName,
-			BatchSize:                  deviceNamesBatchSize,
-			MigrationTimeoutMinutes:    *migrationTimeoutMinutes,
-			ReportFile:                 *reportFile,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "backfill-device-names: %v\n", err)
-			os.Exit(actions.DeviceNamesBackfillExitCode(err))
-		}
 	case "audit-legacy-compat":
 		fmt.Println("Running legacy compatibility audit...")
 		actions.AuditLegacyCompatibility(*mode,
