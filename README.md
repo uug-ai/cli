@@ -8,6 +8,7 @@ This repository contains CLI tools for performing specific automations.
 - `migrate-legacy-media`: Backfilling legacy media documents to current media shape.
 - `backfill-device-names`: Backfilling the v2 device display `name` from the agent name and removing the pre-release `agent.cameraName` field.
 - `organisations-bootstrap`: Bootstrapping Phase 3 organisation identity and memberships in ordered stages.
+- `organisations-authorization-mode`: Development tool: switch a fresh organisation (its owner only) to `rbac` or `shadow` with its stored Owner role and assignment, or back to `legacy`.
 - `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
 - `dlq`: Inspecting, replaying, recovering, and safely seeding dead-letter queues across supported providers.
@@ -1407,3 +1408,27 @@ go run main.go -action reprocess-media \
                -batch-size 100 \
                -batch-delay 1000
 ```
+
+### Organisation authorization mode (development)
+
+Hub decides access per organisation from its `authorizationMode` (RBAC spec
+7.2): `legacy` (unset) uses the legacy user fields, `shadow` also compares the
+stored documents, `rbac` uses only the stored roles and assignments. To develop
+against an `rbac` organisation, bootstrap a fresh owner and switch it:
+
+```sh
+go run . -action organisations-bootstrap -mode live -username <owner> ...
+go run . -action organisations-authorization-mode \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -organisation-id <organisation id> \
+         -authorization-mode rbac \
+         -mode dry-run
+```
+
+For `rbac` and `shadow` the action upserts the documents `models.MapLegacyAccess`
+produces for the owner (the Owner role copy in `organisation_roles` and the
+Owner assignment in `role_assignments`, with the derived ids the migration
+command will use) and sets the mode last. It refuses an organisation with other
+members or sub-accounts: those need the migration command. `-authorization-mode
+legacy` only sets the mode back and keeps the documents.

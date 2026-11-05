@@ -43,6 +43,7 @@ func projectsBootstrapProjectDocument(organisationID, ownerID primitive.ObjectID
 		"name":           projectsBootstrapDefaultName,
 		"slug":           projectsBootstrapDefaultSlug,
 		"isActive":       true,
+		"hasPincode":     false,
 		"audit": bson.M{
 			"createdBy":  ownerID.Hex(),
 			"createdAt":  createdAt,
