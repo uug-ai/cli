@@ -15,6 +15,7 @@ func promptAction() string {
 		"reprocess-media",
 		"organisations-bootstrap",
 		"organisations-backfill",
+		"organisations-authorization-mode",
 		"projects-bootstrap",
 		"migrate-legacy-media",
 		"backfill-device-names",
@@ -72,6 +73,7 @@ func main() {
 	vaultUrl := flag.String("vault-url", "", "Vault API URL override (e.g. https://vault.example.com/api)")
 	username := flag.String("username", "", "Specific username to target")
 	organisationId := flag.String("organisation-id", "", "Specific organisation/user ID to target")
+	authorizationMode := flag.String("authorization-mode", "", "Organisation authorization mode for organisations-authorization-mode: legacy, shadow or rbac")
 	startTimestamp := flag.Int64("start-timestamp", 0, "Start Timestamp")
 	endTimestamp := flag.Int64("end-timestamp", 0, "End Timestamp")
 	migrationTimeoutMinutes := flag.Int("migration-timeout-minutes", 60, "Timeout in minutes for migration scans (0 disables timeout)")
@@ -241,6 +243,18 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "organisations-bootstrap: %v\n", err)
 			os.Exit(actions.OrganisationsBootstrapExitCode(err))
+		}
+	case "organisations-authorization-mode":
+		err := actions.OrganisationsAuthorizationMode(actions.OrganisationsAuthorizationModeConfig{
+			Mode:              *mode,
+			MongoDBURI:        *mongodbURI,
+			Database:          *mongodbDestinationDatabase,
+			OrganisationID:    *organisationId,
+			AuthorizationMode: *authorizationMode,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "organisations-authorization-mode: %v\n", err)
+			os.Exit(1)
 		}
 	case "projects-bootstrap":
 		err := actions.ProjectsBootstrap(actions.ProjectsBootstrapConfig{

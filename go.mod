@@ -8,7 +8,7 @@ require (
 	github.com/gosuri/uiprogress v0.0.1
 	github.com/rabbitmq/amqp091-go v1.16.0
 	github.com/uug-ai/ingest v1.0.10
-	github.com/uug-ai/models v1.7.21
+	github.com/uug-ai/models v1.7.102
 	github.com/uug-ai/queue v1.4.4
 	github.com/uug-ai/trace v1.1.0
 	go.mongodb.org/mongo-driver v1.17.9
@@ -51,6 +51,7 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
+	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect

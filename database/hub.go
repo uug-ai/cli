@@ -637,41 +637,29 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, cloudKey string) ([]i
 		}}
 
 		doc := models.Device{
-			Id:                    id,
-			Key:                   key,
-			Name:                  fmt.Sprintf("Camera %d", i+1),
-			Type:                  "camera",
-			Repository:            "https://github.com/uug-ai/agent",
-			Version:               "3.5.0",
-			Deployment:            "docker",
-			OrganisationId:        userID.Hex(),
-			SiteIds:               []string{},
-			GroupIds:              []string{},
-			UserId:                userID.Hex(), // Legacy compatibility.
-			ConnectionStart:       nowMs,
-			DeviceLastSeen:        nowMs,
-			AgentLastSeen:         nowMs,
-			IdleThreshold:         60000,
-			DisconnectedThreshold: 300000,
-			HealthyThreshold:      120000,
-			Metadata: &models.DeviceMetadata{
-				Architecture: "x86_64",
+			Id:             id,
+			Key:            key,
+			Name:           fmt.Sprintf("Camera %d", i+1),
+			Type:           "camera",
+			OrganisationId: userID.Hex(),
+			SiteIds:        []string{},
+			GroupIds:       []string{},
+			UserId:         userID.Hex(), // Legacy compatibility.
+			DeviceLastSeen: nowMs,
+			AgentLastSeen:  nowMs,
+			// Memory, encryption and boot details are only reported in the
+			// legacy heartbeat (DeprecatedAnalytics) since the device v2 model.
+			Agent: &models.DeviceAgent{
+				Name:         fmt.Sprintf("camera-%d", suffix),
+				Version:      "3.5.0",
+				Repository:   "https://github.com/uug-ai/agent",
+				Deployment:   "docker",
 				Hostname:     fmt.Sprintf("%x", rand.Uint64()),
-				FreeMemory:   fmt.Sprintf("%d", 650000000+rand.Intn(100000000)),
-				TotalMemory:  "16515977216",
-				UsedMemory:   fmt.Sprintf("%d", 15800000000+rand.Intn(100000000)),
-				ProcessMemory: fmt.Sprintf(
-					"%d", 28000000+rand.Intn(100000000),
-				),
-				Encrypted:     false,
-				EncryptedData: []byte{},
-				HubEncryption: "true",
-				E2EEncryption: "false",
-				IPAddress:     "127.0.0.1",
-				MacAddress:    "02:42:ac:12:00:0c",
-				BootTime:      "5 days",
+				Architecture: "x86_64",
+				IPAddresses:  []string{"127.0.0.1"},
+				MacAddresses: []string{"02:42:ac:12:00:0c"},
 			},
-			CameraMetadata: &models.CameraMetadata{
+			Camera: &models.CameraMetadata{
 				Resolution:     "1920x1080",
 				FrameRate:      15,
 				Codec:          "H.264",
@@ -680,8 +668,6 @@ func BuildDeviceDocs(count int, userID primitive.ObjectID, cloudKey string) ([]i
 				HasZoom:        false,
 				HasBackChannel: false,
 				HasPanTilt:     false,
-				HasPresets:     false,
-				HasIO:          false,
 			},
 			FeaturePermissions: &models.DeviceFeaturePermissions{
 				PTZ:          models.PermissionNone,
