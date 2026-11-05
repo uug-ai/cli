@@ -569,3 +569,75 @@ func TestDescribePartialFilterIsStable(t *testing.T) {
 		t.Fatalf("describePartialFilter(nil) = %q, want %q", got, "-")
 	}
 }
+
+func TestParseCollation(t *testing.T) {
+	cases := []struct {
+		doc  string
+		want *IndexCollation
+	}{
+		{"{ locale: 'en', strength: 2 }", &IndexCollation{Locale: "en", Strength: 2}},
+		{"{ locale: 'nl' }", &IndexCollation{Locale: "nl", Strength: 3}},
+		{"{ locale: 'simple' }", nil},
+		{"{ strength: 2 }", nil},
+		{"", nil},
+	}
+	for _, c := range cases {
+		if got := parseCollation(c.doc); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("parseCollation(%q) = %#v, want %#v", c.doc, got, c.want)
+		}
+	}
+}
+
+func TestIndexSpecMatchesCollation(t *testing.T) {
+	keys := bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "name", Value: int32(1)}}
+	required := IndexSpec{Key: keys, Unique: true, Collation: &IndexCollation{Locale: "en", Strength: 2}}
+	if !indexSpecMatches(required, IndexSpec{Key: keys, Unique: true, Collation: &IndexCollation{Locale: "en", Strength: 2}}) {
+		t.Fatal("exact collation did not match")
+	}
+	if indexSpecMatches(required, IndexSpec{Key: keys, Unique: true}) {
+		t.Fatal("binary index satisfied a case-insensitive contract")
+	}
+	if indexSpecMatches(required, IndexSpec{Key: keys, Unique: true, Collation: &IndexCollation{Locale: "en", Strength: 3}}) {
+		t.Fatal("case-sensitive collation satisfied a strength 2 contract")
+	}
+	if indexSpecMatches(IndexSpec{Key: keys, Unique: true}, IndexSpec{Key: keys, Unique: true, Collation: &IndexCollation{Locale: "en", Strength: 2}}) {
+		t.Fatal("collated index satisfied a binary contract")
+	}
+}
+
+func TestRBACTeamsIndexFileDeclaresUniqueContracts(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-rbac-teams-05-11-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	if len(canonical) != 3 || len(canonical["teams"]) != 2 || len(canonical["team_members"]) != 2 || len(canonical["role_assignments"]) != 3 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+
+	name := findSpecByKey(t, canonical["teams"], "organisationId:1.name:1")
+	if !name.Unique || name.PartialFilterExpression != nil || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+		t.Fatalf("team name spec = %#v", name)
+	}
+	group := findSpecByKey(t, canonical["teams"], "organisationId:1.identityProvider.provider:1.identityProvider.externalGroupId:1")
+	if !group.Unique || group.Collation != nil || !reflect.DeepEqual(group.PartialFilterExpression, bson.M{"source": "identityProvider"}) {
+		t.Fatalf("team group spec = %#v", group)
+	}
+
+	if member := findSpecByKey(t, canonical["team_members"], "teamId:1.userId:1"); !member.Unique {
+		t.Fatalf("team member spec = %#v", member)
+	}
+	if lookup := findSpecByKey(t, canonical["team_members"], "organisationId:1.userId:1"); lookup.Unique {
+		t.Fatalf("team member lookup spec = %#v", lookup)
+	}
+
+	slot := findSpecByKey(t, canonical["role_assignments"], "organisationId:1.principal.type:1.principal.id:1.roleId:1.scope.projectId:1")
+	if !slot.Unique || slot.PartialFilterExpression != nil {
+		t.Fatalf("assignment slot spec = %#v", slot)
+	}
+	for _, key := range []string{"organisationId:1.scope.projectId:1", "organisationId:1.roleId:1"} {
+		if spec := findSpecByKey(t, canonical["role_assignments"], key); spec.Unique {
+			t.Fatalf("%s spec = %#v", key, spec)
+		}
+	}
+}

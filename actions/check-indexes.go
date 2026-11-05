@@ -32,6 +32,17 @@ type IndexSpec struct {
 	// most organisations have no slug key at all, and the uniqueness has to
 	// apply only to the ones that do.
 	PartialFilterExpression bson.M
+	// Collation makes the index compare strings by locale rules, e.g.
+	// strength 2 for a case-insensitive unique name. It is nil for the
+	// ordinary binary comparison every other entry uses. Only locale and
+	// strength are declared and compared; Mongo fills in the rest.
+	Collation *IndexCollation
+}
+
+// IndexCollation is the part of an index collation the indexes files declare.
+type IndexCollation struct {
+	Locale   string
+	Strength int
 }
 
 const (
@@ -239,7 +250,7 @@ func CheckIndexes(
 			if m.Unique {
 				unique = "true"
 			}
-			fmt.Printf("  | %-28s | %-50s | %-7s | %-40s |\n", name, key, unique, describePartialFilter(m.PartialFilterExpression))
+			fmt.Printf("  | %-28s | %-50s | %-7s | %-40s |\n", name, key, unique, describeIndexOptions(m))
 		}
 		fmt.Println(border)
 	}
@@ -262,6 +273,9 @@ func CheckIndexes(
 			}
 			if len(m.spec.PartialFilterExpression) > 0 {
 				opts.SetPartialFilterExpression(m.spec.PartialFilterExpression)
+			}
+			if m.spec.Collation != nil {
+				opts.SetCollation(&options.Collation{Locale: m.spec.Collation.Locale, Strength: m.spec.Collation.Strength})
 			}
 			_, err := db.Collection(m.coll).Indexes().CreateOne(ctx, mongo.IndexModel{
 				Keys:    m.spec.Key,
@@ -326,11 +340,19 @@ func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 			Key                     bson.D `bson:"key"`
 			Unique                  bool   `bson:"unique"`
 			PartialFilterExpression bson.M `bson:"partialFilterExpression"`
+			Collation               *struct {
+				Locale   string `bson:"locale"`
+				Strength int    `bson:"strength"`
+			} `bson:"collation"`
 		}
 		if err := cur.Decode(&doc); err != nil || len(doc.Key) == 0 {
 			continue
 		}
-		out = append(out, IndexSpec{Name: doc.Name, Key: doc.Key, Unique: doc.Unique, PartialFilterExpression: doc.PartialFilterExpression})
+		spec := IndexSpec{Name: doc.Name, Key: doc.Key, Unique: doc.Unique, PartialFilterExpression: doc.PartialFilterExpression}
+		if doc.Collation != nil && doc.Collation.Locale != "" && doc.Collation.Locale != "simple" {
+			spec.Collation = &IndexCollation{Locale: doc.Collation.Locale, Strength: doc.Collation.Strength}
+		}
+		out = append(out, spec)
 	}
 	return out, cur.Err()
 }
@@ -338,7 +360,22 @@ func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 func indexSpecMatches(required, actual IndexSpec) bool {
 	return normalizeKey(required.Key) == normalizeKey(actual.Key) &&
 		required.Unique == actual.Unique &&
-		reflect.DeepEqual(required.PartialFilterExpression, actual.PartialFilterExpression)
+		reflect.DeepEqual(required.PartialFilterExpression, actual.PartialFilterExpression) &&
+		reflect.DeepEqual(required.Collation, actual.Collation)
+}
+
+// describeIndexOptions renders the partial filter and collation of a missing
+// index for the report table.
+func describeIndexOptions(spec IndexSpec) string {
+	description := describePartialFilter(spec.PartialFilterExpression)
+	if spec.Collation == nil {
+		return description
+	}
+	collation := fmt.Sprintf("collation %s/%d", spec.Collation.Locale, spec.Collation.Strength)
+	if description == "" || description == "-" {
+		return collation
+	}
+	return description + "; " + collation
 }
 
 // normalizeKey builds an order-preserving string like "field1:1.field2:-1".
@@ -476,6 +513,7 @@ func parseIndexArrayBlock(lines []string) []IndexSpec {
 			Key:                     key,
 			Unique:                  extractUnique(p),
 			PartialFilterExpression: parseFilterDoc(extractPartialFilterExpression(p)),
+			Collation:               parseCollation(extractBraceDoc(p, "collation:")),
 		})
 	}
 	return specs
@@ -588,6 +626,21 @@ func extractBraceDoc(obj string, label string) string {
 	// Unbalanced: the object was truncated. Treat it as absent rather than
 	// creating an index with a half-read filter.
 	return ""
+}
+
+// parseCollation reads a `collation: { locale: 'en', strength: 2 }` document.
+// An absent document, or one without a locale, is no collation.
+func parseCollation(doc string) *IndexCollation {
+	fields := parseFilterDoc(doc)
+	locale, _ := fields["locale"].(string)
+	if locale == "" || locale == "simple" {
+		return nil
+	}
+	strength, _ := fields["strength"].(int32)
+	if strength == 0 {
+		strength = 3 // Mongo's default, which listIndexes then reports
+	}
+	return &IndexCollation{Locale: locale, Strength: int(strength)}
 }
 
 func extractUnique(obj string) bool {
