@@ -16,6 +16,7 @@ func promptAction() string {
 		"organisations-bootstrap",
 		"organisations-backfill",
 		"organisations-authorization-mode",
+		"organisations-cleanup-access-references",
 		"projects-bootstrap",
 		"migrate-legacy-media",
 		"backfill-device-names",
@@ -254,6 +255,18 @@ func main() {
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "organisations-authorization-mode: %v\n", err)
+			os.Exit(1)
+		}
+	case "organisations-cleanup-access-references":
+		err := actions.OrganisationsCleanupAccessReferences(actions.OrganisationsCleanupAccessReferencesConfig{
+			Mode:           *mode,
+			MongoDBURI:     *mongodbURI,
+			Database:       *mongodbDestinationDatabase,
+			OrganisationID: *organisationId,
+			ReportFile:     *reportFile,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "organisations-cleanup-access-references: %v\n", err)
 			os.Exit(1)
 		}
 	case "projects-bootstrap":
