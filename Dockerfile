@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.26.10-bookworm@sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af AS go-toolchain
+FROM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS go-toolchain
 
 FROM cgr.dev/chainguard/wolfi-base:latest@sha256:0feab531471d2edfcca55f18883441cb7df598e724fa2dedf9985273f532eed7 AS native
 RUN apk add --no-cache build-base coreutils git librdkafka-dev=2.16.0-r0 && \
@@ -42,7 +42,7 @@ COPY indexes/ ./indexes/
 # Use package-managed Kafka instead of the opaque bundled native archive.
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
-    test "$(go env GOVERSION)" = go1.26.10 && \
+    test "$(go env GOVERSION)" = go1.26.11 && \
     test "$(pkg-config --modversion rdkafka)" = 2.16.0 && \
     go build -p=1 -mod=readonly -trimpath -buildvcs=false \
       -tags dynamic,timetzdata,netgo -ldflags="-w -buildid=" -o /out/main . && \
