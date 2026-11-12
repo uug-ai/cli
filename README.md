@@ -32,7 +32,7 @@ kubectl apply -f jobs/migrate-legacy-media-job.yaml
 
 ## Installation and contributing
 
-Go 1.26.10, a C compiler, pkg-config and librdkafka 2.16.0 development
+Go 1.26.11, a C compiler, pkg-config and librdkafka 2.16.0 development
 headers/libraries are required for production builds. Build with
 `-tags dynamic,timetzdata,netgo` and `CGO_ENABLED=1`; the production image
 does not use Confluent's opaque bundled native archive.
@@ -66,7 +66,7 @@ The production image is `ghcr.io/uug-ai/cli:<version>`; deploy a verified
 immutable digest rather than `latest`. Supported targets are Linux amd64 and
 arm64, tested natively in CI.
 
-The Go 1.26.10 toolchain donor and Wolfi build base are digest-pinned.
+The Go 1.26.11 toolchain donor and Wolfi build base are digest-pinned.
 The native builder installs `librdkafka-dev=2.16.0-r0`; an isolated final
 root is created by genuine signed-package `apk --root /runtime --initdb`
 installation of `librdkafka=2.16.0-r0`, CA certificates, keys and baselayout.
