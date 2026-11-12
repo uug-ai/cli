@@ -1096,6 +1096,13 @@ go run . -action check-indexes \
 Use `-mongodb-destination-database KerberosStorage -index-version
 storage-19-10-2026` for the storage database.
 
+`indexes/production-<date>.txt` pins the Hub index set of one production
+release: the indexes its service versions need, without indexes added to
+`hub-19-10-2026` afterwards. Run a production check with
+`-index-version production-2026-11-18`.
+`check-indexes_release_test.go` lists the migration contracts each release file
+must contain and the collections it must leave out.
+
 ### Vault to Hub Migration
 
 This tool migrates data from a Vault database to a Hub database.
