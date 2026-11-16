@@ -700,3 +700,45 @@ func TestRBACTeamsIndexFileDeclaresUniqueContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestRBACRolesInvitationsIndexFileDeclaresUniqueContracts(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-rbac-roles-invitations-16-11-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	if len(canonical) != 2 || len(canonical["organisation_roles"]) != 1 || len(canonical["organisation_invitations"]) != 3 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	name := findSpecByKey(t, canonical["organisation_roles"], "organisationId:1.name:1")
+	if !name.Unique || name.PartialFilterExpression != nil || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+		t.Fatalf("role name spec = %#v", name)
+	}
+	if token := findSpecByKey(t, canonical["organisation_invitations"], "tokenHash:1"); !token.Unique || token.Collation != nil {
+		t.Fatalf("invitation token spec = %#v", token)
+	}
+	for _, key := range []string{"organisationId:1.email:1.status:1", "email:1.status:1"} {
+		if spec := findSpecByKey(t, canonical["organisation_invitations"], key); spec.Unique {
+			t.Fatalf("%s spec = %#v", key, spec)
+		}
+	}
+
+	// The Hub snapshot holds the same contracts.
+	snapshot, err := loadCanonicalIndexSpecsFromFile(filepath.Join("..", "indexes", "hub-19-10-2026.txt"))
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	for collection, specs := range canonical {
+		for _, spec := range specs {
+			found := false
+			for _, candidate := range snapshot[collection] {
+				if reflect.DeepEqual(candidate, spec) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("hub-19-10-2026 lacks %s %#v", collection, spec)
+			}
+		}
+	}
+}

@@ -52,15 +52,20 @@ type authorizationModePlan struct {
 // OrganisationsAuthorizationMode sets an organisation's authorization mode
 // (spec 7.2). It is a development tool for fresh organisations only:
 //
-//   - shadow and rbac need the stored documents, and for a fresh organisation
-//     (its owner and no other members or sub-accounts) those are exactly
-//     what models.MapLegacyAccess produces for the owner: the Owner role copy
-//     and the Owner assignment, with the derived ids the migration command
-//     will use. They are upserted, so a rerun writes the same documents.
+//   - shadow and rbac need the stored documents. For a fresh organisation
+//     (its owner and no other members or sub-accounts) those are the copies
+//     of every built-in role (models.OrganisationBuiltInRoles: Owner, the
+//     system roles and the legacy roles), so they can be assigned, and the
+//     Owner assignment models.MapLegacyAccess produces for the owner, with
+//     the derived ids the migration command will use. They are upserted, so
+//     a rerun writes the same documents.
+//   - Rerun on an organisation already in that mode, it stores the built-in
+//     role copies again, whatever its members: organisations switched before
+//     the copies existed get the roles they can assign.
 //   - legacy only sets the mode back; the stored documents stay.
 //
 // Organisations with other members need the migration command, which maps
-// every member; this action refuses them.
+// every member; this action refuses to switch them.
 func OrganisationsAuthorizationMode(cfg OrganisationsAuthorizationModeConfig) error {
 	target := models.AuthorizationMode(strings.TrimSpace(cfg.AuthorizationMode))
 	if target == "" || !target.IsValid() {
@@ -144,6 +149,16 @@ func planAuthorizationMode(state authorizationModeState, target models.Authoriza
 	if target == models.AuthorizationModeLegacy {
 		return plan, nil
 	}
+	stamp := models.Audit{CreatedBy: "cli", CreatedAt: now, UpdatedBy: "cli", UpdatedAt: now, LastAction: "authorization.mode"}
+	for _, role := range models.OrganisationBuiltInRoles(state.organisationID) {
+		role.Audit = stamp
+		plan.roles = append(plan.roles, role)
+	}
+	if state.currentMode == target {
+		// Already switched: only the built-in role copies, which carry no
+		// one's access.
+		return plan, nil
+	}
 	if state.otherMembers > 0 || state.subAccounts > 0 {
 		return plan, fmt.Errorf("%w: %d other member(s) and %d sub-account(s); organisations with members need the migration command",
 			errAuthorizationModeNotFresh, state.otherMembers, state.subAccounts)
@@ -157,10 +172,11 @@ func planAuthorizationMode(state authorizationModeState, target models.Authoriza
 	if err != nil {
 		return plan, fmt.Errorf("map the owner: %w", err)
 	}
-	stamp := models.Audit{CreatedBy: "cli", CreatedAt: now, UpdatedBy: "cli", UpdatedAt: now, LastAction: "authorization.mode"}
+	// The owner's mapped roles are built-in copies already planned.
 	for _, role := range mapped.Roles {
-		role.Audit = stamp
-		plan.roles = append(plan.roles, role)
+		if role.Id != models.BuiltInRoleId(state.organisationID, role.Key) {
+			return plan, fmt.Errorf("map the owner: unexpected role %s (%s)", role.Id.Hex(), role.Name)
+		}
 	}
 	for _, assignment := range mapped.Assignments {
 		assignment.Audit = stamp
