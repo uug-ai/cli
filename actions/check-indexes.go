@@ -20,6 +20,11 @@ type IndexSpec struct {
 	Name   string
 	Key    bson.D
 	Unique bool
+	// Sparse leaves documents without the indexed field out of the index. On a
+	// unique index that decides whether it can be built at all: without it
+	// every document lacking the field counts as null, and the second one is a
+	// duplicate key.
+	Sparse bool
 	// PartialFilterExpression restricts which documents the index covers. It is
 	// nil for the ordinary full index that every other entry in the indexes
 	// files describes.
@@ -271,6 +276,9 @@ func CheckIndexes(
 			if m.spec.Unique {
 				opts.SetUnique(true)
 			}
+			if m.spec.Sparse {
+				opts.SetSparse(true)
+			}
 			if len(m.spec.PartialFilterExpression) > 0 {
 				opts.SetPartialFilterExpression(m.spec.PartialFilterExpression)
 			}
@@ -339,6 +347,7 @@ func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 			Name                    string `bson:"name"`
 			Key                     bson.D `bson:"key"`
 			Unique                  bool   `bson:"unique"`
+			Sparse                  bool   `bson:"sparse"`
 			PartialFilterExpression bson.M `bson:"partialFilterExpression"`
 			Collation               *struct {
 				Locale   string `bson:"locale"`
@@ -348,7 +357,7 @@ func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 		if err := cur.Decode(&doc); err != nil || len(doc.Key) == 0 {
 			continue
 		}
-		spec := IndexSpec{Name: doc.Name, Key: doc.Key, Unique: doc.Unique, PartialFilterExpression: doc.PartialFilterExpression}
+		spec := IndexSpec{Name: doc.Name, Key: doc.Key, Unique: doc.Unique, Sparse: doc.Sparse, PartialFilterExpression: doc.PartialFilterExpression}
 		if doc.Collation != nil && doc.Collation.Locale != "" && doc.Collation.Locale != "simple" {
 			spec.Collation = &IndexCollation{Locale: doc.Collation.Locale, Strength: doc.Collation.Strength}
 		}
@@ -360,22 +369,29 @@ func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 func indexSpecMatches(required, actual IndexSpec) bool {
 	return normalizeKey(required.Key) == normalizeKey(actual.Key) &&
 		required.Unique == actual.Unique &&
+		required.Sparse == actual.Sparse &&
 		reflect.DeepEqual(required.PartialFilterExpression, actual.PartialFilterExpression) &&
 		reflect.DeepEqual(required.Collation, actual.Collation)
 }
 
-// describeIndexOptions renders the partial filter and collation of a missing
+// describeIndexOptions renders the partial filter, sparse flag and collation of a missing
 // index for the report table.
 func describeIndexOptions(spec IndexSpec) string {
 	description := describePartialFilter(spec.PartialFilterExpression)
-	if spec.Collation == nil {
+	var extra []string
+	if spec.Sparse {
+		extra = append(extra, "sparse")
+	}
+	if spec.Collation != nil {
+		extra = append(extra, fmt.Sprintf("collation %s/%d", spec.Collation.Locale, spec.Collation.Strength))
+	}
+	if len(extra) == 0 {
 		return description
 	}
-	collation := fmt.Sprintf("collation %s/%d", spec.Collation.Locale, spec.Collation.Strength)
-	if description == "" || description == "-" {
-		return collation
+	if description != "" && description != "-" {
+		extra = append([]string{description}, extra...)
 	}
-	return description + "; " + collation
+	return strings.Join(extra, "; ")
 }
 
 // normalizeKey builds an order-preserving string like "field1:1.field2:-1".
@@ -512,6 +528,7 @@ func parseIndexArrayBlock(lines []string) []IndexSpec {
 			Name:                    name,
 			Key:                     key,
 			Unique:                  extractUnique(p),
+			Sparse:                  extractSparse(p),
 			PartialFilterExpression: parseFilterDoc(extractPartialFilterExpression(p)),
 			Collation:               parseCollation(extractBraceDoc(p, "collation:")),
 		})
@@ -646,6 +663,10 @@ func parseCollation(doc string) *IndexCollation {
 func extractUnique(obj string) bool {
 	// Detect "unique: true" in object (optional; not present in most dumps)
 	return strings.Contains(obj, "unique: true")
+}
+
+func extractSparse(obj string) bool {
+	return strings.Contains(obj, "sparse: true")
 }
 
 // parseFilterDoc parses a partialFilterExpression document into bson.M.
