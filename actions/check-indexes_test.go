@@ -82,6 +82,65 @@ func TestExtractUnique(t *testing.T) {
 	}
 }
 
+func TestParseIndexArrayBlockCarriesSparse(t *testing.T) {
+	specs := parseIndexArrayBlock([]string{
+		"[",
+		"{ v: 2, key: { timestamp: 1 }, name: 'timestamp_1' },",
+		"{",
+		"  v: 2,",
+		"  key: { eventId: 1 },",
+		"  name: 'audit_event_source_event_id',",
+		"  unique: true,",
+		"  sparse: true",
+		"}",
+		"]",
+	})
+	if len(specs) != 2 {
+		t.Fatalf("parsed %d specs, want 2", len(specs))
+	}
+	if specs[0].Sparse {
+		t.Fatal("index without sparse reported as sparse")
+	}
+	if !specs[1].Unique || !specs[1].Sparse {
+		t.Fatalf("eventId spec = %+v, want unique and sparse", specs[1])
+	}
+	if got := describeIndexOptions(specs[1]); got != "sparse" {
+		t.Fatalf("describeIndexOptions = %q, want sparse", got)
+	}
+}
+
+// Every shipped index set declares the audit source-event index as sparse:
+// audit_events holds older events without an eventId, so a plain unique index
+// cannot be built there.
+func TestShippedIndexFilesDeclareSparseAuditEventId(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "indexes", "*.txt"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no index files found: %v", err)
+	}
+	for _, file := range files {
+		byCollection, err := loadCanonicalIndexSpecsFromFile(file)
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		for _, spec := range byCollection["audit_events"] {
+			if spec.Name == "audit_event_source_event_id" && (!spec.Unique || !spec.Sparse) {
+				t.Fatalf("%s: audit_event_source_event_id = %+v, want unique and sparse", file, spec)
+			}
+		}
+	}
+}
+
+func TestIndexSpecMatchesSparse(t *testing.T) {
+	keys := bson.D{{Key: "eventId", Value: int32(1)}}
+	required := IndexSpec{Key: keys, Unique: true, Sparse: true}
+	if !indexSpecMatches(required, IndexSpec{Key: keys, Unique: true, Sparse: true}) {
+		t.Fatal("sparse unique index did not match")
+	}
+	if indexSpecMatches(required, IndexSpec{Key: keys, Unique: true}) {
+		t.Fatal("plain unique index satisfied sparse contract")
+	}
+}
+
 func TestIndexSpecMatchesOptions(t *testing.T) {
 	keys := bson.D{{Key: "organisationId", Value: int32(1)}, {Key: "projectId", Value: int32(1)}}
 	partial := bson.M{"projectId": bson.M{"$type": "objectId"}}
