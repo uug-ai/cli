@@ -675,7 +675,8 @@ func TestRBACTeamsIndexFileDeclaresUniqueContracts(t *testing.T) {
 	}
 
 	name := findSpecByKey(t, canonical["teams"], "organisationId:1.name:1")
-	if !name.Unique || name.PartialFilterExpression != nil || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+	// Custom roles only: a built-in role copy stores no name.
+	if !name.Unique || !reflect.DeepEqual(name.PartialFilterExpression, bson.M{"kind": "custom"}) || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
 		t.Fatalf("team name spec = %#v", name)
 	}
 	group := findSpecByKey(t, canonical["teams"], "organisationId:1.identityProvider.provider:1.identityProvider.externalGroupId:1")
@@ -711,7 +712,8 @@ func TestRBACRolesInvitationsIndexFileDeclaresUniqueContracts(t *testing.T) {
 		t.Fatalf("collections = %#v", canonical)
 	}
 	name := findSpecByKey(t, canonical["organisation_roles"], "organisationId:1.name:1")
-	if !name.Unique || name.PartialFilterExpression != nil || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+	// Custom roles only: a built-in role copy stores no name.
+	if !name.Unique || !reflect.DeepEqual(name.PartialFilterExpression, bson.M{"kind": "custom"}) || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
 		t.Fatalf("role name spec = %#v", name)
 	}
 	if token := findSpecByKey(t, canonical["organisation_invitations"], "tokenHash:1"); !token.Unique || token.Collation != nil {

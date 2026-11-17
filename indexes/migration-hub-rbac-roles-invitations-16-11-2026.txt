@@ -11,6 +11,7 @@ organisation_roles
     key: { organisationId: 1, name: 1 },
     name: 'organisation_roles_organisation_name_unique',
     unique: true,
+    partialFilterExpression: { kind: 'custom' },
     collation: { locale: 'en', strength: 2 }
   }
 ]

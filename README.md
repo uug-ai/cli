@@ -821,9 +821,11 @@ go run . -action check-indexes \
 Roles and invitations of organisations in `rbac` mode (hub-api
 `/organisation-roles`, `/invitations`) need these as well:
 
-- `organisation_roles`: one name per organisation, ignoring case, built-in
-  role names included (a `collation: { locale: 'en', strength: 2 }` unique
-  index). The organisation's roles are listed through the same index.
+- `organisation_roles`: one custom role name per organisation, ignoring case
+  (a `collation: { locale: 'en', strength: 2 }` unique index, partial on
+  `kind: 'custom'`). Built-in role copies are outside it: they are identified
+  by their key and need not store a name, and hub-api refuses a custom role
+  that takes a built-in role's name.
 - `organisation_invitations`: the token hash finds an invitation and is
   unique; `{organisationId, email, status}` serves the organisation's open
   invitations for an address and its invitation list; `{email, status}` finds
