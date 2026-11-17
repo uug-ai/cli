@@ -1,0 +1,17 @@
+organisation_invitations
+[
+  { v: 2, key: { tokenHash: 1 }, name: 'organisation_invitations_token_hash_unique', unique: true },
+  { v: 2, key: { organisationId: 1, email: 1, status: 1 }, name: 'organisation_invitations_organisation_email_status' },
+  { v: 2, key: { email: 1, status: 1 }, name: 'organisation_invitations_email_status' }
+]
+organisation_roles
+[
+  {
+    v: 2,
+    key: { organisationId: 1, name: 1 },
+    name: 'organisation_roles_organisation_name_unique',
+    unique: true,
+    partialFilterExpression: { kind: 'custom' },
+    collation: { locale: 'en', strength: 2 }
+  }
+]
