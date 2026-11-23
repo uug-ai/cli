@@ -8,7 +8,7 @@ This repository contains CLI tools for performing specific automations.
 - `migrate-legacy-media`: Backfilling legacy media documents to current media shape.
 - `backfill-device-names`: Backfilling the v2 device display `name` from the agent name and removing the pre-release `agent.cameraName` field.
 - `organisations-bootstrap`: Bootstrapping Phase 3 organisation identity and memberships in ordered stages.
-- `organisations-authorization-mode`: Development tool: switch a fresh organisation (its owner only) to `rbac` or `shadow` with its stored Owner role and assignment, or back to `legacy`.
+- `organisations-authorization-mode`: Development tool: switch a fresh organisation (its owner only) to `rbac` or `shadow` with every built-in role copy and the Owner assignment stored, or back to `legacy`; rerun on an organisation in that mode to store the role copies again.
 - `organisations-backfill`: Auditing canonical organisation ownership before the Phase 4 resource backfill.
 - `generate-default-labels`: Adding labels to existing users.
 - `dlq`: Inspecting, replaying, recovering, and safely seeding dead-letter queues across supported providers.
@@ -818,6 +818,28 @@ go run . -action check-indexes \
          -index-version migration-hub-rbac-teams-05-11-2026
 ```
 
+Roles and invitations of organisations in `rbac` mode (hub-api
+`/organisation-roles`, `/invitations`) need these as well:
+
+- `organisation_roles`: one custom role name per organisation, ignoring case
+  (a `collation: { locale: 'en', strength: 2 }` unique index, partial on
+  `kind: 'custom'`). Built-in role copies are outside it: they are identified
+  by their key and need not store a name, and hub-api refuses a custom role
+  that takes a built-in role's name.
+- `organisation_invitations`: the token hash finds an invitation and is
+  unique; `{organisationId, email, status}` serves the organisation's open
+  invitations for an address and its invitation list; `{email, status}` finds
+  an address's pending invitations across organisations at sign-in.
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections organisation_roles,organisation_invitations \
+         -mode dry-run \
+         -index-version migration-hub-rbac-roles-invitations-16-11-2026
+```
+
 Audit event exports download large ranges in parts. Each part continues from a
 `{timestamp, _id}` cursor and is sorted `{timestamp: -1, _id: -1}` within one
 organisation, so ties on the same millisecond keep a stable order. The
@@ -1459,9 +1481,15 @@ go run . -action organisations-authorization-mode \
          -mode dry-run
 ```
 
-For `rbac` and `shadow` the action upserts the documents `models.MapLegacyAccess`
-produces for the owner (the Owner role copy in `organisation_roles` and the
-Owner assignment in `role_assignments`, with the derived ids the migration
-command will use) and sets the mode last. It refuses an organisation with other
-members or sub-accounts: those need the migration command. `-authorization-mode
-legacy` only sets the mode back and keeps the documents.
+For `rbac` and `shadow` the action upserts a copy of every built-in role in
+`organisation_roles` (`models.OrganisationBuiltInRoles`: Owner, the system roles
+such as Viewer and Editor, and the legacy roles), so each can be assigned, and
+the Owner assignment `models.MapLegacyAccess` produces for the owner in
+`role_assignments`, all with the derived ids the migration command will use. It
+sets the mode last. It refuses to switch an organisation with other members or
+sub-accounts: those need the migration command.
+
+Run again on an organisation already in that mode, it upserts the built-in role
+copies only, whatever its members, and assigns nothing. An organisation
+switched before every copy was stored gets the roles it can assign this way.
+`-authorization-mode legacy` only sets the mode back and keeps the documents.

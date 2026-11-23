@@ -21,8 +21,14 @@ func TestPlanAuthorizationModeWritesTheOwnerDocuments(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", target, err)
 		}
-		if plan.mode != target || len(plan.roles) != 1 || len(plan.assignments) != 1 {
+		if plan.mode != target || len(plan.roles) != len(models.BuiltInRoles()) || len(plan.assignments) != 1 {
 			t.Fatalf("%s plan %+v", target, plan)
+		}
+		// Every built-in role is stored, so any of them can be assigned.
+		for _, role := range plan.roles {
+			if role.Id != models.BuiltInRoleId(state.organisationID, role.Key) || role.OrganisationId != state.organisationID || role.Validate() != nil {
+				t.Errorf("role copy %+v", role)
+			}
 		}
 		role, assignment := plan.roles[0], plan.assignments[0]
 		if !role.IsOwner() || role.OrganisationId != state.organisationID || role.Id != models.BuiltInRoleId(state.organisationID, models.RoleKeyOwner) {
@@ -90,5 +96,23 @@ func TestOrganisationsAuthorizationModeValidatesFlags(t *testing.T) {
 				t.Error("accepted")
 			}
 		})
+	}
+}
+
+// Rerun on an organisation already in the mode, the action stores the
+// built-in role copies again, members or not, and assigns nothing.
+func TestPlanAuthorizationModeRerunStoresTheBuiltInRoles(t *testing.T) {
+	state := freshAuthorizationModeState()
+	state.currentMode, state.otherMembers, state.subAccounts = models.AuthorizationModeRBAC, 4, 1
+	plan, err := planAuthorizationMode(state, models.AuthorizationModeRBAC, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.roles) != len(models.BuiltInRoles()) || len(plan.assignments) != 0 || plan.mode != models.AuthorizationModeRBAC {
+		t.Errorf("rerun plan: %d roles, %d assignments, mode %s", len(plan.roles), len(plan.assignments), plan.mode)
+	}
+	// Switching an organisation with members to another mode is still refused.
+	if _, err := planAuthorizationMode(state, models.AuthorizationModeShadow, time.Now()); !errors.Is(err, errAuthorizationModeNotFresh) {
+		t.Errorf("shadow for an rbac organisation with members: %v", err)
 	}
 }
