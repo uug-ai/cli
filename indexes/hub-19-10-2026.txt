@@ -971,6 +971,12 @@ tasks
     v: 2,
     key: { organisationId: 1, retention_days: 1 },
     name: 'organisationId_1_retention_days_1'
+  },
+  {
+    v: 2,
+    key: { 'export_superseded_zips.superseded_at': 1 },
+    name: 'tasks_export_superseded_zips_superseded_at',
+    partialFilterExpression: { export_superseded_zips: { '$exists': true } }
   }
 ]
 team_members
