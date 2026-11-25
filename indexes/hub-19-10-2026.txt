@@ -982,7 +982,7 @@ tasks
     v: 2,
     key: { 'export_pending_forwards.until': 1 },
     name: 'tasks_export_pending_forwards_until',
-    partialFilterExpression: { export_pending_forwards: { '$exists': true } }
+    partialFilterExpression: { 'export_pending_forwards.until': { '$type': 'date' } }
   }
 ]
 team_members
