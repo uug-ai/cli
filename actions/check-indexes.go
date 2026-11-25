@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +44,10 @@ type IndexSpec struct {
 	// ordinary binary comparison every other entry uses. Only locale and
 	// strength are declared and compared; Mongo fills in the rest.
 	Collation *IndexCollation
+	// ExpireAfterSeconds makes a TTL index: MongoDB deletes a document this
+	// many seconds after the date in its indexed field. Nil for every other
+	// index.
+	ExpireAfterSeconds *int32
 }
 
 // IndexCollation is the part of an index collation the indexes files declare.
@@ -285,6 +291,9 @@ func CheckIndexes(
 			if m.spec.Collation != nil {
 				opts.SetCollation(&options.Collation{Locale: m.spec.Collation.Locale, Strength: m.spec.Collation.Strength})
 			}
+			if m.spec.ExpireAfterSeconds != nil {
+				opts.SetExpireAfterSeconds(*m.spec.ExpireAfterSeconds)
+			}
 			_, err := db.Collection(m.coll).Indexes().CreateOne(ctx, mongo.IndexModel{
 				Keys:    m.spec.Key,
 				Options: opts,
@@ -353,6 +362,8 @@ func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 				Locale   string `bson:"locale"`
 				Strength int    `bson:"strength"`
 			} `bson:"collation"`
+			// listIndexes reports it as an int or a double.
+			ExpireAfterSeconds *float64 `bson:"expireAfterSeconds"`
 		}
 		if err := cur.Decode(&doc); err != nil || len(doc.Key) == 0 {
 			continue
@@ -360,6 +371,10 @@ func listIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 		spec := IndexSpec{Name: doc.Name, Key: doc.Key, Unique: doc.Unique, Sparse: doc.Sparse, PartialFilterExpression: doc.PartialFilterExpression}
 		if doc.Collation != nil && doc.Collation.Locale != "" && doc.Collation.Locale != "simple" {
 			spec.Collation = &IndexCollation{Locale: doc.Collation.Locale, Strength: doc.Collation.Strength}
+		}
+		if doc.ExpireAfterSeconds != nil {
+			seconds := int32(*doc.ExpireAfterSeconds)
+			spec.ExpireAfterSeconds = &seconds
 		}
 		out = append(out, spec)
 	}
@@ -371,7 +386,8 @@ func indexSpecMatches(required, actual IndexSpec) bool {
 		required.Unique == actual.Unique &&
 		required.Sparse == actual.Sparse &&
 		reflect.DeepEqual(required.PartialFilterExpression, actual.PartialFilterExpression) &&
-		reflect.DeepEqual(required.Collation, actual.Collation)
+		reflect.DeepEqual(required.Collation, actual.Collation) &&
+		reflect.DeepEqual(required.ExpireAfterSeconds, actual.ExpireAfterSeconds)
 }
 
 // describeIndexOptions renders the partial filter, sparse flag and collation of a missing
@@ -384,6 +400,9 @@ func describeIndexOptions(spec IndexSpec) string {
 	}
 	if spec.Collation != nil {
 		extra = append(extra, fmt.Sprintf("collation %s/%d", spec.Collation.Locale, spec.Collation.Strength))
+	}
+	if spec.ExpireAfterSeconds != nil {
+		extra = append(extra, fmt.Sprintf("ttl %ds", *spec.ExpireAfterSeconds))
 	}
 	if len(extra) == 0 {
 		return description
@@ -531,6 +550,7 @@ func parseIndexArrayBlock(lines []string) []IndexSpec {
 			Sparse:                  extractSparse(p),
 			PartialFilterExpression: parseFilterDoc(extractPartialFilterExpression(p)),
 			Collation:               parseCollation(extractBraceDoc(p, "collation:")),
+			ExpireAfterSeconds:      extractExpireAfterSeconds(p),
 		})
 	}
 	return specs
@@ -658,6 +678,22 @@ func parseCollation(doc string) *IndexCollation {
 		strength = 3 // Mongo's default, which listIndexes then reports
 	}
 	return &IndexCollation{Locale: locale, Strength: int(strength)}
+}
+
+var expireAfterSecondsPattern = regexp.MustCompile(`expireAfterSeconds:\s*(\d+)`)
+
+// extractExpireAfterSeconds reads `expireAfterSeconds: N`; nil when absent.
+func extractExpireAfterSeconds(obj string) *int32 {
+	match := expireAfterSecondsPattern.FindStringSubmatch(obj)
+	if match == nil {
+		return nil
+	}
+	seconds, err := strconv.ParseInt(match[1], 10, 32)
+	if err != nil {
+		return nil
+	}
+	value := int32(seconds)
+	return &value
 }
 
 func extractUnique(obj string) bool {

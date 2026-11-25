@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -750,7 +751,7 @@ func TestIdentityProvidersIndexFileDeclaresUniqueContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
 	}
-	if len(canonical) != 2 || len(canonical["identity_provider_connections"]) != 1 || len(canonical["identity_links"]) != 3 {
+	if len(canonical) != 3 || len(canonical["identity_provider_connections"]) != 1 || len(canonical["identity_links"]) != 3 || len(canonical["identity_sign_ins"]) != 1 {
 		t.Fatalf("collections = %#v", canonical)
 	}
 	// Connection names compare ignoring case within an organisation.
@@ -766,5 +767,40 @@ func TestIdentityProvidersIndexFileDeclaresUniqueContracts(t *testing.T) {
 	}
 	if spec := findSpecByKey(t, canonical["identity_links"], "userId:1"); spec.Unique {
 		t.Fatalf("link lookup spec = %#v", spec)
+	}
+	// Pending sign-ins expire on their own.
+	if spec := findSpecByKey(t, canonical["identity_sign_ins"], "expiresAt:1"); spec.ExpireAfterSeconds == nil || *spec.ExpireAfterSeconds != 0 {
+		t.Fatalf("sign-in TTL spec = %#v", spec)
+	}
+}
+
+// A TTL index is declared with expireAfterSeconds; an index on the same key
+// without it (or with another TTL) does not satisfy it, so the checker no
+// longer reports a plain index as the TTL one.
+func TestTTLIndexesAreParsedAndCompared(t *testing.T) {
+	specs := parseIndexArrayBlock([]string{
+		"[",
+		"  { v: 2, key: { expiresAt: 1 }, name: 'ttl', expireAfterSeconds: 0 },",
+		"  { v: 2, key: { createdAt: 1 }, name: 'ttl_hour', expireAfterSeconds: 3600 },",
+		"  { v: 2, key: { plain: 1 }, name: 'plain' }",
+		"]",
+	})
+	if len(specs) != 3 || specs[0].ExpireAfterSeconds == nil || *specs[0].ExpireAfterSeconds != 0 ||
+		specs[1].ExpireAfterSeconds == nil || *specs[1].ExpireAfterSeconds != 3600 || specs[2].ExpireAfterSeconds != nil {
+		t.Fatalf("specs %#v", specs)
+	}
+	zero, hour := int32(0), int32(3600)
+	key := bson.D{{Key: "expiresAt", Value: int32(1)}}
+	if !indexSpecMatches(IndexSpec{Key: key, ExpireAfterSeconds: &zero}, IndexSpec{Key: key, ExpireAfterSeconds: &zero}) {
+		t.Fatal("same TTL does not match")
+	}
+	if indexSpecMatches(IndexSpec{Key: key, ExpireAfterSeconds: &zero}, IndexSpec{Key: key}) {
+		t.Fatal("plain index satisfied a TTL contract")
+	}
+	if indexSpecMatches(IndexSpec{Key: key, ExpireAfterSeconds: &zero}, IndexSpec{Key: key, ExpireAfterSeconds: &hour}) {
+		t.Fatal("other TTL satisfied the contract")
+	}
+	if got := describeIndexOptions(IndexSpec{Key: key, ExpireAfterSeconds: &hour}); !strings.Contains(got, "ttl 3600s") {
+		t.Fatalf("description %q", got)
 	}
 }
