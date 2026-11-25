@@ -743,3 +743,28 @@ func TestRBACRolesInvitationsIndexFileDeclaresUniqueContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityProvidersIndexFileDeclaresUniqueContracts(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-identity-providers-25-11-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	if len(canonical) != 2 || len(canonical["identity_provider_connections"]) != 1 || len(canonical["identity_links"]) != 3 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	// Connection names compare ignoring case within an organisation.
+	name := findSpecByKey(t, canonical["identity_provider_connections"], "organisationId:1.name:1")
+	if !name.Unique || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+		t.Fatalf("connection name spec = %#v", name)
+	}
+	// One account per (connection, subject), one link per (connection, account).
+	for _, key := range []string{"connectionId:1.subject:1", "connectionId:1.userId:1"} {
+		if spec := findSpecByKey(t, canonical["identity_links"], key); !spec.Unique || spec.Collation != nil {
+			t.Fatalf("%s spec = %#v", key, spec)
+		}
+	}
+	if spec := findSpecByKey(t, canonical["identity_links"], "userId:1"); spec.Unique {
+		t.Fatalf("link lookup spec = %#v", spec)
+	}
+}

@@ -1,0 +1,16 @@
+identity_provider_connections
+[
+  {
+    v: 2,
+    key: { organisationId: 1, name: 1 },
+    name: 'identity_provider_connections_organisation_name_unique',
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
+  }
+]
+identity_links
+[
+  { v: 2, key: { connectionId: 1, subject: 1 }, name: 'identity_links_connection_subject_unique', unique: true },
+  { v: 2, key: { connectionId: 1, userId: 1 }, name: 'identity_links_connection_user_unique', unique: true },
+  { v: 2, key: { userId: 1 }, name: 'identity_links_user' }
+]
