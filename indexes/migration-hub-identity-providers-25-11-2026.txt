@@ -1,0 +1,61 @@
+identity_provider_connections
+[
+  {
+    v: 2,
+    key: { organisationId: 1, name: 1 },
+    name: 'identity_provider_connections_organisation_name_unique',
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
+  },
+  {
+    v: 2,
+    key: { 'scim.tokenHash': 1 },
+    name: 'identity_provider_connections_scim_token_unique',
+    unique: true,
+    partialFilterExpression: { 'scim.tokenHash': { '$exists': true } }
+  }
+]
+identity_provider_scim_groups
+[
+  {
+    v: 2,
+    key: { connectionId: 1, displayName: 1 },
+    name: 'identity_provider_scim_groups_connection_name_unique',
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
+  },
+  { v: 2, key: { connectionId: 1, members: 1 }, name: 'identity_provider_scim_groups_connection_members' }
+]
+identity_provider_scim_users
+[
+  {
+    v: 2,
+    key: { connectionId: 1, externalId: 1 },
+    name: 'identity_provider_scim_users_connection_external_unique',
+    unique: true,
+    partialFilterExpression: { externalId: { '$exists': true } }
+  },
+  {
+    v: 2,
+    key: { connectionId: 1, userName: 1 },
+    name: 'identity_provider_scim_users_connection_username_unique',
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
+  },
+  {
+    v: 2,
+    key: { invitationId: 1 },
+    name: 'identity_provider_scim_users_invitation',
+    partialFilterExpression: { invitationId: { '$exists': true } }
+  }
+]
+identity_links
+[
+  { v: 2, key: { connectionId: 1, subject: 1 }, name: 'identity_links_connection_subject_unique', unique: true },
+  { v: 2, key: { connectionId: 1, userId: 1 }, name: 'identity_links_connection_user_unique', unique: true },
+  { v: 2, key: { userId: 1 }, name: 'identity_links_user' }
+]
+identity_sign_ins
+[
+  { v: 2, key: { expiresAt: 1 }, name: 'identity_sign_ins_expiry_ttl', expireAfterSeconds: 0 }
+]

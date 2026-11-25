@@ -840,6 +840,28 @@ go run . -action check-indexes \
          -index-version migration-hub-rbac-roles-invitations-16-11-2026
 ```
 
+Identity provider connections (RBAC 4.16) are an organisation's OpenID
+Connect providers. A connection's name is unique in its organisation ignoring
+case (synced teams name the connection by it). `identity_links` ties an
+account to a person at a connection: one account per `{connectionId,
+subject}` and one link per `{connectionId, userId}`; `{userId}` finds an
+account's links. `identity_sign_ins` holds single-use sign-in codes and email
+proofs; its TTL index on `expiresAt` removes them once expired. SCIM
+provisioning finds a connection by its token hash (unique), keeps its people
+in `identity_provider_scim_users` (unique per connection by external id and
+by user name ignoring case; invitations looked up) and its groups in
+`identity_provider_scim_groups` (unique display name; member lookups).
+Create them before deploying the Hub API identity provider routes:
+
+```sh
+go run . -action check-indexes \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -collections identity_provider_connections,identity_links,identity_sign_ins,identity_provider_scim_users,identity_provider_scim_groups \
+         -mode dry-run \
+         -index-version migration-hub-identity-providers-25-11-2026
+```
+
 Audit event exports download large ranges in parts. Each part continues from a
 `{timestamp, _id}` cursor and is sorted `{timestamp: -1, _id: -1}` within one
 organisation, so ties on the same millisecond keep a stable order. The

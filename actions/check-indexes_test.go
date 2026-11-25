@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -741,5 +742,80 @@ func TestRBACRolesInvitationsIndexFileDeclaresUniqueContracts(t *testing.T) {
 				t.Errorf("hub-19-10-2026 lacks %s %#v", collection, spec)
 			}
 		}
+	}
+}
+
+func TestIdentityProvidersIndexFileDeclaresUniqueContracts(t *testing.T) {
+	path := filepath.Join("..", "indexes", "migration-hub-identity-providers-25-11-2026.txt")
+	canonical, err := loadCanonicalIndexSpecsFromFile(path)
+	if err != nil {
+		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
+	}
+	if len(canonical) != 5 || len(canonical["identity_provider_connections"]) != 2 || len(canonical["identity_links"]) != 3 || len(canonical["identity_sign_ins"]) != 1 ||
+		len(canonical["identity_provider_scim_users"]) != 3 || len(canonical["identity_provider_scim_groups"]) != 2 {
+		t.Fatalf("collections = %#v", canonical)
+	}
+	// Connection names compare ignoring case within an organisation.
+	name := findSpecByKey(t, canonical["identity_provider_connections"], "organisationId:1.name:1")
+	if !name.Unique || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+		t.Fatalf("connection name spec = %#v", name)
+	}
+	// One account per (connection, subject), one link per (connection, account).
+	for _, key := range []string{"connectionId:1.subject:1", "connectionId:1.userId:1"} {
+		if spec := findSpecByKey(t, canonical["identity_links"], key); !spec.Unique || spec.Collation != nil {
+			t.Fatalf("%s spec = %#v", key, spec)
+		}
+	}
+	if spec := findSpecByKey(t, canonical["identity_links"], "userId:1"); spec.Unique {
+		t.Fatalf("link lookup spec = %#v", spec)
+	}
+	// A SCIM token finds one connection; SCIM users are unique per connection
+	// by external id (when sent) and by user name ignoring case.
+	if token := findSpecByKey(t, canonical["identity_provider_connections"], "scim.tokenHash:1"); !token.Unique || token.PartialFilterExpression == nil {
+		t.Fatalf("SCIM token spec = %#v", token)
+	}
+	if external := findSpecByKey(t, canonical["identity_provider_scim_users"], "connectionId:1.externalId:1"); !external.Unique || external.PartialFilterExpression == nil {
+		t.Fatalf("SCIM external id spec = %#v", external)
+	}
+	if name := findSpecByKey(t, canonical["identity_provider_scim_users"], "connectionId:1.userName:1"); !name.Unique || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+		t.Fatalf("SCIM user name spec = %#v", name)
+	}
+	if group := findSpecByKey(t, canonical["identity_provider_scim_groups"], "connectionId:1.displayName:1"); !group.Unique {
+		t.Fatalf("SCIM group spec = %#v", group)
+	}
+	// Pending sign-ins expire on their own.
+	if spec := findSpecByKey(t, canonical["identity_sign_ins"], "expiresAt:1"); spec.ExpireAfterSeconds == nil || *spec.ExpireAfterSeconds != 0 {
+		t.Fatalf("sign-in TTL spec = %#v", spec)
+	}
+}
+
+// A TTL index is declared with expireAfterSeconds; an index on the same key
+// without it (or with another TTL) does not satisfy it, so the checker no
+// longer reports a plain index as the TTL one.
+func TestTTLIndexesAreParsedAndCompared(t *testing.T) {
+	specs := parseIndexArrayBlock([]string{
+		"[",
+		"  { v: 2, key: { expiresAt: 1 }, name: 'ttl', expireAfterSeconds: 0 },",
+		"  { v: 2, key: { createdAt: 1 }, name: 'ttl_hour', expireAfterSeconds: 3600 },",
+		"  { v: 2, key: { plain: 1 }, name: 'plain' }",
+		"]",
+	})
+	if len(specs) != 3 || specs[0].ExpireAfterSeconds == nil || *specs[0].ExpireAfterSeconds != 0 ||
+		specs[1].ExpireAfterSeconds == nil || *specs[1].ExpireAfterSeconds != 3600 || specs[2].ExpireAfterSeconds != nil {
+		t.Fatalf("specs %#v", specs)
+	}
+	zero, hour := int32(0), int32(3600)
+	key := bson.D{{Key: "expiresAt", Value: int32(1)}}
+	if !indexSpecMatches(IndexSpec{Key: key, ExpireAfterSeconds: &zero}, IndexSpec{Key: key, ExpireAfterSeconds: &zero}) {
+		t.Fatal("same TTL does not match")
+	}
+	if indexSpecMatches(IndexSpec{Key: key, ExpireAfterSeconds: &zero}, IndexSpec{Key: key}) {
+		t.Fatal("plain index satisfied a TTL contract")
+	}
+	if indexSpecMatches(IndexSpec{Key: key, ExpireAfterSeconds: &zero}, IndexSpec{Key: key, ExpireAfterSeconds: &hour}) {
+		t.Fatal("other TTL satisfied the contract")
+	}
+	if got := describeIndexOptions(IndexSpec{Key: key, ExpireAfterSeconds: &hour}); !strings.Contains(got, "ttl 3600s") {
+		t.Fatalf("description %q", got)
 	}
 }
