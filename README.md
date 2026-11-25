@@ -846,14 +846,18 @@ case (synced teams name the connection by it). `identity_links` ties an
 account to a person at a connection: one account per `{connectionId,
 subject}` and one link per `{connectionId, userId}`; `{userId}` finds an
 account's links. `identity_sign_ins` holds single-use sign-in codes and email
-proofs; its TTL index on `expiresAt` removes them once expired. Create them
-before deploying the Hub API identity provider routes:
+proofs; its TTL index on `expiresAt` removes them once expired. SCIM
+provisioning finds a connection by its token hash (unique), keeps its people
+in `identity_provider_scim_users` (unique per connection by external id and
+by user name ignoring case; invitations looked up) and its groups in
+`identity_provider_scim_groups` (unique display name; member lookups).
+Create them before deploying the Hub API identity provider routes:
 
 ```sh
 go run . -action check-indexes \
          -mongodb-uri "mongodb://<host>" \
          -mongodb-destination-database <database> \
-         -collections identity_provider_connections,identity_links,identity_sign_ins \
+         -collections identity_provider_connections,identity_links,identity_sign_ins,identity_provider_scim_users,identity_provider_scim_groups \
          -mode dry-run \
          -index-version migration-hub-identity-providers-25-11-2026
 ```

@@ -6,6 +6,47 @@ identity_provider_connections
     name: 'identity_provider_connections_organisation_name_unique',
     unique: true,
     collation: { locale: 'en', strength: 2 }
+  },
+  {
+    v: 2,
+    key: { 'scim.tokenHash': 1 },
+    name: 'identity_provider_connections_scim_token_unique',
+    unique: true,
+    partialFilterExpression: { 'scim.tokenHash': { '$exists': true } }
+  }
+]
+identity_provider_scim_groups
+[
+  {
+    v: 2,
+    key: { connectionId: 1, displayName: 1 },
+    name: 'identity_provider_scim_groups_connection_name_unique',
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
+  },
+  { v: 2, key: { connectionId: 1, members: 1 }, name: 'identity_provider_scim_groups_connection_members' }
+]
+identity_provider_scim_users
+[
+  {
+    v: 2,
+    key: { connectionId: 1, externalId: 1 },
+    name: 'identity_provider_scim_users_connection_external_unique',
+    unique: true,
+    partialFilterExpression: { externalId: { '$exists': true } }
+  },
+  {
+    v: 2,
+    key: { connectionId: 1, userName: 1 },
+    name: 'identity_provider_scim_users_connection_username_unique',
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
+  },
+  {
+    v: 2,
+    key: { invitationId: 1 },
+    name: 'identity_provider_scim_users_invitation',
+    partialFilterExpression: { invitationId: { '$exists': true } }
   }
 ]
 identity_links

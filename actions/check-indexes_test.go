@@ -751,7 +751,8 @@ func TestIdentityProvidersIndexFileDeclaresUniqueContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadCanonicalIndexSpecsFromFile: %v", err)
 	}
-	if len(canonical) != 3 || len(canonical["identity_provider_connections"]) != 1 || len(canonical["identity_links"]) != 3 || len(canonical["identity_sign_ins"]) != 1 {
+	if len(canonical) != 5 || len(canonical["identity_provider_connections"]) != 2 || len(canonical["identity_links"]) != 3 || len(canonical["identity_sign_ins"]) != 1 ||
+		len(canonical["identity_provider_scim_users"]) != 3 || len(canonical["identity_provider_scim_groups"]) != 2 {
 		t.Fatalf("collections = %#v", canonical)
 	}
 	// Connection names compare ignoring case within an organisation.
@@ -767,6 +768,20 @@ func TestIdentityProvidersIndexFileDeclaresUniqueContracts(t *testing.T) {
 	}
 	if spec := findSpecByKey(t, canonical["identity_links"], "userId:1"); spec.Unique {
 		t.Fatalf("link lookup spec = %#v", spec)
+	}
+	// A SCIM token finds one connection; SCIM users are unique per connection
+	// by external id (when sent) and by user name ignoring case.
+	if token := findSpecByKey(t, canonical["identity_provider_connections"], "scim.tokenHash:1"); !token.Unique || token.PartialFilterExpression == nil {
+		t.Fatalf("SCIM token spec = %#v", token)
+	}
+	if external := findSpecByKey(t, canonical["identity_provider_scim_users"], "connectionId:1.externalId:1"); !external.Unique || external.PartialFilterExpression == nil {
+		t.Fatalf("SCIM external id spec = %#v", external)
+	}
+	if name := findSpecByKey(t, canonical["identity_provider_scim_users"], "connectionId:1.userName:1"); !name.Unique || !reflect.DeepEqual(name.Collation, &IndexCollation{Locale: "en", Strength: 2}) {
+		t.Fatalf("SCIM user name spec = %#v", name)
+	}
+	if group := findSpecByKey(t, canonical["identity_provider_scim_groups"], "connectionId:1.displayName:1"); !group.Unique {
+		t.Fatalf("SCIM group spec = %#v", group)
 	}
 	// Pending sign-ins expire on their own.
 	if spec := findSpecByKey(t, canonical["identity_sign_ins"], "expiresAt:1"); spec.ExpireAfterSeconds == nil || *spec.ExpireAfterSeconds != 0 {
