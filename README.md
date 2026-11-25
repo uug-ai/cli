@@ -845,14 +845,15 @@ Connect providers. A connection's name is unique in its organisation ignoring
 case (synced teams name the connection by it). `identity_links` ties an
 account to a person at a connection: one account per `{connectionId,
 subject}` and one link per `{connectionId, userId}`; `{userId}` finds an
-account's links. Create them before deploying the Hub API
-identity provider routes:
+account's links. `identity_sign_ins` holds single-use sign-in codes and email
+proofs; its TTL index on `expiresAt` removes them once expired. Create them
+before deploying the Hub API identity provider routes:
 
 ```sh
 go run . -action check-indexes \
          -mongodb-uri "mongodb://<host>" \
          -mongodb-destination-database <database> \
-         -collections identity_provider_connections,identity_links \
+         -collections identity_provider_connections,identity_links,identity_sign_ins \
          -mode dry-run \
          -index-version migration-hub-identity-providers-25-11-2026
 ```

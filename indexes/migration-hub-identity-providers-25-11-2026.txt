@@ -14,3 +14,7 @@ identity_links
   { v: 2, key: { connectionId: 1, userId: 1 }, name: 'identity_links_connection_user_unique', unique: true },
   { v: 2, key: { userId: 1 }, name: 'identity_links_user' }
 ]
+identity_sign_ins
+[
+  { v: 2, key: { expiresAt: 1 }, name: 'identity_sign_ins_expiry_ttl', expireAfterSeconds: 0 }
+]
