@@ -977,6 +977,12 @@ tasks
     key: { 'export_superseded_zips.superseded_at': 1 },
     name: 'tasks_export_superseded_zips_superseded_at',
     partialFilterExpression: { export_superseded_zips: { '$exists': true } }
+  },
+  {
+    v: 2,
+    key: { 'export_pending_forwards.until': 1 },
+    name: 'tasks_export_pending_forwards_until',
+    partialFilterExpression: { export_pending_forwards: { '$exists': true } }
   }
 ]
 team_members
