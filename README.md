@@ -676,6 +676,50 @@ missing `users.organisationId` values, and the checkpoint. The destructive
 `archive-delete` policy remains disabled until guarded archive/reference checks
 are implemented.
 
+### Legacy domains to organisation slugs
+
+On multi-tenant deployments a legacy login domain (`users.domain`) is the
+tenant: the sign-in page takes it from the subdomain or its Domain field. The
+organisation now is the tenant, and its `slug` is its sign-in name (RBAC spec
+4.16), so `organisations-domain-slugs` copies a domain to the slug of the
+organisation that uses it. `users.domain` is never changed: password sign-in
+keeps using it.
+
+A domain (compared without case) is copied only when exactly one organisation
+uses it (its master accounts and their sub-accounts), it is a valid, unreserved
+slug, that organisation has a document and no slug, and no other organisation
+holds the slug. Everything else is reported:
+
+| Outcome | Meaning |
+|---|---|
+| `copy` | copied (`live`) or would be (`dry-run`) |
+| `already_set` | the organisation's slug is the domain already |
+| `shared` | several organisations use it; an operator names one |
+| `invalid`, `reserved` | not usable as a slug |
+| `no_organisation` | the organisation is created at the first sign-in; run again later |
+| `has_other_slug` | the organisation chose another slug |
+| `taken` | another organisation holds the slug |
+| `ambiguous_owner` | the master owns several organisations, none with its id |
+
+```sh
+go run . -action organisations-domain-slugs \
+         -mongodb-uri "mongodb://<host>" \
+         -mongodb-destination-database <database> \
+         -mode dry-run \
+         -report-file domain-slugs.json
+```
+
+Give a shared domain to one of the organisations using it (the master account
+id the report lists):
+
+```sh
+go run . -action organisations-domain-slugs ... -mode live \
+         -domain uat -organisation-id <master account id>
+```
+
+The write sets the slug only while the organisation has none; a slug taken
+meanwhile is an error in the report, never an overwrite. Reruns are safe.
+
 ### Organisation ownership backfill
 
 This action currently implements the read-only Phase 3e/Phase 4 preflight. It

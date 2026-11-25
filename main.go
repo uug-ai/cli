@@ -17,6 +17,7 @@ func promptAction() string {
 		"organisations-backfill",
 		"organisations-authorization-mode",
 		"organisations-cleanup-access-references",
+		"organisations-domain-slugs",
 		"projects-bootstrap",
 		"migrate-legacy-media",
 		"backfill-device-names",
@@ -135,6 +136,8 @@ func main() {
 	stage := flag.String("stage", "", "Organisations bootstrap stage: owners, sub-users, or verify")
 	bootstrapBatchSize := flag.Int("bootstrap-batch-size", 500, "Source cursor batch size for organisations-bootstrap")
 	legacyOrganisationPolicy := flag.String("legacy-org-policy", "report", "Legacy organisation policy for organisations-bootstrap: report or archive-delete")
+
+	legacyDomain := flag.String("domain", "", "Legacy login domain for organisations-domain-slugs (optional; with -organisation-id, gives a shared domain to that organisation)")
 
 	flag.Parse()
 
@@ -267,6 +270,19 @@ func main() {
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "organisations-cleanup-access-references: %v\n", err)
+			os.Exit(1)
+		}
+	case "organisations-domain-slugs":
+		err := actions.OrganisationsDomainSlugs(actions.OrganisationsDomainSlugsConfig{
+			Mode:           *mode,
+			MongoDBURI:     *mongodbURI,
+			Database:       *mongodbDestinationDatabase,
+			Domain:         *legacyDomain,
+			OrganisationID: *organisationId,
+			ReportFile:     *reportFile,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "organisations-domain-slugs: %v\n", err)
 			os.Exit(1)
 		}
 	case "projects-bootstrap":
